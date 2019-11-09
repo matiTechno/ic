@@ -202,14 +202,14 @@ int main(int argc, const char** argv)
 	fclose(file);
 	runtime._source_code.push_back('\0');
 
-	bool success;
+	if (!runtime.tokenize())
+		return 0;
 
-	success = runtime.tokenize();
-	assert(success);
-	success = runtime.parse();
-	assert(success);
-	success = runtime.execute();
-	assert(success);
+	if (!runtime.parse())
+		return 0;
+
+	if (!runtime.execute())
+		return 0;
 
 	return 0;
 }
@@ -498,7 +498,7 @@ bool ic_runtime::parse()
 		_tokens.insert(_tokens.begin(), token);
 
 		token.type = IC_TOK_RIGHT_BRACE;
-		_tokens.push_back(token);
+		_tokens.insert(_tokens.end() - 1, token);
 	}
 
 	const ic_token* it = _tokens.data();
@@ -524,12 +524,9 @@ bool token_consume(const ic_token** it, ic_token_type type, const char* err_msg 
 	}
 
 	if (err_msg)
-	{
 		ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, err_msg);
-		return false;
-	}
 
-	return true;
+	return false;
 }
 
 ic_ast_node produce_stmt(const ic_token** it)
@@ -549,13 +546,11 @@ ic_ast_node produce_stmt(const ic_token** it)
 		{
 			ic_ast_node cnode = produce_stmt(it);
 			
-			if (!node.type)
+			if (!cnode.type)
 				return {};
 
 			*next = new ic_ast_node(cnode);
 			next = &(**next).next_right;
-
-			token_advance(it);
 		}
 
 		if (!token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a block statement"))
@@ -575,7 +570,7 @@ ic_ast_node produce_stmt(const ic_token** it)
 		if (!node_condition.type)
 			return {};
 
-		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition statement"))
+		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition"))
 			return {};
 
 		ic_ast_node node_if_body = produce_stmt(it);
@@ -613,7 +608,7 @@ ic_ast_node produce_stmt(const ic_token** it)
 		if (!node_condition.type)
 			return {};
 
-		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition statement"))
+		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition"))
 			return {};
 
 		ic_ast_node node_body = produce_stmt(it);
@@ -642,7 +637,7 @@ ic_ast_node produce_stmt(const ic_token** it)
 		if (!node_header2.type)
 			return {};
 
-		ic_ast_node node_header3 = produce_stmt_expr(it);
+		ic_ast_node node_header3 = produce_expr(it); // this one should not end with ;
 		if (!node_header3.type)
 			return {};
 
@@ -688,7 +683,7 @@ ic_ast_node produce_stmt(const ic_token** it)
 	// end of switch stmt
 	}
 
-	return {};
+	return produce_stmt_expr(it);
 }
 
 ic_ast_node produce_stmt_expr(const ic_token** it)
@@ -741,9 +736,6 @@ ic_ast_node produce_expr(const ic_token** it)
 			cnode.token.type = IC_TOK_NIL;
 		}
 
-		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';'"))
-			return {};
-
 		node.next_right = new ic_ast_node(cnode);
 		return node;
 	}
@@ -763,7 +755,7 @@ ic_ast_node produce_expr_assignment(const ic_token** it)
 	{
 		if (node_left.type != IC_AST_EXPR_PRIMARY && node_left.token.type != IC_TOK_IDENTIFIER)
 		{
-			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "left side of the assignment must be lvalue");
+			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "left side of the assignment must be an lvalue");
 			return {};
 		}
 
