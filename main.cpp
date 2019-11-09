@@ -57,21 +57,20 @@ enum ic_token_type
 	IC_TOK_VAR,
 };
 
-enum ic_ast_type
+enum ic_ast_node_type
 {
-	IC_AST_ERROR,
-	IC_AST_STMT_VAR_DECLARATION,
-	IC_AST_STMT_BLOCK,
-	IC_AST_STMT_WHILE,
-	IC_AST_STMT_IF,
-	IC_AST_STMT_FOR,
-	IC_AST_STMT_RETURN,
-	IC_AST_STMT_SEMICOLON,
-	IC_AST_EXPR_BINARY,
-	IC_AST_EXPR_UNARY,
-	IC_AST_EXPR_FUNCTION_CALL,
-	IC_AST_EXPR_GROUPING,
-	IC_AST_EXPR_PRIMARY,
+	IC_AST_BLOCK,
+	IC_AST_WHILE,
+	IC_AST_FOR,
+	IC_AST_IF,
+	IC_AST_RETURN,
+	IC_AST_SEMICOLON,
+	IC_AST_VAR_DECLARATION,
+	IC_AST_BINARY,
+	IC_AST_UNARY,
+	IC_AST_FUNCTION_CALL,
+	IC_AST_GROUPING,
+	IC_AST_PRIMARY,
 };
 
 enum ic_error_type
@@ -137,16 +136,81 @@ struct ic_token
 
 struct ic_ast_node
 {
-	ic_ast_type type = IC_AST_ERROR;
-	ic_token token;
-	ic_ast_node* next_left = nullptr;
-	ic_ast_node* next_right = nullptr;
+	ic_ast_node_type type;
+
+	union
+	{
+		struct
+		{
+			ic_ast_node* node;
+			ic_ast_node* next;
+		} _block;
+
+		struct
+		{
+			ic_ast_node* header;
+			ic_ast_node* body;
+		} _while;
+
+		struct
+		{
+			ic_ast_node* header1;
+			ic_ast_node* header2;
+			ic_ast_node* header3;
+			ic_ast_node* body;
+		} _for;
+
+		struct
+		{
+			ic_ast_node* header;
+			ic_ast_node* body_if;
+			ic_ast_node* body_else;
+		} _if;
+
+		struct
+		{
+			ic_ast_node* node;
+		} _return;
+
+		struct
+		{
+			ic_ast_node* node;
+			ic_token token_id;
+		} _var_declaration;
+
+		struct
+		{
+			ic_ast_node* left;
+			ic_ast_node* right;
+			ic_token token_operator;
+		} _binary;
+
+		struct
+		{
+			ic_ast_node* node;
+			ic_token token_operator;
+		} _unary;
+
+		struct
+		{
+		} _function_call;
+
+		struct
+		{
+			ic_ast_node* node;
+		} _grouping;
+
+		struct
+		{
+			ic_token token;
+		} _primary;
+	};
 };
 
 struct ic_var
 {
-	ic_value value;
 	ic_string name;
+	ic_value value;
 };
 
 struct ic_scope
@@ -168,9 +232,26 @@ struct ic_structure
 {
 };
 
+#define IC_POOL_SIZE 2048
+
+struct ic_ast_node_pool
+{
+	ic_ast_node data[IC_POOL_SIZE];
+	int size;
+};
+
+struct ic_mem
+{
+	std::vector<ic_ast_node_pool*> pools;
+	int current_pool = 0;
+
+	ic_ast_node* allocate_node(ic_ast_node_type);
+};
+
 struct ic_runtime
 {
-	ic_ast_node _ast;
+	ic_ast_node* _ast;
+	ic_mem _mem;
 	std::vector<ic_function> _functions;
 	std::vector<ic_structure> _structures;
 	std::vector<ic_scope> _scopes;
@@ -181,6 +262,19 @@ struct ic_runtime
 	bool tokenize();
 	bool parse();
 	bool execute();
+	void clean();
+
+	void push_scope();
+	void pop_scope();
+
+	// this one should have an additional api interface,
+	// so if the host program adds new variable we allocate it
+	// and not just reference the soruce code
+	bool add_var(ic_string name, ic_value value);
+
+	ic_value* get_var(ic_string name);
+	bool set_var(ic_string, ic_value value);
+	
 };
 
 int main(int argc, const char** argv)
@@ -208,10 +302,50 @@ int main(int argc, const char** argv)
 	if (!runtime.parse())
 		return 0;
 
-	if (!runtime.execute())
-		return 0;
+	runtime.execute();
+	//runtime.clean();
 
 	return 0;
+}
+
+void ic_runtime::clean()
+{
+	_mem.current_pool = 0;
+
+	for (ic_ast_node_pool* pool : _mem.pools)
+		// it is important to zero out not only size but also nodes
+		memset(pool, 0, sizeof(ic_ast_node_pool));
+}
+
+ic_ast_node* ic_mem::allocate_node(ic_ast_node_type type)
+{
+	bool allocate_new_pool = false;
+
+	if (pools.empty())
+	{
+		allocate_new_pool = true;
+	}
+	else if (pools[current_pool]->size == IC_POOL_SIZE)
+	{
+		current_pool += 1;
+
+		if (current_pool >= pools.size())
+			allocate_new_pool = true;
+	}
+
+	if (allocate_new_pool)
+	{
+		ic_ast_node_pool* new_pool = (ic_ast_node_pool*)malloc(sizeof(ic_ast_node_pool));
+		// it is important to zero out not only size but also nodes
+		memset(new_pool, 0, sizeof(ic_ast_node_pool));
+		pools.push_back(new_pool);
+	}
+
+	ic_ast_node_pool* pool = pools[current_pool];
+	ic_ast_node* node = &pool->data[pool->size];
+	node->type = type;
+	pool->size += 1;
+	return node;
 }
 
 void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
@@ -231,6 +365,145 @@ void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt
 	vprintf(fmt, list);
 	va_end(list);
 	printf("\n");
+}
+
+bool ic_string_compare(ic_string str1, ic_string str2)
+{
+	if (str1.len != str2.len)
+		return false;
+
+	return (strncmp(str1.data, str2.data, str1.len) == 0);
+}
+
+void ic_runtime::push_scope()
+{
+	_scopes.push_back({});
+}
+
+void ic_runtime::pop_scope()
+{
+	_scopes.pop_back();
+}
+
+bool ic_runtime::add_var(ic_string name, ic_value value)
+{
+	bool present = false;
+	for (ic_var& var : _scopes.back().vars)
+	{
+		if (ic_string_compare(var.name, name))
+		{
+			present = true;
+			break;
+		}
+	}
+
+	if (present)
+		return false;
+
+	_scopes.back().vars.push_back({ name, value });
+	return true;
+}
+
+ic_value* ic_runtime::get_var(ic_string name)
+{
+	for (ic_scope& scope : _scopes)
+	{
+		for (ic_var& var : scope.vars)
+		{
+			if (ic_string_compare(var.name, name))
+				return &var.value;
+		}
+	}
+
+	return nullptr;
+}
+
+bool ic_runtime::set_var(ic_string name, ic_value value)
+{
+	for (ic_scope& scope : _scopes)
+	{
+		for (ic_var& var : scope.vars)
+		{
+			if (ic_string_compare(var.name, name))
+			{
+				var.value = value;
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
+{
+	assert(node);
+
+	switch (node->type)
+	{
+	case IC_AST_BLOCK:
+	{
+		runtime.push_scope();
+		while (node)
+		{
+			ic_ast_execute(node->_block.node, runtime);
+			node = node->_block.next;
+		}
+		runtime.pop_scope();
+	}
+	case IC_AST_WHILE:
+	{
+
+	}
+	case IC_AST_FOR:
+	{
+
+	}
+	case IC_AST_IF:
+	{
+
+	}
+	case IC_AST_RETURN:
+	{
+
+	}
+	case IC_AST_SEMICOLON:
+	{
+
+	}
+	case IC_AST_VAR_DECLARATION:
+	{
+
+	}
+	case IC_AST_BINARY:
+	{
+
+	}
+	case IC_AST_UNARY:
+	{
+
+	}
+	case IC_AST_FUNCTION_CALL:
+	{
+
+	}
+	case IC_AST_GROUPING:
+	{
+
+	}
+	case IC_AST_PRIMARY:
+	{
+
+	}
+	// end of switch stmt
+	}
+
+	return true;
+}
+
+bool ic_runtime::execute()
+{
+	return ic_ast_execute(_ast, *this);
 }
 
 struct ic_lexer
@@ -435,10 +708,7 @@ bool ic_runtime::tokenize()
 
 				for (const ic_keyword& keyword : _keywords)
 				{
-					if (strlen(keyword.str) != len)
-						continue;
-
-					if (strncmp(begin_it, keyword.str, len) == 0)
+					if (ic_string_compare({ begin_it, len }, { keyword.str, int(strlen(keyword.str)) }))
 					{
 						is_keyword = true;
 						token_type = keyword.token_type;
@@ -479,14 +749,14 @@ enum ic_op_precedence
 
 // grammar, production rules hierarchy
 
-ic_ast_node produce_stmt(const ic_token** it);
-ic_ast_node produce_stmt_expr(const ic_token** it);
-ic_ast_node produce_expr(const ic_token** it); // in current design variable declaration is an expression
-ic_ast_node produce_expr_assignment(const ic_token** it);
-ic_ast_node produce_expr_binary(const ic_token** it, ic_op_precedence precedence);
-ic_ast_node produce_expr_unary(const ic_token** it);
-ic_ast_node produce_expr_function_call(const ic_token** it);
-ic_ast_node produce_expr_primary(const ic_token** it);
+ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem);
+ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem);
+ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem); // in current design variable declaration is an expression
+ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem);
+ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem);
+ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem);
+ic_ast_node* produce_expr_function_call(const ic_token** it, ic_mem& _mem);
+ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem);
 
 bool ic_runtime::parse()
 {
@@ -502,14 +772,8 @@ bool ic_runtime::parse()
 	}
 
 	const ic_token* it = _tokens.data();
-	_ast = produce_stmt(&it);
-	return _ast.type != 0;
-}
-
-bool ic_runtime::execute()
-{
-	bool success = true;
-	return success;
+	_ast = produce_stmt(&it, _mem);
+	return _ast != nullptr;
 }
 
 void token_advance(const ic_token** it) { ++(*it); }
@@ -529,254 +793,168 @@ bool token_consume(const ic_token** it, ic_token_type type, const char* err_msg 
 	return false;
 }
 
-ic_ast_node produce_stmt(const ic_token** it)
+ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 {
 	switch ((**it).type)
 	{
 	case IC_TOK_LEFT_BRACE:
 	{
 		token_advance(it);
-
-		ic_ast_node node;
-		node.type = IC_AST_STMT_BLOCK;
-
-		ic_ast_node** next = &node.next_right;
+		ic_ast_node* node = _mem.allocate_node(IC_AST_BLOCK);
+		ic_ast_node* block_it = node;
 
 		while (!token_match_type(it, IC_TOK_RIGHT_BRACE) && !token_match_type(it, IC_TOK_EOF))
 		{
-			ic_ast_node cnode = produce_stmt(it);
-			
-			if (!cnode.type)
-				return {};
-
-			*next = new ic_ast_node(cnode);
-			next = &(**next).next_right;
+			ic_ast_node* cnode = produce_stmt(it, _mem);
+			if (!cnode) return {};
+			block_it->_block.node = cnode;
+			block_it->_block.next = _mem.allocate_node(IC_AST_BLOCK);
+			block_it = block_it->_block.next;
 		}
 
-		if (!token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a block statement"))
-			return {};
-
-		return node;
-	}
-	case IC_TOK_IF:
-	{
-		token_advance(it);
-
-		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword"))
-			return {};
-
-		ic_ast_node node_condition = produce_expr(it);
-
-		if (!node_condition.type)
-			return {};
-
-		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition"))
-			return {};
-
-		ic_ast_node node_if_body = produce_stmt(it);
-
-		if (!node_if_body.type)
-			return {};
-
-		ic_ast_node node_else_body;
-
-		if (token_consume(it, IC_TOK_ELSE))
-		{
-			node_else_body = produce_stmt(it);
-
-			if (!node_else_body.type)
-				return {};
-		}
-
-		node_condition.next_right = new ic_ast_node(node_if_body);
-		
-		ic_ast_node node;
-		node.type = IC_AST_STMT_IF;
-		node.next_right = new ic_ast_node(node_if_body);
-		node.next_left = new ic_ast_node(node_else_body);
+		if (!token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a block statement")) return {};
 		return node;
 	}
 	case IC_TOK_WHILE:
 	{
 		token_advance(it);
-
-		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after while keyword"))
-			return {};
-
-		ic_ast_node node_condition = produce_expr(it);
-
-		if (!node_condition.type)
-			return {};
-
-		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition"))
-			return {};
-
-		ic_ast_node node_body = produce_stmt(it);
-
-		if (!node_body.type)
-			return {};
-
-		ic_ast_node node;
-		node.type = IC_AST_STMT_WHILE;
-		node.next_left = new ic_ast_node(node_condition);
-		node.next_right = new ic_ast_node(node_body);
+		ic_ast_node* node = _mem.allocate_node(IC_AST_WHILE);
+		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after while keyword")) return {};
+		node->_while.header = produce_expr(it, _mem);
+		if (!node->_while.header) return {};
+		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition")) return {};
+		node->_while.body = produce_stmt(it, _mem);
+		if (!node->_while.body) return {};
 		return node;
 	}
 	case IC_TOK_FOR:
 	{
 		token_advance(it);
 
-		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword"))
-			return {};
-
-		ic_ast_node node_header1 = produce_stmt_expr(it);
-		if (!node_header1.type)
-			return {};
-
-		ic_ast_node node_header2 = produce_stmt_expr(it);
-		if (!node_header2.type)
-			return {};
-
-		ic_ast_node node_header3 = produce_expr(it); // this one should not end with ;
-		if (!node_header3.type)
-			return {};
-
-		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header"))
-			return {};
-		
-		ic_ast_node node_body = produce_stmt(it);
-		if (!node_body.type)
-			return {};
-
-		node_header1.next_left = new ic_ast_node(node_header2);
-		node_header1.next_right = new ic_ast_node(node_header3);
-
-		ic_ast_node node;
-		node.type = IC_AST_STMT_FOR;
-		node.next_left = new ic_ast_node(node_header1);
-		node.next_right = new ic_ast_node(node_body);
+		ic_ast_node* node = _mem.allocate_node(IC_AST_FOR);
+		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword")) return {};
+		node->_for.header1 = produce_stmt_expr(it, _mem);
+		if (!node->_for.header1) return {};
+		node->_for.header2 = produce_stmt_expr(it, _mem);
+		if (!node->_for.header2) return {};
+		node->_for.header3 = produce_expr(it, _mem); // this one should not end with ;
+		if (!node->_for.header3) return {};
+		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header")) return {};
+		node->_for.body = produce_stmt(it, _mem);
+		if (!node->_for.body) return {};
+		return node;
+	}
+	case IC_TOK_IF:
+	{
+		token_advance(it);
+		ic_ast_node* node = _mem.allocate_node(IC_AST_IF);
+		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword")) return {};
+		node->_if.header = produce_expr(it, _mem);
+		if (!node->_if.header) return {};
+		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition")) return {};
+		node->_if.body_if = produce_stmt(it, _mem);
+		if (!node->_if.body_if) return {};
+		if (token_consume(it, IC_TOK_ELSE))
+		{
+			node->_if.body_else = produce_stmt(it, _mem);
+			if (!node->_if.body_else) return {};
+		}
 		return node;
 	}
 	case IC_TOK_RETURN:
 	{
 		token_advance(it);
-
-		ic_ast_node cnode;
-		cnode.type = IC_AST_EXPR_PRIMARY;
-		cnode.token.type = IC_TOK_NIL;
-
+		ic_ast_node* node = _mem.allocate_node(IC_AST_RETURN);
 		if (!token_match_type(it, IC_TOK_SEMICOLON))
 		{
-			cnode = produce_expr(it);
-			if (!cnode.type)
-				return {};
+			node->_return.node = produce_expr(it, _mem);
+			if (!node->_return.node) return {};
+		}
+		else
+		{
+			ic_ast_node* cnode = _mem.allocate_node(IC_AST_PRIMARY);
+			cnode->_primary.token.type = IC_TOK_NIL;
+			node->_return.node = cnode;
 		}
 
-		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after return statement"))
-			return {};
-
-		ic_ast_node node;
-		node.type = IC_AST_STMT_RETURN;
-		node.next_right = new ic_ast_node(cnode);
+		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after return statement")) return {};
 		return node;
 	}
 	// end of switch stmt
 	}
 
-	return produce_stmt_expr(it);
+	return produce_stmt_expr(it, _mem);
 }
 
-ic_ast_node produce_stmt_expr(const ic_token** it)
+ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem)
 {
 	if (token_consume(it, IC_TOK_SEMICOLON))
-	{
-		ic_ast_node node;
-		node.type = IC_AST_STMT_SEMICOLON;
-		return node;
-	}
+		return _mem.allocate_node(IC_AST_SEMICOLON);
 
-	ic_ast_node node = produce_expr(it);
+	ic_ast_node* node = produce_expr(it, _mem);
+	if (!node) return {};
+	if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression")) return {};
 
-	if (!node.type)
-		return {};
-
-	if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression"))
-		return {};
-
-	if (node.type == IC_AST_EXPR_PRIMARY)
-		ic_print_error(IC_ERR_PARSING, node.token.line, node.token.col, "warning, statement has no effect");
+	if (node->type == IC_AST_PRIMARY)
+		ic_print_error(IC_ERR_PARSING, node->_primary.token.line, node->_primary.token.col, "warning, statement has no effect");
 
 	return node;
 }
 
-ic_ast_node produce_expr(const ic_token** it)
+ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
 {
 	if (token_consume(it, IC_TOK_VAR))
 	{
-		ic_ast_node node;
-		node.type = IC_AST_STMT_VAR_DECLARATION;
-		node.token = **it;
 
-		if (!token_consume(it, IC_TOK_IDENTIFIER, "expected variable name"))
-			return {};
-
-		ic_ast_node cnode;
+		ic_ast_node* node = _mem.allocate_node(IC_AST_VAR_DECLARATION);
+		node->_var_declaration.token_id = **it;
+		if (!token_consume(it, IC_TOK_IDENTIFIER, "expected variable name")) return {};
 
 		if (token_consume(it, IC_TOK_EQUAL))
 		{
-			cnode = produce_expr_assignment(it);
-
-			if (!cnode.type)
-				return {};
+			node->_var_declaration.node = produce_expr_assignment(it, _mem);
+			if (!node->_var_declaration.node) return {};
 		}
 		// init to nil
 		else
 		{
-			cnode.type = IC_AST_EXPR_PRIMARY;
-			cnode.token.type = IC_TOK_NIL;
+			node->_var_declaration.node = _mem.allocate_node(IC_AST_PRIMARY);
+			node->_var_declaration.node->_primary.token.type = IC_TOK_NIL;
 		}
 
-		node.next_right = new ic_ast_node(cnode);
 		return node;
 	}
 
-	return produce_expr_assignment(it);
+	return produce_expr_assignment(it, _mem);
 }
 
 // assignment is right-associative, that's why this operator is not handled in produce_expr_binary()
-ic_ast_node produce_expr_assignment(const ic_token** it)
+ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
 {
-	ic_ast_node node_left = produce_expr_binary(it, IC_PRECDENCE_EQUAL);
-
-	if (!node_left.type)
-		return {};
+	ic_ast_node* node_left = produce_expr_binary(it, IC_PRECDENCE_EQUAL, _mem);
+	if (!node_left) return {};
 
 	if (token_match_type(it, IC_TOK_EQUAL))
 	{
-		if (node_left.type != IC_AST_EXPR_PRIMARY && node_left.token.type != IC_TOK_IDENTIFIER)
+		if (node_left->type != IC_AST_PRIMARY || node_left->_primary.token.type != IC_TOK_IDENTIFIER)
 		{
 			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "left side of the assignment must be an lvalue");
 			return {};
 		}
-
-		ic_ast_node node;
-		node.token = **it;
+		
+		ic_ast_node* node = _mem.allocate_node(IC_AST_BINARY);
+		node->_binary.token_operator = **it;
 		token_advance(it);
-
-		ic_ast_node right_node = produce_expr_assignment(it);
-
-		if (!right_node.type)
-			return {};
-
-		node.next_left = new ic_ast_node(node_left);
-		node.next_right = new ic_ast_node(right_node);
+		node->_binary.right = produce_expr_assignment(it, _mem);
+		if (!node->_binary.right) return {};
+		node->_binary.left = node_left;
 		return node;
 	}
 
 	return node_left;
 }
 
-ic_ast_node produce_expr_binary(const ic_token** it, ic_op_precedence precedence)
+ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem)
 {
 	ic_token_type target_operators[5] = {};
 
@@ -819,13 +997,11 @@ ic_ast_node produce_expr_binary(const ic_token** it, ic_op_precedence precedence
 		break;
 	}
 	case IC_PRECEDENCE_UNARY:
-		return produce_expr_unary(it);
+		return produce_expr_unary(it, _mem);
 	}
 
-	ic_ast_node node = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1));
-
-	if (!node.type)
-		return {};
+	ic_ast_node* node = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), _mem);
+	if (!node) return {};
 
 	for (;;)
 	{
@@ -845,54 +1021,41 @@ ic_ast_node produce_expr_binary(const ic_token** it, ic_op_precedence precedence
 		if (!match)
 			break;
 
-		ic_ast_node new_node;
-		new_node.token = **it;
-		token_advance(it);
-
-		ic_ast_node node_right = produce_expr_binary(it, precedence);
-
-		if (!node_right.type)
-			return {};
-
-		new_node.type = IC_AST_EXPR_BINARY;
-		new_node.next_left = new ic_ast_node(node);
-		new_node.next_right = new ic_ast_node(node_right);
+		ic_ast_node* new_node = _mem.allocate_node(IC_AST_BINARY);
+		new_node->_binary.token_operator = **it;
+		token_advance(it); // order is important here
+		new_node->_binary.right = produce_expr_binary(it, precedence, _mem);
+		if (!new_node->_binary.right) return {};
+		new_node->_binary.left = node;
 		node = new_node;
 	}
 
 	return node;
 }
 
-ic_ast_node produce_expr_unary(const ic_token** it)
+ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
 {
-	ic_ast_node node;
-	node.token = **it;
+	ic_ast_node* node = _mem.allocate_node(IC_AST_UNARY);
+	node->_unary.token_operator = **it;
 
 	if (token_consume(it, IC_TOK_BANG) || token_consume(it, IC_TOK_MINUS))
 	{
-		ic_ast_node cnode = produce_expr(it);
-
-		if (!cnode.type)
-			return {};
-
-		node.type = IC_AST_EXPR_UNARY;
-		node.next_right = new ic_ast_node(cnode);
+		node->_unary.node = produce_expr(it, _mem);
+		if (!node->_unary.node) return {};
 		return node;
 	}
 
-	return produce_expr_function_call(it);
+	return produce_expr_function_call(it, _mem);
 }
 
-ic_ast_node produce_expr_function_call(const ic_token** it)
+ic_ast_node* produce_expr_function_call(const ic_token** it, ic_mem& _mem)
 {
 	// @TODO
-	return produce_expr_primary(it);
+	return produce_expr_primary(it, _mem);
 }
 
-ic_ast_node produce_expr_primary(const ic_token** it)
+ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 {
-	ic_ast_node node;
-
 	switch ((**it).type)
 	{
 	case IC_TOK_FALSE:
@@ -902,25 +1065,18 @@ ic_ast_node produce_expr_primary(const ic_token** it)
 	case IC_TOK_STRING:
 	case IC_TOK_IDENTIFIER:
 	{
-		node.type = IC_AST_EXPR_PRIMARY;
-		node.token = **it;
+		ic_ast_node* node = _mem.allocate_node(IC_AST_PRIMARY);
+		node->_primary.token = **it;
 		token_advance(it);
 		return node;
 	}
-
 	case IC_TOK_LEFT_PAREN:
 	{
 		token_advance(it);
-		ic_ast_node cnode = produce_expr(it);
-
-		if (!cnode.type)
-			return {};
-
-		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after expression"))
-			return {};
-
-		node.type = IC_AST_EXPR_GROUPING;
-		node.next_right = new ic_ast_node(cnode);
+		ic_ast_node* node = _mem.allocate_node(IC_AST_GROUPING);
+		node->_grouping.node = produce_expr(it, _mem);
+		if (!node->_grouping.node) return {};
+		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after expression")) return {};
 		return node;
 	}
 	// end of switch stmt
