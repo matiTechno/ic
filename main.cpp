@@ -15,19 +15,15 @@ enum ic_value_type
 enum ic_token_type
 {
 	IC_TOK_EOF,
-	// single character tokens
 	IC_TOK_LEFT_PAREN,
 	IC_TOK_RIGHT_PAREN,
 	IC_TOK_LEFT_BRACE,
 	IC_TOK_RIGHT_BRACE,
-	IC_TOK_COMMA,
-	IC_TOK_DOT,
 	IC_TOK_MINUS,
 	IC_TOK_PLUS,
 	IC_TOK_SEMICOLON,
 	IC_TOK_SLASH,
 	IC_TOK_STAR,
-	// one or two character tokens
 	IC_TOK_BANG,
 	IC_TOK_BANG_EQUAL,
 	IC_TOK_EQUAL,
@@ -36,20 +32,15 @@ enum ic_token_type
 	IC_TOK_GREATER_EQUAL,
 	IC_TOK_LESS,
 	IC_TOK_LESS_EQUAL,
-	// literals
 	IC_TOK_IDENTIFIER,
 	IC_TOK_STRING,
 	IC_TOK_NUMBER,
-	// keywords
 	IC_TOK_AND,
 	IC_TOK_ELSE,
-	IC_TOK_FALSE,
 	IC_TOK_FOR,
 	IC_TOK_IF,
-	IC_TOK_NIL,
 	IC_TOK_OR,
 	IC_TOK_RETURN,
-	IC_TOK_TRUE,
 	IC_TOK_WHILE,
 	IC_TOK_VAR,
 };
@@ -86,15 +77,12 @@ struct ic_keyword
 static ic_keyword _keywords[] = {
 	{"and", IC_TOK_AND},
 	{"else", IC_TOK_ELSE},
-	{"false", IC_TOK_FALSE},
 	{"for", IC_TOK_FOR},
 	{"if", IC_TOK_IF},
 	{"return", IC_TOK_RETURN},
-	{"nil", IC_TOK_NIL},
 	{"or", IC_TOK_OR},
 	{"var", IC_TOK_VAR},
 	{"while", IC_TOK_WHILE},
-	{"true", IC_TOK_TRUE},
 };
 
 struct ic_value
@@ -206,20 +194,6 @@ struct ic_scope
 	std::vector<ic_var> vars;
 };
 
-struct ic_line
-{
-	const char* data;
-	int len;
-};
-
-struct ic_function
-{
-};
-
-struct ic_structure
-{
-};
-
 #define IC_POOL_SIZE 2048
 
 struct ic_ast_node_pool
@@ -240,16 +214,13 @@ struct ic_runtime
 {
 	ic_ast_node* _ast;
 	ic_mem _mem;
-	std::vector<ic_function> _functions;
-	std::vector<ic_structure> _structures;
 	std::vector<ic_scope> _scopes;
 	std::vector<char> _source_code;
-	std::vector<ic_line> _lines;
 	std::vector<ic_token> _tokens;
 
 	bool tokenize();
 	bool parse();
-	bool execute();
+	void execute();
 	void clean();
 
 	void push_scope();
@@ -487,6 +458,7 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		ic_value value;
 		value = ic_ast_execute(node->_if.header, runtime);
 		if (!value.type) return {};
+		assert(value.type == IC_VAL_NUMBER);
 
 		if (value.number)
 		{
@@ -508,14 +480,13 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	}
 	case IC_AST_SEMICOLON:
 	{
-		ic_value value;
-		value.type = IC_VAL_VOID;
-		return value;
+		return { IC_VAL_VOID };
 	}
 	case IC_AST_VAR_DECLARATION:
 	{
 		ic_value value = ic_ast_execute(node->_var_declaration.node, runtime);
 		if (!value.type) return {};
+		assert(value.type == IC_VAL_NUMBER);
 		ic_token token = node->_var_declaration.token_id;
 		if (!runtime.add_var(token.string, value))
 		{
@@ -526,17 +497,15 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	}
 	case IC_AST_BINARY:
 	{
-		ic_value result;
-		result.type = IC_VAL_NUMBER;
+		ic_value result = { IC_VAL_NUMBER };
 		ic_value lvalue = ic_ast_execute(node->_binary.left, runtime);
 		if (!lvalue.type) return {};
-		assert(lvalue.type == IC_VAL_NUMBER);
 		ic_value rvalue = ic_ast_execute(node->_binary.right, runtime);
 		if (!rvalue.type) return {};
+		assert(lvalue.type == IC_VAL_NUMBER);
 		assert(rvalue.type == IC_VAL_NUMBER);
-		ic_token token = node->_binary.token_operator;
 
-		switch (token.type)
+		switch (node->_binary.token_operator.type)
 		{
 		case IC_TOK_AND:
 			result.number = lvalue.number && rvalue.number;
@@ -547,9 +516,9 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		case IC_TOK_EQUAL:
 		{
 			assert(node->_binary.left->type == IC_AST_PRIMARY);
-			ic_token token_var = node->_binary.left->_primary.token;
-			assert(token_var.type == IC_TOK_IDENTIFIER);
-			runtime.set_var(token_var.string, rvalue);
+			ic_token token = node->_binary.left->_primary.token;
+			assert(token.type == IC_TOK_IDENTIFIER);
+			runtime.set_var(token.string, rvalue);
 			result = rvalue;
 			break;
 		}
@@ -594,14 +563,18 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		ic_value value = ic_ast_execute(node->_unary.node, runtime);
 		if (!value.type) return {};
 		assert(value.type == IC_VAL_NUMBER);
-		ic_token token = node->_unary.token_operator;
 
-		if (token.type == IC_TOK_MINUS)
+		switch (node->_unary.token_operator.type)
+		{
+		case IC_TOK_MINUS:
 			value.number *= -1.0;
-		else if (token.type == IC_TOK_BANG)
+			break;
+		case IC_TOK_BANG:
 			value.number = !value.number;
-		else
+			break;
+		default:
 			assert(false);
+		}
 
 		return value;
 	}
@@ -621,21 +594,18 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		{
 		case IC_TOK_NUMBER:
 		{
-			ic_value value;
-			value.type = IC_VAL_NUMBER;
+			ic_value value = { IC_VAL_NUMBER };
 			value.number = token.number;
 			return value;
 		}
 		case IC_TOK_IDENTIFIER:
 		{
 			ic_value* value = runtime.get_var(token.string);
-
 			if (!value)
 			{
 				ic_print_error(IC_ERR_EXECUCTION, token.line, token.col, "variable with such name does not exist");
 				return {};
 			}
-
 			return *value;
 		}
 		} // end of switch stmt
@@ -645,10 +615,9 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	assert(false);
 }
 
-bool ic_runtime::execute()
+void ic_runtime::execute()
 {
 	ic_ast_execute(_ast, *this);
-	return {};
 }
 
 struct ic_lexer
@@ -724,23 +693,6 @@ bool is_alphanumeric(char c)
 
 bool ic_runtime::tokenize()
 {
-	int line_len = 0;
-	const char* line_data = _source_code.data();
-
-	for (int i = 0; i < _source_code.size(); ++i)
-	{
-		if (_source_code[i] == '\n')
-		{
-			_lines.push_back({ line_data, line_len });
-			line_len = 0;
-			line_data = _source_code.data() + i + 1;
-		}
-		else
-			++line_len;
-	}
-
-	_lines.push_back({ line_data, line_len });
-
 	ic_lexer lexer{ _tokens };
 	lexer._source_it = _source_code.data();
 	bool success = true;
@@ -758,13 +710,10 @@ bool ic_runtime::tokenize()
 		case '\t':
 		case '\n': break;
 
-		// single character
 		case '(': lexer.add_token(IC_TOK_LEFT_PAREN); break;
 		case ')': lexer.add_token(IC_TOK_RIGHT_PAREN); break;
 		case '{': lexer.add_token(IC_TOK_LEFT_BRACE); break;
 		case '}': lexer.add_token(IC_TOK_RIGHT_BRACE); break;
-		case ',': lexer.add_token(IC_TOK_COMMA); break;
-		case '.': lexer.add_token(IC_TOK_DOT); break;
 		case '-': lexer.add_token(IC_TOK_MINUS); break;
 		case '+': lexer.add_token(IC_TOK_PLUS); break;
 		case ';': lexer.add_token(IC_TOK_SEMICOLON); break;
@@ -790,9 +739,6 @@ bool ic_runtime::tokenize()
 			lexer.add_token(lexer.match('=') ? IC_TOK_LESS_EQUAL : IC_TOK_LESS);
 			break;
 		}
-
-		// other
-
 		case '/':
 		{
 			if (!lexer.match('/'))
@@ -804,7 +750,6 @@ bool ic_runtime::tokenize()
 			}
 			break;
 		}
-
 		case '"':
 		{
 			while (!lexer.end() && lexer.advance() != '"')
@@ -822,7 +767,6 @@ bool ic_runtime::tokenize()
 			}
 			break;
 		}
-
 		default:
 		{
 			if (is_digit(c))
@@ -904,7 +848,7 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem);
 
 bool ic_runtime::parse()
 {
-	// temporary hack
+	// @TODO temporary hack
 	{
 		ic_token token;
 
@@ -983,7 +927,7 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		if (!node->_for.header1) return {};
 		node->_for.header2 = produce_stmt_expr(it, _mem);
 		if (!node->_for.header2) return {};
-		node->_for.header3 = produce_expr(it, _mem); // this one should not end with ;
+		node->_for.header3 = produce_expr(it, _mem); // this one should not end with ';', that's why we use don't use produce_stmt_expr()
 		if (!node->_for.header3) return {};
 		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header")) return {};
 		node->_for.body = produce_stmt(it, _mem);
@@ -1016,13 +960,6 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 			node->_return.node = produce_expr(it, _mem);
 			if (!node->_return.node) return {};
 		}
-		else
-		{
-			ic_ast_node* cnode = _mem.allocate_node(IC_AST_PRIMARY);
-			cnode->_primary.token.type = IC_TOK_NIL;
-			node->_return.node = cnode;
-		}
-
 		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after return statement")) return {};
 		return node;
 	}
@@ -1039,10 +976,6 @@ ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem)
 	ic_ast_node* node = produce_expr(it, _mem);
 	if (!node) return {};
 	if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression")) return {};
-
-	if (node->type == IC_AST_PRIMARY)
-		ic_print_error(IC_ERR_PARSING, node->_primary.token.line, node->_primary.token.col, "warning, statement has no effect");
-
 	return node;
 }
 
@@ -1050,7 +983,6 @@ ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
 {
 	if (token_consume(it, IC_TOK_VAR))
 	{
-
 		ic_ast_node* node = _mem.allocate_node(IC_AST_VAR_DECLARATION);
 		node->_var_declaration.token_id = **it;
 		if (!token_consume(it, IC_TOK_IDENTIFIER, "expected variable name")) return {};
@@ -1060,11 +992,11 @@ ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
 			node->_var_declaration.node = produce_expr_assignment(it, _mem);
 			if (!node->_var_declaration.node) return {};
 		}
-		// init to nil; temp
+		// uninitialized variable
 		else
 		{
 			node->_var_declaration.node = _mem.allocate_node(IC_AST_PRIMARY);
-			node->_var_declaration.node->_primary.token.type = IC_TOK_NIL;
+			node->_var_declaration.node->_primary.token.type = IC_TOK_NUMBER;
 		}
 
 		return node;
@@ -1168,7 +1100,7 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
 
 		ic_ast_node* new_node = _mem.allocate_node(IC_AST_BINARY);
 		new_node->_binary.token_operator = **it;
-		token_advance(it); // order is important here
+		token_advance(it);
 		new_node->_binary.right = produce_expr_binary(it, precedence, _mem);
 		if (!new_node->_binary.right) return {};
 		new_node->_binary.left = node;
@@ -1203,9 +1135,6 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 {
 	switch ((**it).type)
 	{
-	case IC_TOK_FALSE:
-	case IC_TOK_TRUE:
-	case IC_TOK_NIL:
 	case IC_TOK_NUMBER:
 	case IC_TOK_STRING:
 	case IC_TOK_IDENTIFIER:
