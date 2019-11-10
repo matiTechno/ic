@@ -12,6 +12,9 @@
 // print source code line in error reporting
 // C types; type checking during parsing
 
+#define IC_POOL_SIZE 2048
+#define IC_MAX_ARGC 20
+
 enum ic_value_type
 {
 	IC_VAL_ERROR,
@@ -220,8 +223,6 @@ struct ic_scope
 	std::vector<ic_var> vars;
 };
 
-#define IC_POOL_SIZE 2048
-
 struct ic_ast_node_pool
 {
 	ic_ast_node data[IC_POOL_SIZE];
@@ -236,14 +237,26 @@ struct ic_mem
 	ic_ast_node* allocate_node(ic_ast_node_type);
 };
 
+using ic_host_function = ic_value(*)(int argc, ic_value* argv);
+
+struct ic_function
+{
+	ic_string name;
+	ic_host_function host_funtion = nullptr;
+	// todo
+};
+
 struct ic_runtime
 {
 	ic_ast_node* _ast;
 	ic_mem _mem;
 	std::vector<ic_scope> _scopes;
+	std::vector<ic_function> _functions;
 	std::vector<char> _source_code;
 	std::vector<ic_token> _tokens;
 
+	bool init();
+	bool run(const char* source);
 	bool tokenize();
 	bool parse();
 	void execute();
@@ -252,13 +265,25 @@ struct ic_runtime
 	void push_scope();
 	void pop_scope();
 
-	// this one should have an additional api interface, so if the host program adds new variable we allocate it
+	// these should have an additional api interface, so if the host program adds new variable we allocate it
 	bool add_var(ic_string name, ic_value value);
+	ic_function* get_fun(ic_string name);
 
 	ic_value* get_var(ic_string name);
 	bool set_var(ic_string, ic_value value);
-	
 };
+
+// todo; check argc and argv in compile time
+ic_value print(int argc, ic_value* argv)
+{
+	if (argc != 1 || argv[0].type != IC_VAL_NUMBER)
+	{
+		printf("only one number argument expected\n");
+		return { IC_VAL_ERROR };
+	}
+	printf("print: %f\n", argv[0].number);
+	return { IC_VAL_VOID };
+}
 
 int main(int argc, const char** argv)
 {
@@ -274,6 +299,15 @@ int main(int argc, const char** argv)
 
 	ic_runtime runtime;
 
+	{
+		static const char* str = "print";
+		ic_string fun_name = { str, strlen(str) };
+		ic_function function;
+		function.host_funtion = print;
+		function.name = fun_name;
+		runtime._functions.push_back(function);
+	}
+
 	runtime._source_code.resize(size);
 	fread(runtime._source_code.data(), 1, size, file);
 	fclose(file);
@@ -286,18 +320,15 @@ int main(int argc, const char** argv)
 		return 0;
 
 	runtime.push_scope(); // global scope
-	const char* var_name = "dupa";
-	ic_string string = { var_name, strlen(var_name) };
-	ic_value value;
-	value.type = IC_VAL_NUMBER;
-	value.number = 666;
-	runtime.add_var(string, value);
 
 	runtime.execute();
 
-	printf("dupa = %f\n", runtime.get_var(string)->number);
-
 	return 0;
+}
+
+bool ic_runtime::init()
+{
+	return true;
 }
 
 void ic_runtime::clean()
@@ -405,7 +436,6 @@ ic_value* ic_runtime::get_var(ic_string name)
 				return &var.value;
 		}
 	}
-
 	return nullptr;
 }
 
@@ -422,8 +452,17 @@ bool ic_runtime::set_var(ic_string name, ic_value value)
 			}
 		}
 	}
-
 	return false;
+}
+
+ic_function* ic_runtime::get_fun(ic_string name)
+{
+	for (ic_function& function : _functions)
+	{
+		if (ic_string_compare(function.name, name))
+			return& function;
+	}
+	return nullptr;
 }
 
 bool is_node_variable(ic_ast_node* node)
@@ -679,7 +718,44 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	}
 	case IC_AST_FUNCTION_CALL:
 	{
-		assert(false);
+		ic_token token_id = node->_function_call.node->_primary.token;
+		ic_function* function = runtime.get_fun(token_id.string);
+		if (!function)
+		{
+			ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "function with such name does not exist");
+			return {};
+		}
+		if (function->host_funtion)
+		{
+			ic_value argv[IC_MAX_ARGC];
+			int argc = 0;
+			ic_ast_node* arg_it = node->_function_call.next;
+			while (arg_it)
+			{
+				ic_value value_arg = ic_ast_execute(arg_it->_function_call.node, runtime);
+				if (!value_arg.type) return {};
+				arg_it = arg_it->_function_call.next;
+				argv[argc] = value_arg;
+				argc += 1;
+			}
+			ic_value value_ret = function->host_funtion(argc, argv);
+			// todo; this should be gone after implementing compile time checks
+			if(!value_ret.type)
+			{
+				ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "%.*s function failed", token_id.string.len,
+					token_id.string.data);
+			}
+			return value_ret;
+		}
+		else // todo
+		{
+			// push scope
+			// add arguments to the scope
+			// execute node
+			// pop scope
+			// and we have to guard everything to handle return statement or use exceptions
+			assert(false);
+		}
 	}
 	case IC_AST_GROUPING:
 	{
@@ -1324,6 +1400,7 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 
 		if (token_consume(it, IC_TOK_LEFT_PAREN))
 		{
+			// todo; check if IC_MAX_PARAM is not exceeded
 			ic_ast_node* node = _mem.allocate_node(IC_AST_FUNCTION_CALL);
 			node->_function_call.node = node_id;
 			ic_ast_node* arg_it = node;
