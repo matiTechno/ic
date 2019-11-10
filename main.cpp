@@ -5,9 +5,11 @@
 #include <string>
 #include <stdarg.h>
 
-// @TODO
+// todo
 // all api functions should be named ic_
 // all implementation functions should be named icp_
+// comma operator
+// print source code line in error reporting
 
 enum ic_value_type
 {
@@ -68,8 +70,8 @@ enum ic_ast_node_type
 	IC_AST_RETURN,
 	IC_AST_BREAK,
 	IC_AST_CONTINUE,
-	IC_AST_SEMICOLON,
 	IC_AST_VAR_DECLARATION,
+	IC_AST_STMT_EMPTY,
 	IC_AST_BINARY,
 	IC_AST_UNARY,
 	IC_AST_FUNCTION_CALL,
@@ -424,7 +426,7 @@ bool is_node_variable(ic_ast_node* node)
 	return node->type == IC_AST_PRIMARY && node->_primary.token.type == IC_TOK_IDENTIFIER;
 }
 
-// @TODO break mechanic seems to be badly designed
+// todo; break mechanic seems to be badly designed
 // currently we have to guard every 'body' and block node execution
 // what about exceptions, maybe it would be better to use exceptions, is it worth it?
 ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
@@ -529,10 +531,6 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	{
 		return { IC_VAL_CONTINUE };
 	}
-	case IC_AST_SEMICOLON:
-	{
-		return { IC_VAL_VOID };
-	}
 	case IC_AST_VAR_DECLARATION:
 	{
 		ic_value value = ic_ast_execute(node->_var_declaration.node, runtime);
@@ -545,6 +543,10 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 			return {};
 		}
 		return value;
+	}
+	case IC_AST_STMT_EMPTY:
+	{
+		return { IC_VAL_VOID };
 	}
 	case IC_AST_BINARY:
 	{
@@ -972,8 +974,9 @@ enum ic_op_precedence
 // grammar, production rules hierarchy
 
 ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem);
+ic_ast_node* produce_stmt_var_declaration(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem); // in current design variable declaration is an expression
+ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem);
 ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem);
@@ -982,7 +985,7 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem);
 
 bool ic_runtime::parse()
 {
-	// @TODO temporary hack
+	// todo; temporary hack
 	{
 		ic_token token;
 
@@ -1057,7 +1060,7 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 
 		ic_ast_node* node = _mem.allocate_node(IC_AST_FOR);
 		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword")) return {};
-		node->_for.header1 = produce_stmt_expr(it, _mem);
+		node->_for.header1 = produce_stmt_var_declaration(it, _mem); // only in header 1 we allow var declaration
 		if (!node->_for.header1) return {};
 		node->_for.header2 = produce_stmt_expr(it, _mem);
 		if (!node->_for.header2) return {};
@@ -1067,7 +1070,7 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 			if (!node->_for.header3) return {};
 		}
 		else
-			node->_for.header3 = _mem.allocate_node(IC_AST_SEMICOLON); // this hack simplifies execution
+			node->_for.header3 = _mem.allocate_node(IC_AST_STMT_EMPTY);
 		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header")) return {};
 		node->_for.body = produce_stmt(it, _mem);
 		if (!node->_for.body) return {};
@@ -1082,7 +1085,7 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		if (!node->_if.header) return {};
 		if (node->_if.header->type == IC_AST_BINARY && node->_if.header->_binary.token_operator.type == IC_TOK_EQUAL)
 		{
-			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "assignment expression can't be used directly in if header");
+			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "assignment expression can't be used directly in if header, encolse it with ()");
 			return {};
 		}
 		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition")) return {};
@@ -1121,13 +1124,37 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 	}
 	} // end of switch stmt
 
+	return produce_stmt_var_declaration(it, _mem);
+}
+
+// this function is seperate from produce_expr_assignment so we don't allow(): var x = var y = 5;
+// and: while(var x = 6);
+ic_ast_node* produce_stmt_var_declaration(const ic_token** it, ic_mem& _mem)
+{
+	if (token_consume(it, IC_TOK_VAR))
+	{
+		ic_ast_node* node = _mem.allocate_node(IC_AST_VAR_DECLARATION);
+		node->_var_declaration.token_id = **it;
+		if (!token_consume(it, IC_TOK_IDENTIFIER, "expected variable name")) return {};
+		if (token_consume(it, IC_TOK_EQUAL))
+		{
+			node->_var_declaration.node = produce_stmt_expr(it, _mem);
+			if (!node->_var_declaration.node) return {};
+			return node;
+		}
+		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name")) return {};
+		// uninitialized variable
+		node->_var_declaration.node = _mem.allocate_node(IC_AST_PRIMARY);
+		node->_var_declaration.node->_primary.token.type = IC_TOK_NUMBER;
+		return node;
+	}
 	return produce_stmt_expr(it, _mem);
 }
 
 ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem)
 {
 	if (token_consume(it, IC_TOK_SEMICOLON))
-		return _mem.allocate_node(IC_AST_SEMICOLON);
+		return _mem.allocate_node(IC_AST_STMT_EMPTY);
 
 	ic_ast_node* node = produce_expr(it, _mem);
 	if (!node) return {};
@@ -1137,27 +1164,6 @@ ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem)
 
 ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
 {
-	if (token_consume(it, IC_TOK_VAR))
-	{
-		ic_ast_node* node = _mem.allocate_node(IC_AST_VAR_DECLARATION);
-		node->_var_declaration.token_id = **it;
-		if (!token_consume(it, IC_TOK_IDENTIFIER, "expected variable name")) return {};
-
-		if (token_consume(it, IC_TOK_EQUAL))
-		{
-			node->_var_declaration.node = produce_expr_assignment(it, _mem);
-			if (!node->_var_declaration.node) return {};
-		}
-		// uninitialized variable
-		else
-		{
-			node->_var_declaration.node = _mem.allocate_node(IC_AST_PRIMARY);
-			node->_var_declaration.node->_primary.token.type = IC_TOK_NUMBER;
-		}
-
-		return node;
-	}
-
 	return produce_expr_assignment(it, _mem);
 }
 
@@ -1172,14 +1178,14 @@ ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
 	{
 		if (!is_node_variable(node_left))
 		{
-			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "left side of the assignment must be an lvalue");
+			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "left side of the assignment must be a variable");
 			return {};
 		}
 		
 		ic_ast_node* node = _mem.allocate_node(IC_AST_BINARY);
 		node->_binary.token_operator = **it;
 		token_advance(it);
-		node->_binary.right = produce_expr_assignment(it, _mem);
+		node->_binary.right = produce_expr(it, _mem);
 		if (!node->_binary.right) return {};
 		node->_binary.left = node_left;
 		return node;
@@ -1255,13 +1261,14 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
 		if (!match)
 			break;
 
-		ic_ast_node* new_node = _mem.allocate_node(IC_AST_BINARY);
-		new_node->_binary.token_operator = **it;
+		// operator matches target precedence
+		ic_ast_node* node_parent = _mem.allocate_node(IC_AST_BINARY);
+		node_parent->_binary.token_operator = **it;
 		token_advance(it);
-		new_node->_binary.right = produce_expr_binary(it, precedence, _mem);
-		if (!new_node->_binary.right) return {};
-		new_node->_binary.left = node;
-		node = new_node;
+		node_parent->_binary.right = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), _mem);
+		if (!node_parent->_binary.right) return {};
+		node_parent->_binary.left = node;
+		node = node_parent;
 	}
 
 	return node;
@@ -1274,18 +1281,18 @@ ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
 
 	if (token_consume(it, IC_TOK_BANG) || token_consume(it, IC_TOK_MINUS))
 	{
-		node->_unary.node = produce_expr(it, _mem);
+		node->_unary.node = produce_expr_unary(it, _mem);
 		if (!node->_unary.node) return {};
 		return node;
 	}
 	else if (token_consume(it, IC_TOK_PLUS_PLUS) || token_consume(it, IC_TOK_MINUS_MINUS))
 	{
-		node->_unary.node = produce_expr(it, _mem);
+		node->_unary.node = produce_expr_primary(it, _mem); // we allow only variable name as the operand
 		if (!node->_unary.node) return {};
 
 		if (!is_node_variable(node->_unary.node))
 		{
-			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "++ and -- operators can have only lvalue operand");
+			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "++ and -- operators can have only a variable as an operand");
 			return {};
 		}
 		return node;
@@ -1296,10 +1303,11 @@ ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
 
 ic_ast_node* produce_expr_function_call(const ic_token** it, ic_mem& _mem)
 {
-	// @TODO
 	return produce_expr_primary(it, _mem);
 }
 
+// grouping expression exists so we don't allow e.g. (x) = 5;
+// and to allow constructions like if( (x = 5) ) {}
 ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 {
 	switch ((**it).type)
@@ -1324,6 +1332,7 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 	}
 	} // end of switch stmt
 
-	ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "expected expression");
+	// 'function call' is here on purpose
+	ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "expected primary, grouping, or function call expression");
 	return {};
 }
