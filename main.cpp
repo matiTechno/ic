@@ -9,7 +9,6 @@
 // all api functions should be named ic_
 // all implementation functions should be named icp_
 // comma operator
-// print source code line in error reporting
 // C types; type checking during parsing
 
 #define IC_POOL_SIZE 2048
@@ -248,42 +247,29 @@ struct ic_function
 
 struct ic_runtime
 {
+	// interface
+	void init();
+	void clean_host_variables();
+	void clean_host_functions();
+	void add_var(const char* name, ic_value value);
+	void add_fun(const char* name, ic_host_function function);
+	bool run(const char* source);
+
+	// implementation
 	ic_ast_node* _ast;
 	ic_mem _mem;
 	std::vector<ic_scope> _scopes;
 	std::vector<ic_function> _functions;
-	std::vector<char> _source_code;
 	std::vector<ic_token> _tokens;
-
-	bool init();
-	bool run(const char* source);
-	bool tokenize();
-	bool parse();
-	void execute();
-	void clean();
 
 	void push_scope();
 	void pop_scope();
-
-	// these should have an additional api interface, so if the host program adds new variable we allocate it
 	bool add_var(ic_string name, ic_value value);
-	ic_function* get_fun(ic_string name);
-
 	ic_value* get_var(ic_string name);
 	bool set_var(ic_string, ic_value value);
+	ic_function* get_fun(ic_string name);
+	bool add_fun(ic_string name, ic_function function);
 };
-
-// todo; check argc and argv in compile time
-ic_value print(int argc, ic_value* argv)
-{
-	if (argc != 1 || argv[0].type != IC_VAL_NUMBER)
-	{
-		printf("only one number argument expected\n");
-		return { IC_VAL_ERROR };
-	}
-	printf("print: %f\n", argv[0].number);
-	return { IC_VAL_VOID };
-}
 
 int main(int argc, const char** argv)
 {
@@ -296,47 +282,99 @@ int main(int argc, const char** argv)
 	assert(size != EOF);
 	assert(size != 0);
 	rewind(file);
+	std::vector<char> source_code;
+	source_code.resize(size + 1);
+	fread(source_code.data(), 1, size, file);
+	source_code.push_back('\0');
+	fclose(file);
 
 	ic_runtime runtime;
-
-	{
-		static const char* str = "print";
-		ic_string fun_name = { str, strlen(str) };
-		ic_function function;
-		function.host_funtion = print;
-		function.name = fun_name;
-		runtime._functions.push_back(function);
-	}
-
-	runtime._source_code.resize(size);
-	fread(runtime._source_code.data(), 1, size, file);
-	fclose(file);
-	runtime._source_code.push_back('\0');
-
-	if (!runtime.tokenize())
-		return 0;
-
-	if (!runtime.parse())
-		return 0;
-
-	runtime.push_scope(); // global scope
-
-	runtime.execute();
-
+	runtime.init();
+	runtime.run(source_code.data());
 	return 0;
 }
 
-bool ic_runtime::init()
+// todo; check argc and argv in compile time
+ic_value ic_host_print(int argc, ic_value* argv)
 {
-	return true;
+	if (argc != 1 || argv[0].type != IC_VAL_NUMBER)
+	{
+		printf("only one number argument expected\n");
+		return { IC_VAL_ERROR };
+	}
+	printf("print: %f\n", argv[0].number);
+	return { IC_VAL_VOID };
 }
 
-void ic_runtime::clean()
+void ic_runtime::init()
 {
-	_mem.current_pool = 0;
+	push_scope(); // global scope
 
+	static const char* str = "print";
+	ic_string name = { str, strlen(str) };
+	ic_function function;
+	function.host_funtion = ic_host_print;
+	function.name = name;
+	// todo; use add_host_function()
+	_functions.push_back(function);
+}
+
+// todo
+void ic_runtime::clean_host_variables()
+{
+}
+
+// todo
+void ic_runtime::clean_host_functions()
+{
+}
+
+// todo; this should also overwrite existing variable
+void ic_runtime::add_var(const char* name, ic_value value)
+{
+}
+
+// todo; overwrite existing function
+void ic_runtime::add_fun(const char* name, ic_host_function function)
+{
+}
+
+bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code);
+ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem);
+ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime);
+
+bool ic_runtime::run(const char* source_code)
+{
+	assert(source_code);
+	// free tokens from previous run
+	_tokens.clear();
+	// free ast from previous run
+	_mem.current_pool = 0;
 	for (ic_ast_node_pool* pool : _mem.pools)
 		pool->size = 0;
+	// todo; clean non-host variables and functions
+
+	if (!ic_tokenize(_tokens, source_code))
+		return false;
+
+	// todo; temporary hack
+	{
+		ic_token token;
+		token.type = IC_TOK_LEFT_BRACE;
+		_tokens.insert(_tokens.begin(), token);
+		token.type = IC_TOK_RIGHT_BRACE;
+		_tokens.insert(_tokens.end() - 1, token);
+	}
+
+	const ic_token* token_it = _tokens.data();
+	_ast = produce_stmt(&token_it, _mem);
+
+	if (!_ast)
+		return false;
+
+	// todo: don't pass entire runtime; only some helper structure
+	ic_value value = ic_ast_execute(_ast, *this);
+	return value.type != IC_VAL_ERROR;
 }
 
 ic_ast_node* ic_mem::allocate_node(ic_ast_node_type type)
@@ -463,6 +501,12 @@ ic_function* ic_runtime::get_fun(ic_string name)
 			return& function;
 	}
 	return nullptr;
+}
+
+// todo
+bool ic_runtime::add_fun(ic_string name, ic_function function)
+{
+	return {};
 }
 
 bool is_node_variable(ic_ast_node* node)
@@ -790,11 +834,6 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	assert(false);
 }
 
-void ic_runtime::execute()
-{
-	ic_ast_execute(_ast, *this);
-}
-
 struct ic_lexer
 {
 	std::vector<ic_token>& _tokens;
@@ -866,10 +905,10 @@ bool is_alphanumeric(char c)
 	return is_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-bool ic_runtime::tokenize()
+bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
 {
-	ic_lexer lexer{ _tokens };
-	lexer._source_it = _source_code.data();
+	ic_lexer lexer{ tokens };
+	lexer._source_it = source_code;
 	bool success = true;
 
 	while (!lexer.end())
@@ -1064,24 +1103,6 @@ ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem);
 ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem);
-
-bool ic_runtime::parse()
-{
-	// todo; temporary hack
-	{
-		ic_token token;
-
-		token.type = IC_TOK_LEFT_BRACE;
-		_tokens.insert(_tokens.begin(), token);
-
-		token.type = IC_TOK_RIGHT_BRACE;
-		_tokens.insert(_tokens.end() - 1, token);
-	}
-
-	const ic_token* it = _tokens.data();
-	_ast = produce_stmt(&it, _mem);
-	return _ast != nullptr;
-}
 
 void token_advance(const ic_token** it) { ++(*it); }
 bool token_match_type(const ic_token** it, ic_token_type type) { return (**it).type == type; }
