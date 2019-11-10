@@ -10,6 +10,7 @@
 // all implementation functions should be named icp_
 // comma operator
 // print source code line in error reporting
+// C types; type checking during parsing
 
 enum ic_value_type
 {
@@ -59,6 +60,7 @@ enum ic_token_type
 	IC_TOK_MINUS_MINUS,
 	IC_TOK_BREAK,
 	IC_TOK_CONTINUE,
+	IC_TOK_COMMA
 };
 
 enum ic_ast_node_type
@@ -75,6 +77,8 @@ enum ic_ast_node_type
 	IC_AST_BINARY,
 	IC_AST_UNARY,
 	IC_AST_FUNCTION_CALL,
+	// grouping node exists so we don't allow e.g. (x) = 5;
+	// and to allow constructions like if( (x = 5) ) {}
 	IC_AST_GROUPING,
 	IC_AST_PRIMARY,
 };
@@ -189,6 +193,8 @@ struct ic_ast_node
 
 		struct
 		{
+			ic_ast_node* node;
+			ic_ast_node* next;
 		} _function_call;
 
 		struct
@@ -808,6 +814,7 @@ bool ic_runtime::tokenize()
 		case '{': lexer.add_token(IC_TOK_LEFT_BRACE); break;
 		case '}': lexer.add_token(IC_TOK_RIGHT_BRACE); break;
 		case ';': lexer.add_token(IC_TOK_SEMICOLON); break;
+		case ',': lexer.add_token(IC_TOK_COMMA); break;
 
 		case '!':
 		{
@@ -980,7 +987,6 @@ ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem);
 ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_expr_function_call(const ic_token** it, ic_mem& _mem);
 ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem);
 
 bool ic_runtime::parse()
@@ -1168,6 +1174,8 @@ ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
 }
 
 // assignment is right-associative, that's why this operator is not handled in produce_expr_binary()
+// todo; but we can control associativity in produce_expr_binary()
+// maybe we can handle assingment there, I will try to merge these functions when implementing type checking
 ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
 {
 	ic_ast_node* node_left = produce_expr_binary(it, IC_PRECDENCE_COMPARE_EQUAL, _mem);
@@ -1265,6 +1273,7 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
 		ic_ast_node* node_parent = _mem.allocate_node(IC_AST_BINARY);
 		node_parent->_binary.token_operator = **it;
 		token_advance(it);
+		// here we can control associativity; +1 (left), +0 (right)
 		node_parent->_binary.right = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), _mem);
 		if (!node_parent->_binary.right) return {};
 		node_parent->_binary.left = node;
@@ -1298,16 +1307,9 @@ ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
 		return node;
 	}
 
-	return produce_expr_function_call(it, _mem);
-}
-
-ic_ast_node* produce_expr_function_call(const ic_token** it, ic_mem& _mem)
-{
 	return produce_expr_primary(it, _mem);
 }
 
-// grouping expression exists so we don't allow e.g. (x) = 5;
-// and to allow constructions like if( (x = 5) ) {}
 ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 {
 	switch ((**it).type)
@@ -1316,10 +1318,31 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 	case IC_TOK_STRING:
 	case IC_TOK_IDENTIFIER:
 	{
-		ic_ast_node* node = _mem.allocate_node(IC_AST_PRIMARY);
-		node->_primary.token = **it;
+		ic_ast_node* node_id = _mem.allocate_node(IC_AST_PRIMARY);
+		node_id->_primary.token = **it;
 		token_advance(it);
-		return node;
+
+		if (token_consume(it, IC_TOK_LEFT_PAREN))
+		{
+			ic_ast_node* node = _mem.allocate_node(IC_AST_FUNCTION_CALL);
+			node->_function_call.node = node_id;
+			ic_ast_node* arg_it = node;
+			if (token_consume(it, IC_TOK_RIGHT_PAREN))
+				return node;
+			for(;;)
+			{
+				ic_ast_node* cnode = _mem.allocate_node(IC_AST_FUNCTION_CALL);
+				cnode->_function_call.node = produce_expr(it, _mem);
+				if (!cnode->_function_call.node) return {};
+				arg_it->_function_call.next = cnode;
+				arg_it = cnode;
+				if (token_consume(it, IC_TOK_RIGHT_PAREN)) break;
+				if (!token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument")) return {};
+			}
+			return node;
+		}
+
+		return node_id;
 	}
 	case IC_TOK_LEFT_PAREN:
 	{
@@ -1332,7 +1355,6 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 	}
 	} // end of switch stmt
 
-	// 'function call' is here on purpose
 	ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "expected primary, grouping, or function call expression");
 	return {};
 }
