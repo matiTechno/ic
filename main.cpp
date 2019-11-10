@@ -5,11 +5,17 @@
 #include <string>
 #include <stdarg.h>
 
+// @TODO
+// all api functions should be named ic_
+// all implementation functions should be named icp_
+
 enum ic_value_type
 {
 	IC_VAL_ERROR,
 	IC_VAL_VOID,
 	IC_VAL_NUMBER,
+	IC_VAL_BREAK,
+	IC_VAL_CONTINUE,
 };
 
 enum ic_token_type
@@ -43,6 +49,14 @@ enum ic_token_type
 	IC_TOK_RETURN,
 	IC_TOK_WHILE,
 	IC_TOK_VAR,
+	IC_TOK_PLUS_EQUAL,
+	IC_TOK_MINUS_EQUAL,
+	IC_TOK_STAR_EQUAL,
+	IC_TOK_SLASH_EQUAL,
+	IC_TOK_PLUS_PLUS,
+	IC_TOK_MINUS_MINUS,
+	IC_TOK_BREAK,
+	IC_TOK_CONTINUE,
 };
 
 enum ic_ast_node_type
@@ -52,6 +66,8 @@ enum ic_ast_node_type
 	IC_AST_FOR,
 	IC_AST_IF,
 	IC_AST_RETURN,
+	IC_AST_BREAK,
+	IC_AST_CONTINUE,
 	IC_AST_SEMICOLON,
 	IC_AST_VAR_DECLARATION,
 	IC_AST_BINARY,
@@ -83,6 +99,8 @@ static ic_keyword _keywords[] = {
 	{"or", IC_TOK_OR},
 	{"var", IC_TOK_VAR},
 	{"while", IC_TOK_WHILE},
+	{"break", IC_TOK_BREAK},
+	{"continue", IC_TOK_CONTINUE},
 };
 
 struct ic_value
@@ -279,8 +297,7 @@ void ic_runtime::clean()
 	_mem.current_pool = 0;
 
 	for (ic_ast_node_pool* pool : _mem.pools)
-		// it is important to zero out not only size but also nodes
-		memset(pool, 0, sizeof(ic_ast_node_pool));
+		pool->size = 0;
 }
 
 ic_ast_node* ic_mem::allocate_node(ic_ast_node_type type)
@@ -302,13 +319,13 @@ ic_ast_node* ic_mem::allocate_node(ic_ast_node_type type)
 	if (allocate_new_pool)
 	{
 		ic_ast_node_pool* new_pool = (ic_ast_node_pool*)malloc(sizeof(ic_ast_node_pool));
-		// it is important to zero out not only size but also nodes
-		memset(new_pool, 0, sizeof(ic_ast_node_pool));
+		new_pool->size = 0;
 		pools.push_back(new_pool);
 	}
 
 	ic_ast_node_pool* pool = pools[current_pool];
 	ic_ast_node* node = &pool->data[pool->size];
+	memset(node, 0, sizeof(ic_ast_node)); // this is important
 	node->type = type;
 	pool->size += 1;
 	return node;
@@ -401,6 +418,15 @@ bool ic_runtime::set_var(ic_string name, ic_value value)
 	return false;
 }
 
+bool is_node_variable(ic_ast_node* node)
+{
+	assert(node);
+	return node->type == IC_AST_PRIMARY && node->_primary.token.type == IC_TOK_IDENTIFIER;
+}
+
+// @TODO break mechanic seems to be badly designed
+// currently we have to guard every 'body' and block node execution
+// what about exceptions, maybe it would be better to use exceptions, is it worth it?
 ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 {
 	assert(node);
@@ -414,6 +440,11 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		{
 			ic_value value = ic_ast_execute(node->_block.node, runtime);
 			if (!value.type) return {};
+			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
+			{
+				runtime.pop_scope();
+				return value;
+			}
 			node = node->_block.next;
 		}
 		runtime.pop_scope();
@@ -429,6 +460,7 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 			if (!value.number) break;
 			value = ic_ast_execute(node->_while.body, runtime);
 			if (!value.type) return {};
+			if (value.type == IC_VAL_BREAK) break;
 		}
 		runtime.pop_scope();
 		return { IC_VAL_VOID };
@@ -446,6 +478,7 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 			if (value.type == IC_VAL_NUMBER && !value.number) break;
 			value = ic_ast_execute(node->_for.body, runtime);
 			if (!value.type) return {};
+			if (value.type == IC_VAL_BREAK) break;
 			value = ic_ast_execute(node->_for.header3, runtime);
 			if (!value.type) return {};
 		}
@@ -464,11 +497,21 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		{
 			value = ic_ast_execute(node->_if.body_if, runtime);
 			if (!value.type) return {};
+			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
+			{
+				runtime.pop_scope();
+				return value;
+			}
 		}
-		else
+		else if(node->_if.body_else)
 		{
 			value = ic_ast_execute(node->_if.body_else, runtime);
 			if (!value.type) return {};
+			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
+			{
+				runtime.pop_scope();
+				return value;
+			}
 		}
 
 		runtime.pop_scope();
@@ -477,6 +520,14 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	case IC_AST_RETURN:
 	{
 		assert(false);
+	}
+	case IC_AST_BREAK:
+	{
+		return { IC_VAL_BREAK };
+	}
+	case IC_AST_CONTINUE:
+	{
+		return { IC_VAL_CONTINUE };
 	}
 	case IC_AST_SEMICOLON:
 	{
@@ -515,11 +566,37 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 			break;
 		case IC_TOK_EQUAL:
 		{
-			assert(node->_binary.left->type == IC_AST_PRIMARY);
-			ic_token token = node->_binary.left->_primary.token;
-			assert(token.type == IC_TOK_IDENTIFIER);
-			runtime.set_var(token.string, rvalue);
+			assert(is_node_variable(node->_binary.left));
 			result = rvalue;
+			runtime.set_var(node->_binary.left->_primary.token.string, result);
+			break;
+		}
+		case IC_TOK_PLUS_EQUAL:
+		{
+			assert(is_node_variable(node->_binary.left));
+			result.number = lvalue.number + rvalue.number;
+			runtime.set_var(node->_binary.left->_primary.token.string, result);
+			break;
+		}
+		case IC_TOK_MINUS_EQUAL:
+		{
+			assert(is_node_variable(node->_binary.left));
+			result.number = lvalue.number - rvalue.number;
+			runtime.set_var(node->_binary.left->_primary.token.string, result);
+			break;
+		}
+		case IC_TOK_STAR_EQUAL:
+		{
+			assert(is_node_variable(node->_binary.left));
+			result.number = lvalue.number * rvalue.number;
+			runtime.set_var(node->_binary.left->_primary.token.string, result);
+			break;
+		}
+		case IC_TOK_SLASH_EQUAL:
+		{
+			assert(is_node_variable(node->_binary.left));
+			result.number = lvalue.number / rvalue.number;
+			runtime.set_var(node->_binary.left->_primary.token.string, result);
 			break;
 		}
 		case IC_TOK_BANG_EQUAL:
@@ -572,6 +649,20 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		case IC_TOK_BANG:
 			value.number = !value.number;
 			break;
+		case IC_TOK_MINUS_MINUS:
+		{
+			value.number -= 1;
+			assert(is_node_variable(node->_unary.node));
+			runtime.set_var(node->_unary.node->_primary.token.string, value);
+			break;
+		}
+		case IC_TOK_PLUS_PLUS:
+		{
+			value.number += 1;
+			assert(is_node_variable(node->_unary.node));
+			runtime.set_var(node->_unary.node->_primary.token.string, value);
+			break;
+		}
 		default:
 			assert(false);
 		}
@@ -668,7 +759,7 @@ struct ic_lexer
 		return c;
 	}
 
-	bool match(char c)
+	bool consume(char c)
 	{
 		if (end())
 			return false;
@@ -714,40 +805,83 @@ bool ic_runtime::tokenize()
 		case ')': lexer.add_token(IC_TOK_RIGHT_PAREN); break;
 		case '{': lexer.add_token(IC_TOK_LEFT_BRACE); break;
 		case '}': lexer.add_token(IC_TOK_RIGHT_BRACE); break;
-		case '-': lexer.add_token(IC_TOK_MINUS); break;
-		case '+': lexer.add_token(IC_TOK_PLUS); break;
 		case ';': lexer.add_token(IC_TOK_SEMICOLON); break;
-		case '*': lexer.add_token(IC_TOK_STAR); break;
 
 		case '!':
 		{
-			lexer.add_token(lexer.match('=') ? IC_TOK_BANG_EQUAL : IC_TOK_BANG);
+			lexer.add_token(lexer.consume('=') ? IC_TOK_BANG_EQUAL : IC_TOK_BANG);
 			break;
 		}
 		case '=':
 		{
-			lexer.add_token(lexer.match('=') ? IC_TOK_EQUAL_EQUAL : IC_TOK_EQUAL);
+			lexer.add_token(lexer.consume('=') ? IC_TOK_EQUAL_EQUAL : IC_TOK_EQUAL);
 			break;
 		}
 		case '>':
 		{
-			lexer.add_token(lexer.match('=') ? IC_TOK_GREATER_EQUAL : IC_TOK_GREATER);
+			lexer.add_token(lexer.consume('=') ? IC_TOK_GREATER_EQUAL : IC_TOK_GREATER);
 			break;
 		}
 		case '<':
 		{
-			lexer.add_token(lexer.match('=') ? IC_TOK_LESS_EQUAL : IC_TOK_LESS);
+			lexer.add_token(lexer.consume('=') ? IC_TOK_LESS_EQUAL : IC_TOK_LESS);
+			break;
+		}
+		case '*':
+		{
+			if (lexer.consume('='))
+				lexer.add_token(IC_TOK_STAR_EQUAL);
+			else
+				lexer.add_token(IC_TOK_STAR);
+
+			break;
+		}
+		case '-':
+		{
+			if (lexer.consume('='))
+				lexer.add_token(IC_TOK_MINUS_EQUAL);
+			else if (lexer.consume('-'))
+				lexer.add_token(IC_TOK_MINUS_MINUS);
+			else
+				lexer.add_token(IC_TOK_MINUS);
+
+			break;
+		}
+		case '+':
+		{
+			if (lexer.consume('='))
+				lexer.add_token(IC_TOK_PLUS_EQUAL);
+			else if (lexer.consume('+'))
+				lexer.add_token(IC_TOK_PLUS_PLUS);
+			else
+				lexer.add_token(IC_TOK_PLUS);
+
+			break;
+		}
+		case '&':
+		{
+			if (lexer.consume('&'))
+				lexer.add_token(IC_TOK_AND);
+			break;
+		}
+		case '|':
+		{
+			if (lexer.consume('|'))
+				lexer.add_token(IC_TOK_OR);
 			break;
 		}
 		case '/':
 		{
-			if (!lexer.match('/'))
-				lexer.add_token(IC_TOK_SLASH);
-			else
+			if (lexer.consume('='))
+				lexer.add_token(IC_TOK_SLASH_EQUAL);
+			else if (lexer.consume('/'))
 			{
 				while (!lexer.end() && lexer.advance() != '\n')
 					;
 			}
+			else
+				lexer.add_token(IC_TOK_SLASH);
+
 			break;
 		}
 		case '"':
@@ -927,8 +1061,13 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		if (!node->_for.header1) return {};
 		node->_for.header2 = produce_stmt_expr(it, _mem);
 		if (!node->_for.header2) return {};
-		node->_for.header3 = produce_expr(it, _mem); // this one should not end with ';', that's why we use don't use produce_stmt_expr()
-		if (!node->_for.header3) return {};
+		if ((**it).type != IC_TOK_RIGHT_PAREN)
+		{
+			node->_for.header3 = produce_expr(it, _mem); // this one should not end with ';', that's why we don't use produce_stmt_expr()
+			if (!node->_for.header3) return {};
+		}
+		else
+			node->_for.header3 = _mem.allocate_node(IC_AST_SEMICOLON); // this hack simplifies execution
 		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header")) return {};
 		node->_for.body = produce_stmt(it, _mem);
 		if (!node->_for.body) return {};
@@ -941,6 +1080,11 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		if (!token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword")) return {};
 		node->_if.header = produce_expr(it, _mem);
 		if (!node->_if.header) return {};
+		if (node->_if.header->type == IC_AST_BINARY && node->_if.header->_binary.token_operator.type == IC_TOK_EQUAL)
+		{
+			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "assignment expression can't be used directly in if header");
+			return {};
+		}
 		if (!token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition")) return {};
 		node->_if.body_if = produce_stmt(it, _mem);
 		if (!node->_if.body_if) return {};
@@ -962,6 +1106,18 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		}
 		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after return statement")) return {};
 		return node;
+	}
+	case IC_TOK_BREAK:
+	{
+		token_advance(it);
+		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after break keyword")) return {};
+		return _mem.allocate_node(IC_AST_BREAK);
+	}
+	case IC_TOK_CONTINUE:
+	{
+		token_advance(it);
+		if (!token_consume(it, IC_TOK_SEMICOLON, "expected ';' after continue keyword")) return {};
+		return _mem.allocate_node(IC_AST_CONTINUE);
 	}
 	} // end of switch stmt
 
@@ -1011,9 +1167,10 @@ ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
 	ic_ast_node* node_left = produce_expr_binary(it, IC_PRECDENCE_COMPARE_EQUAL, _mem);
 	if (!node_left) return {};
 
-	if (token_match_type(it, IC_TOK_EQUAL))
+	if (token_match_type(it, IC_TOK_EQUAL) || token_match_type(it, IC_TOK_PLUS_EQUAL) || token_match_type(it, IC_TOK_MINUS_EQUAL) ||
+		token_match_type(it, IC_TOK_STAR_EQUAL) || token_match_type(it, IC_TOK_SLASH_EQUAL))
 	{
-		if (node_left->type != IC_AST_PRIMARY || node_left->_primary.token.type != IC_TOK_IDENTIFIER)
+		if (!is_node_variable(node_left))
 		{
 			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "left side of the assignment must be an lvalue");
 			return {};
@@ -1119,6 +1276,18 @@ ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
 	{
 		node->_unary.node = produce_expr(it, _mem);
 		if (!node->_unary.node) return {};
+		return node;
+	}
+	else if (token_consume(it, IC_TOK_PLUS_PLUS) || token_consume(it, IC_TOK_MINUS_MINUS))
+	{
+		node->_unary.node = produce_expr(it, _mem);
+		if (!node->_unary.node) return {};
+
+		if (!is_node_variable(node->_unary.node))
+		{
+			ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, "++ and -- operators can have only lvalue operand");
+			return {};
+		}
 		return node;
 	}
 
