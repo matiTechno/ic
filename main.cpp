@@ -13,6 +13,7 @@
 // C types; type checking during parsing
 // print source code line on error
 // execution should always succeed
+// use exceptions in parsing and execution to simplify code
 
 #define IC_POOL_SIZE 2048
 #define IC_MAX_ARGC 20
@@ -225,6 +226,7 @@ struct ic_var
 struct ic_scope
 {
 	std::vector<ic_var> vars;
+	bool new_call_frame; // so variables do not leak to lower functions
 };
 
 struct ic_ast_node_pool
@@ -297,6 +299,7 @@ struct ic_runtime
 	void clean_host_variables();
 	void clean_host_functions();
 	void add_var(const char* name, ic_value value);
+	ic_value* get_var(const char* name);
 	void add_fun(const char* name, ic_host_function function);
 	bool run(const char* source);
 
@@ -306,7 +309,7 @@ struct ic_runtime
 	std::vector<ic_scope> _scopes;
 	std::vector<ic_function> _functions;
 
-	void push_scope();
+	void push_scope(bool new_call_frame = false);
 	void pop_scope();
 	bool add_var(ic_string name, ic_value value);
 	ic_value* get_var(ic_string name);
@@ -376,6 +379,12 @@ void ic_runtime::clean_host_functions()
 // todo; this should also overwrite existing variable
 void ic_runtime::add_var(const char* name, ic_value value)
 {
+}
+
+// todo
+ic_value* ic_runtime::get_var(const char* name)
+{
+	return {};
 }
 
 // todo; overwrite existing function
@@ -496,9 +505,10 @@ void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt
 	printf("\n");
 }
 
-void ic_runtime::push_scope()
+void ic_runtime::push_scope(bool new_call_frame)
 {
 	_scopes.push_back({});
+	_scopes.back().new_call_frame = new_call_frame;
 }
 
 void ic_runtime::pop_scope()
@@ -534,6 +544,10 @@ ic_value* ic_runtime::get_var(ic_string name)
 			if (ic_string_compare(var.name, name))
 				return &var.value;
 		}
+
+		// go to the global scope, so no variables leaked from the parent function
+		if (_scopes[i].new_call_frame)
+			i = 1;
 	}
 	return nullptr;
 }
@@ -581,19 +595,20 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	{
 	case IC_AST_BLOCK:
 	{
-		if(node->_block.push_scope) runtime.push_scope();
+		bool push = node->_block.push_scope;
+		if(push) runtime.push_scope();
 		while (node->_block.node)
 		{
 			ic_value value = ic_ast_execute(node->_block.node, runtime);
 			if (!value.type) return {};
 			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
 			{
-				if(node->_block.push_scope) runtime.pop_scope();
+				if(push) runtime.pop_scope();
 				return value;
 			}
 			node = node->_block.next;
 		}
-		if(node->_block.push_scope) runtime.pop_scope();
+		if(push) runtime.pop_scope();
 		return { IC_VAL_VOID };
 	}
 	case IC_AST_WHILE:
@@ -850,7 +865,7 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		}
 		
 		assert(function->type == IC_FUN_SOURCE);
-		runtime.push_scope();
+		ic_value argv[IC_MAX_ARGC];
 		int argc = 0;
 		ic_ast_node* arg_it = node->_function_call.next;
 		while (arg_it)
@@ -858,8 +873,9 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 			ic_value value_arg = ic_ast_execute(arg_it->_function_call.node, runtime);
 			if (!value_arg.type) return {};
 			arg_it = arg_it->_function_call.next;
-			runtime.add_var(function->source.param[argc], value_arg);
+			argv[argc] = value_arg;
 			argc += 1;
+			assert(argc <= IC_MAX_ARGC);
 			if (argc > function->source.param_count) break;
 		}
 		if (argc != function->source.param_count)
@@ -868,9 +884,14 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 				printf("error; main function must have 0 parameters\n");
 			else
 				ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "number of arguments does not match");
-			runtime.pop_scope();
 			return {};
 		}
+		// all arguments must be retrieved before upper scopes are hidden
+		runtime.push_scope(true);
+
+		for(int i = 0; i < argc; ++i)
+			runtime.add_var(function->source.param[i], argv[i]);
+
 		ic_value value_ret = ic_ast_execute(function->source.node_body, runtime);
 		if(!value_ret.type && token_id.col) // don't print that main() failed
 			ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "function call failed");
