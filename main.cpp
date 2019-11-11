@@ -545,7 +545,7 @@ ic_value* ic_runtime::get_var(ic_string name)
 				return &var.value;
 		}
 
-		// go to the global scope, so no variables leaked from the parent function
+		// go to the global scope, so no variables leak from the parent function
 		if (_scopes[i].new_call_frame)
 			i = 1;
 	}
@@ -554,9 +554,9 @@ ic_value* ic_runtime::get_var(ic_string name)
 
 bool ic_runtime::set_var(ic_string name, ic_value value)
 {
-	for (ic_scope& scope : _scopes)
+	for(int i = _scopes.size() - 1; i >= 0; --i)
 	{
-		for (ic_var& var : scope.vars)
+		for (ic_var& var : _scopes[i].vars)
 		{
 			if (ic_string_compare(var.name, name))
 			{
@@ -564,6 +564,10 @@ bool ic_runtime::set_var(ic_string name, ic_value value)
 				return true;
 			}
 		}
+
+		// go to the global scope, so no variables leak from the parent function
+		if (_scopes[i].new_call_frame)
+			i = 1;
 	}
 	return false;
 }

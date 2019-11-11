@@ -16,7 +16,7 @@ dupa(x)
 // todo, this should work
 dupa1(v)
 {
-	v = v - 1;
+	v -= 1;
 	if(v > 0)
 	{
 		dupa1(v);
@@ -28,7 +28,7 @@ dupa1(v)
 main()
 {
 
-dupa(55);
+dupa1(4);
 
 var dupa = 5 * 2 + 1 * (2 + 1);
 
