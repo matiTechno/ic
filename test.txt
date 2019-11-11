@@ -1,105 +1,15 @@
-add(x, y)
+factorial(n)
 {
-	print(x + y);
-}
-
-funkcja(x)
-{
-	//print(ula); // this should fail; functions should have separate scopes
-}
-
-dupa(x)
-{
-	print(x);
-}
-
-// todo, this should work
-dupa1(v)
-{
-	v -= 1;
-	if(v > 0)
-	{
-		dupa1(v);
-		print(v);
-	}
-}
-
-
-xxxxmain()
-{
-dupa(3 - 4 + 2 + 1 + 5);
-dupa1(4);
-
-var dupa = 5 * 2 + 1 * (2 + 1);
-
-for(var i = 0; i < 5; i = i + 1)
-	dupa = dupa + 1;
-	
-var times = 100;
-
-while(times > 0)
-{
-	dupa = dupa + 1;
-	times = times - 1;
-}
-//dupa = dupa + 1;
-
-if (dupa == 784)
-	dupa = 999;
-else
-	dupa = 555;
-	
-var d = 5;
-
-for(;;)
-{
-	if(d == 0)
-		break;
+	if(n == 1 || n == 0)
+		return 1;
 		
-	dupa -= 1;
-	d -= 1;
+	return n * factorial(n - 1);
 }
-
-dupa = 1;
-for(var i = 0; i < 2; ++i)
-{
-	dupa += 5;
-	continue;
-	dupa += 5;
-}
-
-var x = 5;
-var y = 6;
-var z = 7;
-
-dupa = x = y = z;
-
-dupa = 8 / 4 / 2;
-dupa = 4 - 2 - 1;
-//var x = var z = 5; // this should not compile
-
-if( (z = 0) )
-	dupa = 69;
-else
-	dupa = 9;
-	
-print(dupa);
-print(x);
-
-dupa(9999);
-
-add(6, 5);
-
-var ula = 69;
-dupa(x);
-
-funkcja(1);
-
-dupa1(5);
-}
-
 
 main()
 {
-print(4 / 2 / 2);
+	print(factorial(9));
+	print(factorial(1));
+	print(factorial(0));
+	print(factorial(3));
 }

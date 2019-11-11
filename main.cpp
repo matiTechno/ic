@@ -10,7 +10,7 @@
 // all api functions should be named ic_
 // all implementation functions / enums / etc. should be named ic_p_
 // comma operator
-// C types; type checking during parsing
+// C types; type checking pass
 // print source code line on error
 // execution should always succeed
 
@@ -253,6 +253,7 @@ struct ic_function
 
 	union
 	{
+		// todo; host function signature for type checking
 		ic_host_function host;
 		struct
 		{
@@ -706,7 +707,8 @@ ic_value ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 	}
 	case IC_AST_RETURN:
 	{
-		assert(false);
+		ic_value value = ic_ast_execute(node->_return.node, runtime);
+		throw ic_exception_return{ value };
 	}
 	case IC_AST_BREAK:
 	{
@@ -876,13 +878,26 @@ ic_value ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 
 			// all arguments must be retrieved before upper scopes are hidden
 			runtime.push_scope(true);
+			int num_scopes = runtime._scopes.size();
 
 			for(int i = 0; i < argc; ++i)
 				runtime.add_var(function->source.params[i], argv[i]);
 
-			ic_value value_ret = ic_ast_execute(function->source.node_body, runtime);
+			ic_value value = {}; // if not initialized visual studio thorws and exception
+
+			try
+			{
+				ic_ast_execute(function->source.node_body, runtime);
+			}
+			catch (ic_exception_return& e)
+			{
+				value = e.value;
+				// restore correct number of scopes
+				runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
+			}
+
 			runtime.pop_scope();
-			return value_ret;
+			return value;
 		}
 	}
 	case IC_AST_GROUPING:
@@ -1170,7 +1185,7 @@ enum ic_op_precedence
 {
 	IC_PRECEDENCE_OR,
 	IC_PRECEDENCE_AND,
-	IC_PRECDENCE_COMPARE_EQUAL,
+	IC_PRECEDENCE_COMPARE_EQUAL,
 	IC_PRECEDENCE_COMPARE_GREATER,
 	IC_PRECEDENCE_ADDITION,
 	IC_PRECEDENCE_MULTIPLICATION,
@@ -1405,7 +1420,7 @@ ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
 
 ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
 {
-	ic_ast_node* node_left = produce_expr_binary(it, IC_PRECDENCE_COMPARE_EQUAL, _mem);
+	ic_ast_node* node_left = produce_expr_binary(it, IC_PRECEDENCE_OR, _mem);
 
 	if (token_match_type(it, IC_TOK_EQUAL) || token_match_type(it, IC_TOK_PLUS_EQUAL) || token_match_type(it, IC_TOK_MINUS_EQUAL) ||
 		token_match_type(it, IC_TOK_STAR_EQUAL) || token_match_type(it, IC_TOK_SLASH_EQUAL))
@@ -1440,7 +1455,7 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
 		target_operators[0] = IC_TOK_AND;
 		break;
 	}
-	case IC_PRECDENCE_COMPARE_EQUAL:
+	case IC_PRECEDENCE_COMPARE_EQUAL:
 	{
 		target_operators[0] = IC_TOK_EQUAL_EQUAL;
 		target_operators[1] = IC_TOK_BANG_EQUAL;
