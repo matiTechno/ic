@@ -25,9 +25,9 @@ dupa1(v)
 }
 
 
-main()
+xxxxmain()
 {
-
+dupa(3 - 4 + 2 + 1 + 5);
 dupa1(4);
 
 var dupa = 5 * 2 + 1 * (2 + 1);
@@ -96,4 +96,10 @@ dupa(x);
 funkcja(1);
 
 dupa1(5);
+}
+
+
+main()
+{
+print(4 / 2 / 2);
 }
