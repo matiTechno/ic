@@ -61,15 +61,14 @@ enum ic_token_type
 
 enum ic_ast_node_type
 {
+	IC_AST_NIL,
 	IC_AST_BLOCK,
-	IC_AST_WHILE,
-	IC_AST_FOR,
+	IC_AST_FOR, // while is implemented as a for statement
 	IC_AST_IF,
 	IC_AST_RETURN,
 	IC_AST_BREAK,
 	IC_AST_CONTINUE,
 	IC_AST_VAR_DECLARATION,
-	IC_AST_STMT_EMPTY,
 	IC_AST_BINARY,
 	IC_AST_UNARY,
 	IC_AST_FUNCTION_CALL,
@@ -82,22 +81,15 @@ enum ic_ast_node_type
 
 enum ic_value_type
 {
-	IC_VAL_ERROR,
-	IC_VAL_VOID,
 	IC_VAL_NUMBER,
-	IC_VAL_BREAK,
-	IC_VAL_CONTINUE,
 };
 
 enum ic_error_type
 {
 	IC_ERR_LEXING,
 	IC_ERR_PARSING,
-	IC_ERR_EXECUCTION,
+	IC_ERR_EXECUTION,
 };
-
-struct ic_exception
-{};
 
 struct ic_keyword
 {
@@ -264,8 +256,8 @@ struct ic_function
 		ic_host_function host;
 		struct
 		{
-			ic_string params[IC_MAX_ARGC];
 			int param_count;
+			ic_string params[IC_MAX_ARGC];
 			ic_ast_node* node_body;
 			// todo return type
 		} source;
@@ -294,6 +286,15 @@ struct ic_definition
 	};
 };
 
+struct ic_exception_parsing {};
+struct ic_exception_execution {};
+struct ic_exception_break {};
+struct ic_exception_continue {};
+struct ic_exception_return
+{
+	ic_value value;
+};
+
 struct ic_runtime
 {
 	// interface
@@ -308,6 +309,7 @@ struct ic_runtime
 	// implementation
 	ic_mem _mem;
 	std::vector<ic_token> _tokens;
+	// todo; this is inefficient (vector in vector)
 	std::vector<ic_scope> _scopes;
 	std::vector<ic_function> _functions;
 
@@ -351,7 +353,7 @@ ic_value ic_host_print(int argc, ic_value* argv)
 		return {};
 	}
 	printf("print: %f\n", argv[0].number);
-	return { IC_VAL_VOID };
+	return {};
 }
 
 void ic_runtime::init()
@@ -403,9 +405,8 @@ bool ic_string_compare(ic_string str1, ic_string str2)
 
 bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code);
 ic_definition produce_definition(const ic_token** it, ic_mem& _mem);
-ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime);
+ic_value ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime);
 
-// return ic_value not bool
 bool ic_runtime::run(const char* source_code)
 {
 	assert(source_code);
@@ -442,7 +443,7 @@ bool ic_runtime::run(const char* source_code)
 		{
 			definition = produce_definition(&token_it, _mem);
 		}
-		catch (ic_exception&)
+		catch (ic_exception_parsing)
 		{
 			return false;
 		}
@@ -464,13 +465,26 @@ bool ic_runtime::run(const char* source_code)
 	ic_string name = { str, int(strlen(str)) };
 	ic_token token;
 	token.type = IC_TOK_IDENTIFIER;
-	token.col = 0; // special case for main function
 	token.string = name;
-
 	ic_ast_node* node = _mem.allocate_node(IC_AST_FUNCTION_CALL);
 	node->_function_call.node = _mem.allocate_node(IC_AST_PRIMARY);
 	node->_function_call.node->_primary.token = token;
-	return ic_ast_execute(node, *this).type != IC_VAL_ERROR;
+
+	// todo; excecution should never fail
+	try
+	{
+		ic_ast_execute(node, *this);
+	}
+	catch(ic_exception_execution)
+	{
+		return false;
+	}
+	catch (ic_exception_return)
+	{
+		assert(false);
+	}
+
+	return true;
 }
 
 ic_ast_node* ic_mem::allocate_node(ic_ast_node_type type)
@@ -606,10 +620,16 @@ bool is_node_identifier(ic_ast_node* node)
 	return node->type == IC_AST_PRIMARY && node->_primary.token.type == IC_TOK_IDENTIFIER;
 }
 
-// todo; break mechanic seems to be badly designed
-// currently we have to guard every 'body' and block node execution
-// what about exceptions, maybe it would be better to use exceptions, is it worth it?
-ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
+void exit_execution(ic_token& token, const char* err_msg, ...)
+{
+	va_list list;
+	va_start(list, err_msg);
+	ic_print_error(IC_ERR_EXECUTION, token.line, token.col, err_msg, list);
+	va_end(list);
+	throw ic_exception_execution{};
+}
+
+ic_value ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 {
 	assert(node);
 
@@ -618,87 +638,71 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	case IC_AST_BLOCK:
 	{
 		bool push = node->_block.push_scope;
-		if(push) runtime.push_scope();
+
+		if(push)
+			runtime.push_scope();
+
 		while (node->_block.node)
 		{
-			ic_value value = ic_ast_execute(node->_block.node, runtime);
-			if (!value.type) return {};
-			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
-			{
-				if(push) runtime.pop_scope();
-				return value;
-			}
+			ic_ast_execute(node->_block.node, runtime);
 			node = node->_block.next;
 		}
-		if(push) runtime.pop_scope();
-		return { IC_VAL_VOID };
-	}
-	case IC_AST_WHILE:
-	{
-		runtime.push_scope();
-		for (;;)
-		{
-			ic_value value = ic_ast_execute(node->_while.header, runtime);
-			if (!value.type) return {};
-			if (!value.number) break;
-			value = ic_ast_execute(node->_while.body, runtime);
-			if (!value.type) return {};
-			if (value.type == IC_VAL_BREAK) break;
-		}
-		runtime.pop_scope();
-		return { IC_VAL_VOID };
+
+		if(push)
+			runtime.pop_scope();
+
+		return {};
 	}
 	case IC_AST_FOR:
 	{
 		runtime.push_scope();
-		ic_value value;
-		value = ic_ast_execute(node->_for.header1, runtime);
-		if (!value.type) return {};
+		int num_scopes = runtime._scopes.size();
+		ic_ast_execute(node->_for.header1, runtime);
+
 		for (;;)
 		{
-			value = ic_ast_execute(node->_for.header2, runtime);
-			if (!value.type) return {};
-			if (value.type == IC_VAL_NUMBER && !value.number) break;
-			value = ic_ast_execute(node->_for.body, runtime);
-			if (!value.type) return {};
-			if (value.type == IC_VAL_BREAK) break;
-			value = ic_ast_execute(node->_for.header3, runtime);
-			if (!value.type) return {};
+			ic_value value = ic_ast_execute(node->_for.header2, runtime);
+			assert(value.type == IC_VAL_NUMBER);
+
+			if(!value.number)
+				break;
+
+			try
+			{
+				ic_ast_execute(node->_for.body, runtime);
+			}
+			catch (ic_exception_break)
+			{
+				// restore correct number of scopes
+				runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
+				break;
+			}
+			catch (ic_exception_continue)
+			{
+				runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
+			}
+
+			ic_ast_execute(node->_for.header3, runtime);
 		}
+
 		runtime.pop_scope();
-		return { IC_VAL_VOID };
+		return {};
 	}
 	case IC_AST_IF:
 	{
 		runtime.push_scope();
 		ic_value value;
 		value = ic_ast_execute(node->_if.header, runtime);
-		if (!value.type) return {};
 		assert(value.type == IC_VAL_NUMBER);
 
 		if (value.number)
-		{
-			value = ic_ast_execute(node->_if.body_if, runtime);
-			if (!value.type) return {};
-			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
-			{
-				runtime.pop_scope();
-				return value;
-			}
-		}
+			ic_ast_execute(node->_if.body_if, runtime);
+
 		else if(node->_if.body_else)
-		{
-			value = ic_ast_execute(node->_if.body_else, runtime);
-			if (!value.type) return {};
-			if (value.type == IC_VAL_BREAK || value.type == IC_VAL_CONTINUE)
-			{
-				runtime.pop_scope();
-				return value;
-			}
-		}
+			ic_ast_execute(node->_if.body_else, runtime);
 
 		runtime.pop_scope();
-		return { IC_VAL_VOID };
+		return {};
 	}
 	case IC_AST_RETURN:
 	{
@@ -706,36 +710,32 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	}
 	case IC_AST_BREAK:
 	{
-		return { IC_VAL_BREAK };
+		throw ic_exception_break{};
 	}
 	case IC_AST_CONTINUE:
 	{
-		return { IC_VAL_CONTINUE };
+		throw ic_exception_continue{};
 	}
 	case IC_AST_VAR_DECLARATION:
 	{
 		ic_value value = ic_ast_execute(node->_var_declaration.node, runtime);
-		if (!value.type) return {};
 		assert(value.type == IC_VAL_NUMBER);
 		ic_token token = node->_var_declaration.token_id;
+
 		if (!runtime.add_var(token.string, value))
-		{
-			ic_print_error(IC_ERR_EXECUCTION, token.line, token.col, "variable with such name already exists in the current scope");
-			return {};
-		}
+			exit_execution(token, "variable with such name already exists in the current scope");
+
 		return value;
 	}
-	case IC_AST_STMT_EMPTY:
+	case IC_AST_NIL:
 	{
-		return { IC_VAL_VOID };
+		return {};
 	}
 	case IC_AST_BINARY:
 	{
 		ic_value result = { IC_VAL_NUMBER };
 		ic_value lvalue = ic_ast_execute(node->_binary.left, runtime);
-		if (!lvalue.type) return {};
 		ic_value rvalue = ic_ast_execute(node->_binary.right, runtime);
-		if (!rvalue.type) return {};
 		assert(lvalue.type == IC_VAL_NUMBER);
 		assert(rvalue.type == IC_VAL_NUMBER);
 
@@ -748,40 +748,30 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 			result.number = lvalue.number || rvalue.number;
 			break;
 		case IC_TOK_EQUAL:
-		{
 			assert(is_node_identifier(node->_binary.left));
 			result = rvalue;
 			runtime.set_var(node->_binary.left->_primary.token.string, result);
 			break;
-		}
 		case IC_TOK_PLUS_EQUAL:
-		{
 			assert(is_node_identifier(node->_binary.left));
 			result.number = lvalue.number + rvalue.number;
 			runtime.set_var(node->_binary.left->_primary.token.string, result);
 			break;
-		}
 		case IC_TOK_MINUS_EQUAL:
-		{
 			assert(is_node_identifier(node->_binary.left));
 			result.number = lvalue.number - rvalue.number;
 			runtime.set_var(node->_binary.left->_primary.token.string, result);
 			break;
-		}
 		case IC_TOK_STAR_EQUAL:
-		{
 			assert(is_node_identifier(node->_binary.left));
 			result.number = lvalue.number * rvalue.number;
 			runtime.set_var(node->_binary.left->_primary.token.string, result);
 			break;
-		}
 		case IC_TOK_SLASH_EQUAL:
-		{
 			assert(is_node_identifier(node->_binary.left));
 			result.number = lvalue.number / rvalue.number;
 			runtime.set_var(node->_binary.left->_primary.token.string, result);
 			break;
-		}
 		case IC_TOK_BANG_EQUAL:
 			result.number = lvalue.number != rvalue.number;
 			break;
@@ -821,7 +811,6 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	case IC_AST_UNARY:
 	{
 		ic_value value = ic_ast_execute(node->_unary.node, runtime);
-		if (!value.type) return {};
 		assert(value.type == IC_VAL_NUMBER);
 
 		switch (node->_unary.token_operator.type)
@@ -854,71 +843,47 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	}
 	case IC_AST_FUNCTION_CALL:
 	{
-		// todo; check params
 		ic_token token_id = node->_function_call.node->_primary.token;
 		ic_function* function = runtime.get_fun(token_id.string);
+
 		if (!function)
-		{
-			if (token_id.col == 0)
-				printf("error; main function missing\n");
-			else
-				ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "function with such name does not exist");
-			return {};
-		}
-		if (function->type == IC_FUN_HOST)
-		{
-			assert(function->host);
-			ic_value argv[IC_MAX_ARGC];
-			int argc = 0;
-			ic_ast_node* arg_it = node->_function_call.next;
-			while (arg_it)
-			{
-				ic_value value_arg = ic_ast_execute(arg_it->_function_call.node, runtime);
-				if (!value_arg.type) return {};
-				arg_it = arg_it->_function_call.next;
-				argv[argc] = value_arg;
-				argc += 1;
-				assert(argc <= IC_MAX_ARGC);
-			}
-			ic_value value_ret = function->host(argc, argv);
-			if(!value_ret.type)
-				ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "function call failed");
-			return value_ret;
-		}
-		
-		assert(function->type == IC_FUN_SOURCE);
-		ic_value argv[IC_MAX_ARGC];
+			exit_execution(token_id, "function with such name does not exist");
+
 		int argc = 0;
+		ic_value argv[IC_MAX_ARGC];
 		ic_ast_node* arg_it = node->_function_call.next;
+
 		while (arg_it)
 		{
+			assert(argc < IC_MAX_ARGC);
 			ic_value value_arg = ic_ast_execute(arg_it->_function_call.node, runtime);
-			if (!value_arg.type) return {};
 			arg_it = arg_it->_function_call.next;
 			argv[argc] = value_arg;
 			argc += 1;
-			assert(argc <= IC_MAX_ARGC);
-			if (argc > function->source.param_count) break;
 		}
-		if (argc != function->source.param_count)
+
+		if (function->type == IC_FUN_HOST)
 		{
-			if (token_id.col == 0)
-				printf("error; main function must have 0 parameters\n");
-			else
-				ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "number of arguments does not match");
-			return {};
+			assert(function->host);
+			return function->host(argc, argv);
 		}
-		// all arguments must be retrieved before upper scopes are hidden
-		runtime.push_scope(true);
+		else
+		{
+			assert(function->type == IC_FUN_SOURCE);
 
-		for(int i = 0; i < argc; ++i)
-			runtime.add_var(function->source.params[i], argv[i]);
+			if (argc != function->source.param_count)
+				exit_execution(token_id, "number of arguments does not match");
 
-		ic_value value_ret = ic_ast_execute(function->source.node_body, runtime);
-		if(!value_ret.type && token_id.col) // don't print that main() failed
-			ic_print_error(IC_ERR_EXECUCTION, token_id.line, token_id.col, "function call failed");
-		runtime.pop_scope();
-		return value_ret;
+			// all arguments must be retrieved before upper scopes are hidden
+			runtime.push_scope(true);
+
+			for(int i = 0; i < argc; ++i)
+				runtime.add_var(function->source.params[i], argv[i]);
+
+			ic_value value_ret = ic_ast_execute(function->source.node_body, runtime);
+			runtime.pop_scope();
+			return value_ret;
+		}
 	}
 	case IC_AST_GROUPING:
 	{
@@ -939,11 +904,10 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 		case IC_TOK_IDENTIFIER:
 		{
 			ic_value* value = runtime.get_var(token.string);
+
 			if (!value)
-			{
-				ic_print_error(IC_ERR_EXECUCTION, token.line, token.col, "variable with such name does not exist");
-				return {};
-			}
+				exit_execution(token, "variable with such name does not exist");
+
 			return *value;
 		}
 		} // end of switch stmt
@@ -951,6 +915,7 @@ ic_value ic_ast_execute(ic_ast_node* node, ic_runtime& runtime)
 	}
 	} // end of switch stmt
 	assert(false);
+	return {};
 }
 
 struct ic_lexer
@@ -1238,7 +1203,7 @@ bool token_consume(const ic_token** it, ic_token_type type, const char* err_msg 
 	if (err_msg)
 	{
 		ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, err_msg);
-		throw ic_exception{};
+		throw ic_exception_parsing{};
 	}
 
 	return false;
@@ -1250,7 +1215,7 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
 	va_start(list, err_msg);
 	ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, err_msg, list);
 	va_end(list);
-	throw ic_exception{};
+	throw ic_exception_parsing{};
 }
 
 ic_definition produce_definition(const ic_token** it, ic_mem& _mem)
@@ -1319,14 +1284,17 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a block statement");
 		return node;
 	}
+	// implemented as a IC_AST_FOR
 	case IC_TOK_WHILE:
 	{
 		token_advance(it);
-		ic_ast_node* node = _mem.allocate_node(IC_AST_WHILE);
+		ic_ast_node* node = _mem.allocate_node(IC_AST_FOR);
 		token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after while keyword");
-		node->_while.header = produce_expr(it, _mem);
+		node->_for.header2 = produce_expr(it, _mem);
 		token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition");
-		node->_while.body = produce_stmt(it, _mem);
+		node->_for.body = produce_stmt(it, _mem);
+		node->_for.header1 = _mem.allocate_node(IC_AST_NIL);
+		node->_for.header2 = _mem.allocate_node(IC_AST_NIL);
 		return node;
 	}
 	case IC_TOK_FOR:
@@ -1340,7 +1308,7 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
 		if (!token_match_type(it, IC_TOK_RIGHT_PAREN))
 			node->_for.header3 = produce_expr(it, _mem); // this one should not end with ';', that's why we don't use produce_stmt_expr()
 		else
-			node->_for.header3 = _mem.allocate_node(IC_AST_STMT_EMPTY);
+			node->_for.header3 = _mem.allocate_node(IC_AST_NIL);
 
 		token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header");
 		node->_for.body = produce_stmt(it, _mem);
@@ -1420,7 +1388,7 @@ ic_ast_node* produce_stmt_var_declaration(const ic_token** it, ic_mem& _mem)
 ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem)
 {
 	if (token_consume(it, IC_TOK_SEMICOLON))
-		return _mem.allocate_node(IC_AST_STMT_EMPTY);
+		return _mem.allocate_node(IC_AST_NIL);
 
 	ic_ast_node* node = produce_expr(it, _mem);
 	token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression");
@@ -1578,12 +1546,18 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 			if (token_consume(it, IC_TOK_RIGHT_PAREN))
 				return node;
 
+			int argc = 0;
+
 			for(;;)
 			{
 				ic_ast_node* cnode = _mem.allocate_node(IC_AST_FUNCTION_CALL);
 				cnode->_function_call.node = produce_expr(it, _mem);
 				arg_it->_function_call.next = cnode;
 				arg_it = cnode;
+				++argc;
+
+				if(argc > IC_MAX_ARGC)
+					exit_parsing(it, "exceeded maximal number of arguments (%d)", IC_MAX_ARGC);
 
 				if (token_consume(it, IC_TOK_RIGHT_PAREN))
 					break;
