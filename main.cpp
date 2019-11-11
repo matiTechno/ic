@@ -8,27 +8,14 @@
 // ic - interpreted c
 // todo
 // all api functions should be named ic_
-// all implementation functions should be named icp_
+// all implementation functions / enums / etc. should be named ic_p_
 // comma operator
 // C types; type checking during parsing
 // print source code line on error
 // execution should always succeed
-// use exceptions in parsing and execution to simplify code
 
 #define IC_POOL_SIZE 2048
 #define IC_MAX_ARGC 10
-
-enum ic_value_type
-{
-	IC_VAL_ERROR,
-	IC_VAL_VOID,
-	IC_VAL_NUMBER,
-	IC_VAL_BREAK,
-	IC_VAL_CONTINUE,
-};
-
-struct ic_exception
-{};
 
 enum ic_token_type
 {
@@ -86,10 +73,20 @@ enum ic_ast_node_type
 	IC_AST_BINARY,
 	IC_AST_UNARY,
 	IC_AST_FUNCTION_CALL,
-	// grouping node exists so we don't allow e.g. (x) = 5;
-	// and to allow constructions like if( (x = 5) ) {}
+	// grouping node exists so constructions like these are not allowed:
+	// (x) = 5;
+	// if( (x = 5) ) {}
 	IC_AST_GROUPING,
 	IC_AST_PRIMARY,
+};
+
+enum ic_value_type
+{
+	IC_VAL_ERROR,
+	IC_VAL_VOID,
+	IC_VAL_NUMBER,
+	IC_VAL_BREAK,
+	IC_VAL_CONTINUE,
 };
 
 enum ic_error_type
@@ -98,6 +95,9 @@ enum ic_error_type
 	IC_ERR_PARSING,
 	IC_ERR_EXECUCTION,
 };
+
+struct ic_exception
+{};
 
 struct ic_keyword
 {
@@ -116,12 +116,6 @@ static ic_keyword _keywords[] = {
 	{"while", IC_TOK_WHILE},
 	{"break", IC_TOK_BREAK},
 	{"continue", IC_TOK_CONTINUE},
-};
-
-struct ic_value
-{
-	ic_value_type type;
-	double number;
 };
 
 struct ic_string
@@ -153,7 +147,7 @@ struct ic_ast_node
 		{
 			ic_ast_node* node;
 			ic_ast_node* next;
-			// todo: this is ugly design, it prevents shadowing of function arguments
+			// todo; ugly design?
 			bool push_scope;
 		} _block;
 
@@ -218,6 +212,12 @@ struct ic_ast_node
 			ic_token token;
 		} _primary;
 	};
+};
+
+struct ic_value
+{
+	ic_value_type type;
+	double number;
 };
 
 struct ic_var
@@ -298,12 +298,12 @@ struct ic_runtime
 {
 	// interface
 	void init();
-	void clean_host_variables();
 	void clean_host_functions();
-	void add_var(const char* name, ic_value value);
-	ic_value* get_var(const char* name);
+	void clean_global_vars(); // use this before next run()
+	void add_var_global(const char* name, ic_value value);
+	ic_value* get_var_global(const char* name);
 	void add_fun(const char* name, ic_host_function function);
-	bool run(const char* source);
+	bool run(const char* source); // after run() variables can be extracted
 
 	// implementation
 	ic_mem _mem;
@@ -369,22 +369,21 @@ void ic_runtime::init()
 }
 
 // todo
-void ic_runtime::clean_host_variables()
-{
-}
-
-// todo
 void ic_runtime::clean_host_functions()
 {
 }
 
+void ic_runtime::clean_global_vars()
+{
+}
+
 // todo; this should also overwrite existing variable
-void ic_runtime::add_var(const char* name, ic_value value)
+void ic_runtime::add_var_global(const char* name, ic_value value)
 {
 }
 
 // todo
-ic_value* ic_runtime::get_var(const char* name)
+ic_value* ic_runtime::get_var_global(const char* name)
 {
 	return {};
 }
@@ -416,7 +415,20 @@ bool ic_runtime::run(const char* source_code)
 	_mem.current_pool = 0;
 	for (ic_ast_node_pool* pool : _mem.pools)
 		pool->size = 0;
-	// todo; clean non-host variables and functions
+
+	assert(_scopes.size() == 1);
+
+	// remove source functions from previous run
+	{
+		auto it = _functions.begin();
+		for (; it != _functions.end(); ++it)
+		{
+			if (it->type == IC_FUN_SOURCE)
+				break;
+		}
+		_functions.erase(it, _functions.end());
+	}
+
 
 	if (!ic_tokenize(_tokens, source_code))
 		return false;
