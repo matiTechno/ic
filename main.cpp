@@ -13,6 +13,7 @@
 // print source code line on error
 // execution should always succeed
 // type casting operator
+// somehow support multithreading? run function ast on separate thread?
 
 template<typename T, int N>
 struct ic_deque
@@ -240,7 +241,7 @@ struct ic_value
     union
     {
         double number;
-        ic_value* pointer;
+        void* pointer;
     };
 };
 
@@ -307,7 +308,7 @@ struct ic_global
 struct ic_exe_result
 {
     // todo; redundant?
-    ic_value* lvalue_address;
+    void* lvalue_data_address;
     ic_value value;
 };
 
@@ -636,7 +637,7 @@ void exit_execution(const ic_token& token, const char* err_msg, ...)
 
 void assert_lvalue(const ic_exe_result& result, const ic_token& token)
 {
-    if (!result.lvalue_address)
+    if (!result.lvalue_data_address)
         exit_execution(token, "expected lvalue");
 }
 
@@ -791,7 +792,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         // todo; separate cases into functions and remove this helper code block
         // separate by operator or operand type?
         ic_exe_result out_result;
-        out_result.lvalue_address = nullptr;
+        out_result.lvalue_data_address = nullptr;
         out_result.value.indirection_count = 0;
         out_result.value.type = IC_VAL_NUMBER;
 
@@ -819,8 +820,9 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         {
             assert_lvalue(in_left_result, token);
             in_left_result.value = in_right_result.value;
+            assert(in_left_result.value.type == IC_VAL_NUMBER);
             // todo: this is kind of redundant
-            *in_left_result.lvalue_address = in_left_result.value;
+            *(double*)in_left_result.lvalue_data_address = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_PLUS_EQUAL:
@@ -831,7 +833,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number += in_right_result.value.number;
-            in_left_result.lvalue_address->number = in_left_result.value.number;
+            assert(in_left_result.value.type == IC_VAL_NUMBER);
+            *(double*)in_left_result.lvalue_data_address = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_MINUS_EQUAL:
@@ -842,7 +845,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number += in_right_result.value.number;
-            in_left_result.lvalue_address->number = in_left_result.value.number;
+            assert(in_left_result.value.type == IC_VAL_NUMBER);
+            *(double*)in_left_result.lvalue_data_address = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_STAR_EQUAL:
@@ -853,7 +857,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number *= in_right_result.value.number;
-            in_left_result.lvalue_address->number = in_left_result.value.number;
+            assert(in_left_result.value.type == IC_VAL_NUMBER);
+            *(double*)in_left_result.lvalue_data_address = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_SLASH_EQUAL:
@@ -864,7 +869,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number /= in_right_result.value.number;
-            in_left_result.lvalue_address->number = in_left_result.value.number;
+            assert(in_left_result.value.type == IC_VAL_NUMBER);
+            *(double*)in_left_result.lvalue_data_address = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_BANG_EQUAL:
@@ -975,7 +981,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 
             assert_non_pointer(in_result, token);
             in_result.value.number *= -1.0;
-            in_result.lvalue_address = nullptr;
+            in_result.lvalue_data_address = nullptr;
             return in_result;
         }
         case IC_TOK_BANG:
@@ -985,7 +991,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 
             assert_non_pointer(in_result, token);
             in_result.value.number = !in_result.value.number;
-            in_result.lvalue_address = nullptr;
+            in_result.lvalue_data_address = nullptr;
             return in_result;
         }
         case IC_TOK_MINUS_MINUS:
@@ -996,7 +1002,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_lvalue(in_result, token);
             assert_non_pointer(in_result, token);
             in_result.value.number -= 1;
-            in_result.lvalue_address->number = in_result.value.number;
+            assert(in_result.value.type == IC_VAL_NUMBER);
+            *(double*)in_result.lvalue_data_address = in_result.value.number;
             return in_result;
         }
         case IC_TOK_PLUS_PLUS:
@@ -1007,27 +1014,40 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_lvalue(in_result, token);
             assert_non_pointer(in_result, token);
             in_result.value.number += 1;
-            in_result.lvalue_address->number = in_result.value.number;
+            assert(in_result.value.type == IC_VAL_NUMBER);
+            *(double*)in_result.lvalue_data_address = in_result.value.number;
             return in_result;
         }
         case IC_TOK_AMPERSAND:
         {
             assert_lvalue(in_result, token);
             ic_exe_result out_result;
-            out_result.lvalue_address = nullptr;
+            out_result.lvalue_data_address = nullptr;
             out_result.value.type = in_result.value.type;
             out_result.value.indirection_count = in_result.value.indirection_count + 1;
-            out_result.value.pointer = in_result.lvalue_address;
+            out_result.value.pointer = in_result.lvalue_data_address;
             return out_result;
         }
         case IC_TOK_STAR:
         {
-            if (in_result.value.indirection_count == 0)
-                exit_execution(token, "cannot dereference non-pointer");
+            int indirection_count = in_result.value.indirection_count;
 
+            if(!indirection_count)
+                exit_execution(token, "cannot dereference non-pointer");
+            
             ic_exe_result out_result;
-            out_result.lvalue_address = in_result.value.pointer;
-            out_result.value = *in_result.value.pointer;
+            out_result.value.indirection_count = indirection_count - 1;
+            out_result.value.type = in_result.value.type;
+            out_result.lvalue_data_address = in_result.value.pointer;
+
+            if (indirection_count == 1)
+            {
+                assert(in_result.value.type == IC_VAL_NUMBER);
+                out_result.value.number = *(double*)in_result.value.pointer;
+            }
+            else
+                out_result.value.pointer = (void*)*(char**)in_result.value.pointer;
+
             return out_result;
         }
         } // switch
@@ -1062,7 +1082,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             ic_value value = function->host(argc, argv);
             ic_exe_result out_result;
             // function can never return an lvalue
-            out_result.lvalue_address = nullptr;
+            out_result.lvalue_data_address = nullptr;
             out_result.value = value;
             return out_result;
         }
@@ -1081,8 +1101,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             for(int i = 0; i < argc; ++i)
                 runtime.add_var(function->source.params[i], argv[i]);
 
-            ic_exe_result out_result = {}; // if not initialized visual studio thorws an exception
-            out_result.lvalue_address = nullptr;
+            ic_exe_result out_result;
+            out_result.lvalue_data_address = nullptr;
 
             try
             {
@@ -1113,7 +1133,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         case IC_TOK_NUMBER:
         {
             ic_exe_result out_result;
-            out_result.lvalue_address = nullptr;
+            out_result.lvalue_data_address = nullptr;
             out_result.value.type = IC_VAL_NUMBER;
             out_result.value.indirection_count = 0;
             out_result.value.number = token.number;
@@ -1127,8 +1147,16 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "variable with such name does not exist");
 
             ic_exe_result out_result;
-            out_result.lvalue_address = value;
             out_result.value = *value;
+
+            if (value->indirection_count)
+                out_result.lvalue_data_address = &value->pointer;
+            else
+            {
+                assert(value->type == IC_VAL_NUMBER);
+                out_result.lvalue_data_address = &value->number;
+            }
+
             return out_result;
         }
         } // switch
