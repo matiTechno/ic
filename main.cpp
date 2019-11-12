@@ -366,7 +366,21 @@ int main(int argc, const char** argv)
 
     ic_runtime runtime;
     runtime.init();
+
+    // test
+    double image_buf[4] = { 666, 0, 1, 69 };
+    const char* var_name = "image_buf";
+    ic_value value;
+    value.type = IC_VAL_NUMBER;
+    value.indirection_count = 1;
+    value.pointer = image_buf;
+    runtime.add_var({ var_name, int(strlen(var_name)) }, value);
+
     runtime.run(source_code.data());
+
+    printf("image_buf[0] = %f\n", image_buf[0]);
+    printf("image_buf[3] = %f\n", image_buf[3]);
+
     return 0;
 }
 
@@ -786,9 +800,6 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         if (in_left_result.value.type != in_right_result.value.type)
             exit_execution(token, "operands must be of the same type");
 
-        if (in_left_result.value.indirection_count != in_right_result.value.indirection_count)
-            exit_execution(token, "operands must be on the same level of indirection");
-
         // todo; separate cases into functions and remove this helper code block
         // separate by operator or operand type?
         ic_exe_result out_result;
@@ -804,6 +815,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number && in_right_result.value.number;
             return out_result;
         }
@@ -813,12 +825,17 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number || in_right_result.value.number;
             return out_result;
         }
         case IC_TOK_EQUAL:
         {
             assert_lvalue(in_left_result, token);
+
+            if (in_left_result.value.indirection_count != in_right_result.value.indirection_count)
+                exit_execution(token, "operands must be on the same level of indirection");
+
             in_left_result.value = in_right_result.value;
             assert(in_left_result.value.type == IC_VAL_NUMBER);
             // todo: this is kind of redundant
@@ -831,6 +848,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number += in_right_result.value.number;
             assert(in_left_result.value.type == IC_VAL_NUMBER);
@@ -843,6 +861,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number += in_right_result.value.number;
             assert(in_left_result.value.type == IC_VAL_NUMBER);
@@ -855,6 +874,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number *= in_right_result.value.number;
             assert(in_left_result.value.type == IC_VAL_NUMBER);
@@ -867,6 +887,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number /= in_right_result.value.number;
             assert(in_left_result.value.type == IC_VAL_NUMBER);
@@ -879,6 +900,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number != in_right_result.value.number;
             return out_result;
         }
@@ -888,6 +910,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number == in_right_result.value.number;
             return out_result;
         }
@@ -897,6 +920,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number - in_right_result.value.number;
             return out_result;
         }
@@ -905,8 +929,17 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             if (in_left_result.value.type != IC_VAL_NUMBER)
                 exit_execution(token, "expected number type");
 
-            assert_non_pointer(in_left_result, token);
-            out_result.value.number = in_left_result.value.number + in_right_result.value.number;
+            assert_non_pointer(in_right_result, token);
+
+            if (in_left_result.value.indirection_count)
+            {
+                // todo; only int types can be added to a pointer
+                out_result.value.pointer = (double*)in_left_result.value.pointer + (int)in_right_result.value.number;
+                out_result.value.indirection_count = in_left_result.value.indirection_count;
+            }
+            else
+                out_result.value.number = in_left_result.value.number + in_right_result.value.number;
+
             return out_result;
         }
         case IC_TOK_STAR:
@@ -915,6 +948,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number * in_right_result.value.number;
             return out_result;
         }
@@ -924,6 +958,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number / in_right_result.value.number;
             return out_result;
         }
@@ -933,6 +968,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number > in_right_result.value.number;
             return out_result;
         }
@@ -942,6 +978,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number >= in_right_result.value.number;
             return out_result;
         }
@@ -951,6 +988,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number < in_right_result.value.number;
             return out_result;
         }
@@ -960,6 +998,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
                 exit_execution(token, "expected number type");
 
             assert_non_pointer(in_left_result, token);
+            assert_non_pointer(in_right_result, token);
             out_result.value.number = in_left_result.value.number <= in_right_result.value.number;
             return out_result;
         }

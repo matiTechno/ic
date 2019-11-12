@@ -1,48 +1,5 @@
-factorial(n)
-{
-	if(n == 1 || n == 0)
-		return 1;
-		
-	return n * factorial(n - 1);
-}
-
-change_ptr(d)
-{
-	*d += 10;
-}
-
 main()
 {
-	print(factorial(3));
-
-	print(factorial(9));
-	
-	var x = 10;
-	var* ptr = &x;
-	var** ptr2 = &ptr;
-	var* ptr3 = *ptr2;
-	
-	ptr3 = ptr;
-	*ptr3 = 20;
-	
-	print(**ptr2);
-	
-	print(*ptr3);
-	
-
-	change_ptr(ptr);
-	print(x);
-
-	for(var i = 1; i < 5; ++i)
-		print(i);
-		
-	var z = 10;
-	--z;
-	z += 2;
-	print(z);
-	
-	var* z_ptr = &z;
-	change_ptr(z_ptr);
-	print(*z_ptr);
-	print(z);
+	*image_buf = 555;
+	*(image_buf + 3) = 96;
 }
