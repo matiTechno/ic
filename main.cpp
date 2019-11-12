@@ -2,7 +2,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <vector>
-#include <string>
 #include <stdarg.h>
 
 // ic - interpreted c
@@ -15,7 +14,37 @@
 // execution should always succeed
 // type casting operator
 
-#define IC_POOL_SIZE 2048
+template<typename T, int N>
+struct ic_deque
+{
+    std::vector<T*> pools;
+    int size = 0;
+
+    void free()
+    {
+        for (T* pool : pools)
+            ::free(pool);
+    }
+
+    T& get(int idx)
+    {
+        assert(idx < size);
+        return pools[idx / N][idx % N];
+    }
+
+    T* allocate()
+    {
+        if (pools.empty() || size == pools.size() * N)
+        {
+            T* new_pool = (T*)malloc(N * sizeof(T));
+            pools.push_back(new_pool);
+        }
+
+        size += 1;
+        return &get(size - 1);
+    }
+};
+
 #define IC_MAX_ARGC 10
 
 enum ic_token_type
@@ -211,7 +240,7 @@ struct ic_value
     union
     {
         double number;
-        ic_string address;
+        ic_value* pointer;
     };
 };
 
@@ -223,22 +252,8 @@ struct ic_var
 
 struct ic_scope
 {
-    std::vector<ic_var> vars;
+    int prev_var_count;
     bool new_call_frame; // so variables do not leak to lower functions
-};
-
-struct ic_ast_node_pool
-{
-    ic_ast_node data[IC_POOL_SIZE];
-    int size;
-};
-
-struct ic_mem
-{
-    std::vector<ic_ast_node_pool*> pools;
-    int current_pool = 0;
-
-    ic_ast_node* allocate_node(ic_ast_node_type);
 };
 
 using ic_host_function = ic_value(*)(int argc, ic_value* argv);
@@ -256,14 +271,13 @@ struct ic_function
 
     union
     {
-        // todo; host function signature for type checking
+        // todo; function signature for type checking
         ic_host_function host;
         struct
         {
             int param_count;
             ic_string params[IC_MAX_ARGC];
             ic_ast_node* node_body;
-            // todo return type
         } source;
     };
 };
@@ -292,7 +306,8 @@ struct ic_global
 
 struct ic_exe_result
 {
-    ic_string lvalue_name; // lvalue if lvalue_name.len != 0
+    // todo; redundant?
+    ic_value* lvalue_address;
     ic_value value;
 };
 
@@ -307,28 +322,28 @@ struct ic_exception_return
 
 struct ic_runtime
 {
-    // interface
     void init();
-    void clear_host_functions();
-    void clear_global_vars(); // use this before next run()
-    void add_var_global(const char* name, ic_value value);
-    const ic_value* get_var_global(const char* name);
-    void add_fun(const char* name, ic_host_function function);
+    void add_global_var(const char* name, ic_value value);
+    void add_host_function(const char* name, ic_host_function function);
     bool run(const char* source); // after run() variables can be extracted
+    ic_value* get_global_var(const char* name);
+    void clear_global_vars(); // use this before next run()
+    void clear_host_functions(); // useful when e.g. running different script
+    void free();
 
     // implementation
-    ic_mem _mem;
+    ic_deque<ic_ast_node, 1000> _ast_deque;
+    ic_deque<ic_var, 1000> _var_deque; // deque is used because variables must not be invalidated (pointers are supported)
     std::vector<ic_token> _tokens;
-    // todo; this is inefficient (vector in vector)
     std::vector<ic_scope> _scopes;
     std::vector<ic_function> _functions;
 
     void push_scope(bool new_call_frame = false);
     void pop_scope();
     bool add_var(ic_string name, ic_value value);
-    const ic_value* get_var(ic_string name);
-    bool set_var(ic_string, ic_value value);
+    ic_value* get_var(ic_string name);
     ic_function* get_function(ic_string name);
+    ic_ast_node* allocate_node(ic_ast_node_type type);
 };
 
 int main(int argc, const char** argv)
@@ -354,9 +369,17 @@ int main(int argc, const char** argv)
     return 0;
 }
 
-// todo; check argc and argv in compile time
+ic_ast_node* ic_runtime::allocate_node(ic_ast_node_type type)
+{
+    ic_ast_node* node = _ast_deque.allocate();
+    memset(node, 0, sizeof(ic_ast_node));
+    node->type = type;
+    return node;
+}
+
 ic_value ic_host_print(int argc, ic_value* argv)
 {
+    // todo; check argc and argv at compile time
     if (argc != 1 || argv[0].type != IC_VAL_NUMBER || argv[0].indirection_count)
     {
         printf("expected number argument\n");
@@ -376,35 +399,45 @@ void ic_runtime::init()
     function.type = IC_FUN_HOST;
     function.name = name;
     function.host = ic_host_print;
-    // todo; use add_host_function()
+    // todo; use add_host_function("print")
     _functions.push_back(function);
 }
 
-// todo
+void ic_runtime::free()
+{
+    _ast_deque.free();
+    _var_deque.free();
+}
+
+// todo; these functions should manage host strings
+
 void ic_runtime::clear_host_functions()
 {
+    assert(false);
 }
 
 void ic_runtime::clear_global_vars()
 {
     assert(_scopes.size() == 1);
-    _scopes[0].vars.clear();
+    _var_deque.size = 0;
 }
 
-// todo; this should also overwrite existing variable
-void ic_runtime::add_var_global(const char* name, ic_value value)
+// todo; overwrite if exists
+void ic_runtime::add_global_var(const char* name, ic_value value)
 {
+    assert(false);
 }
 
-// todo
-const ic_value* ic_runtime::get_var_global(const char* name)
+ic_value* ic_runtime::get_global_var(const char* name)
 {
+    assert(false);
     return {};
 }
 
-// todo; overwrite existing function
-void ic_runtime::add_fun(const char* name, ic_host_function function)
+// todo; overwrite if exists
+void ic_runtime::add_host_function(const char* name, ic_host_function function)
 {
+    assert(false);
 }
 
 bool ic_string_compare(ic_string str1, ic_string str2)
@@ -416,21 +449,17 @@ bool ic_string_compare(ic_string str1, ic_string str2)
 }
 
 bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code);
-ic_global produce_global(const ic_token** it, ic_mem& _mem);
+ic_global produce_global(const ic_token** it, ic_runtime& runtime);
 ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime);
 
 bool ic_runtime::run(const char* source_code)
 {
+    assert(_scopes.size() == 1);
     assert(source_code);
     // free tokens from previous run
     _tokens.clear();
     // free ast from previous run
-    _mem.current_pool = 0;
-    for (ic_ast_node_pool* pool : _mem.pools)
-        pool->size = 0;
-
-    assert(_scopes.size() == 1);
-
+    _ast_deque.size = 0;
     // remove source functions from previous run
     {
         auto it = _functions.begin();
@@ -453,7 +482,7 @@ bool ic_runtime::run(const char* source_code)
 
         try
         {
-            global = produce_global(&token_it, _mem);
+            global = produce_global(&token_it, *this);
         }
         catch (ic_exception_parsing)
         {
@@ -478,8 +507,8 @@ bool ic_runtime::run(const char* source_code)
     ic_token token;
     token.type = IC_TOK_IDENTIFIER;
     token.string = name;
-    ic_ast_node* node = _mem.allocate_node(IC_AST_FUNCTION_CALL);
-    node->_function_call.node = _mem.allocate_node(IC_AST_PRIMARY);
+    ic_ast_node* node = allocate_node(IC_AST_FUNCTION_CALL);
+    node->_function_call.node = allocate_node(IC_AST_PRIMARY);
     node->_function_call.node->_primary.token = token;
 
     // todo; excecution should never fail
@@ -497,37 +526,6 @@ bool ic_runtime::run(const char* source_code)
     }
 
     return true;
-}
-
-ic_ast_node* ic_mem::allocate_node(ic_ast_node_type type)
-{
-    bool allocate_new_pool = false;
-
-    if (pools.empty())
-    {
-        allocate_new_pool = true;
-    }
-    else if (pools[current_pool]->size == IC_POOL_SIZE)
-    {
-        current_pool += 1;
-
-        if (current_pool >= pools.size())
-            allocate_new_pool = true;
-    }
-
-    if (allocate_new_pool)
-    {
-        ic_ast_node_pool* new_pool = (ic_ast_node_pool*)malloc(sizeof(ic_ast_node_pool));
-        new_pool->size = 0;
-        pools.push_back(new_pool);
-    }
-
-    ic_ast_node_pool* pool = pools[current_pool];
-    ic_ast_node* node = &pool->data[pool->size];
-    memset(node, 0, sizeof(ic_ast_node)); // this is important
-    node->type = type;
-    pool->size += 1;
-    return node;
 }
 
 void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
@@ -551,20 +549,28 @@ void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt
 
 void ic_runtime::push_scope(bool new_call_frame)
 {
-    _scopes.push_back({});
-    _scopes.back().new_call_frame = new_call_frame;
+    ic_scope scope;
+    scope.prev_var_count = _var_deque.size;
+    scope.new_call_frame = new_call_frame;
+    _scopes.push_back(scope);
 }
 
 void ic_runtime::pop_scope()
 {
+    assert(_scopes.size());
+    _var_deque.size = _scopes.back().prev_var_count;
     _scopes.pop_back();
 }
 
 bool ic_runtime::add_var(ic_string name, ic_value value)
 {
+    assert(_scopes.size());
     bool present = false;
-    for (ic_var& var : _scopes.back().vars)
+
+    for (int i = _var_deque.size - 1; i >= _scopes.back().prev_var_count; --i)
     {
+        ic_var& var = _var_deque.get(i);
+
         if (ic_string_compare(var.name, name))
         {
             present = true;
@@ -575,45 +581,38 @@ bool ic_runtime::add_var(ic_string name, ic_value value)
     if (present)
         return false;
 
-    _scopes.back().vars.push_back({ name, value });
+    ic_var* var = _var_deque.allocate();
+    var->name = name;
+    var->value = value;
     return true;
 }
 
-const ic_value* ic_runtime::get_var(ic_string name)
+ic_value* ic_runtime::get_var(ic_string name)
 {
-    for(int i = _scopes.size() - 1; i >= 0; --i)
+    assert(_scopes.size());
+    int idx_var = _var_deque.size - 1;
+
+    for (int idx_scope = _scopes.size() - 1; idx_scope >= 0; --idx_scope)
     {
-        for (ic_var& var : _scopes[i].vars)
+        ic_scope& scope = _scopes[idx_scope];
+
+        for (; idx_var >= scope.prev_var_count; --idx_var)
         {
+            ic_var& var = _var_deque.get(idx_var);
+
             if (ic_string_compare(var.name, name))
                 return &var.value;
         }
 
-        // go to the global scope, so no variables leak from the parent function
-        if (_scopes[i].new_call_frame)
-            i = 1;
-    }
-    return nullptr;
-}
-
-bool ic_runtime::set_var(ic_string name, ic_value value)
-{
-    for(int i = _scopes.size() - 1; i >= 0; --i)
-    {
-        for (ic_var& var : _scopes[i].vars)
+        // go to the global scope
+        if (scope.new_call_frame)
         {
-            if (ic_string_compare(var.name, name))
-            {
-                var.value = value;
-                return true;
-            }
+            assert(!_scopes[0].new_call_frame); // avoid infinite loop
+            idx_scope = 1;
         }
-
-        // go to the global scope, so no variables leak from the parent function
-        if (_scopes[i].new_call_frame)
-            i = 1;
     }
-    return false;
+
+    return nullptr;
 }
 
 ic_function* ic_runtime::get_function(ic_string name)
@@ -637,7 +636,7 @@ void exit_execution(const ic_token& token, const char* err_msg, ...)
 
 void assert_lvalue(const ic_exe_result& result, const ic_token& token)
 {
-    if (result.lvalue_name.len == 0)
+    if (!result.lvalue_address)
         exit_execution(token, "expected lvalue");
 }
 
@@ -679,6 +678,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
     {
         runtime.push_scope();
         int num_scopes = runtime._scopes.size();
+        int num_variables = runtime._scopes.back().prev_var_count;
 
         if(node->_for.header1)
             ic_ast_execute(node->_for.header1, runtime);
@@ -708,6 +708,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             {
                 // restore correct number of scopes
                 runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
+                runtime._var_deque.size = num_variables;
                 break;
             }
             catch (ic_exception_continue)
@@ -790,7 +791,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         // todo; separate cases into functions and remove this helper code block
         // separate by operator or operand type?
         ic_exe_result out_result;
-        out_result.lvalue_name.len = 0;
+        out_result.lvalue_address = nullptr;
         out_result.value.indirection_count = 0;
         out_result.value.type = IC_VAL_NUMBER;
 
@@ -818,7 +819,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         {
             assert_lvalue(in_left_result, token);
             in_left_result.value = in_right_result.value;
-            assert(runtime.set_var(in_left_result.lvalue_name, in_left_result.value));
+            // todo: this is kind of redundant
+            *in_left_result.lvalue_address = in_left_result.value;
             return in_left_result;
         }
         case IC_TOK_PLUS_EQUAL:
@@ -829,7 +831,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number += in_right_result.value.number;
-            runtime.set_var(in_left_result.lvalue_name, in_left_result.value);
+            in_left_result.lvalue_address->number = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_MINUS_EQUAL:
@@ -839,8 +841,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
-            in_left_result.value.number -= in_right_result.value.number;
-            runtime.set_var(in_left_result.lvalue_name, in_left_result.value);
+            in_left_result.value.number += in_right_result.value.number;
+            in_left_result.lvalue_address->number = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_STAR_EQUAL:
@@ -851,7 +853,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number *= in_right_result.value.number;
-            runtime.set_var(in_left_result.lvalue_name, in_left_result.value);
+            in_left_result.lvalue_address->number = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_SLASH_EQUAL:
@@ -862,7 +864,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_non_pointer(in_left_result, token);
             assert_lvalue(in_left_result, token);
             in_left_result.value.number /= in_right_result.value.number;
-            runtime.set_var(in_left_result.lvalue_name, in_left_result.value);
+            in_left_result.lvalue_address->number = in_left_result.value.number;
             return in_left_result;
         }
         case IC_TOK_BANG_EQUAL:
@@ -973,7 +975,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 
             assert_non_pointer(in_result, token);
             in_result.value.number *= -1.0;
-            in_result.lvalue_name.len = 0;
+            in_result.lvalue_address = nullptr;
             return in_result;
         }
         case IC_TOK_BANG:
@@ -983,7 +985,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
 
             assert_non_pointer(in_result, token);
             in_result.value.number = !in_result.value.number;
-            in_result.lvalue_name.len = 0;
+            in_result.lvalue_address = nullptr;
             return in_result;
         }
         case IC_TOK_MINUS_MINUS:
@@ -994,7 +996,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_lvalue(in_result, token);
             assert_non_pointer(in_result, token);
             in_result.value.number -= 1;
-            runtime.set_var(in_result.lvalue_name, in_result.value);
+            in_result.lvalue_address->number = in_result.value.number;
             return in_result;
         }
         case IC_TOK_PLUS_PLUS:
@@ -1005,17 +1007,17 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert_lvalue(in_result, token);
             assert_non_pointer(in_result, token);
             in_result.value.number += 1;
-            runtime.set_var(in_result.lvalue_name, in_result.value);
+            in_result.lvalue_address->number = in_result.value.number;
             return in_result;
         }
         case IC_TOK_AMPERSAND:
         {
             assert_lvalue(in_result, token);
             ic_exe_result out_result;
-            out_result.lvalue_name.len = 0;
+            out_result.lvalue_address = nullptr;
             out_result.value.type = in_result.value.type;
             out_result.value.indirection_count = in_result.value.indirection_count + 1;
-            out_result.value.address = in_result.lvalue_name;
+            out_result.value.pointer = in_result.lvalue_address;
             return out_result;
         }
         case IC_TOK_STAR:
@@ -1023,13 +1025,9 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             if (in_result.value.indirection_count == 0)
                 exit_execution(token, "cannot dereference non-pointer");
 
-            const ic_value* value = runtime.get_var(in_result.value.address);
-            // todo; it is triggered when pointer is passed to a function
-            // operating on real pointers instead of ic_string will fix this
-            assert(value);
             ic_exe_result out_result;
-            out_result.lvalue_name = in_result.value.address;
-            out_result.value = *value;
+            out_result.lvalue_address = in_result.value.pointer;
+            out_result.value = *in_result.value.pointer;
             return out_result;
         }
         } // switch
@@ -1063,7 +1061,8 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             assert(function->host);
             ic_value value = function->host(argc, argv);
             ic_exe_result out_result;
-            out_result.lvalue_name.len = 0;
+            // function can never return an lvalue
+            out_result.lvalue_address = nullptr;
             out_result.value = value;
             return out_result;
         }
@@ -1077,12 +1076,13 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             // all arguments must be retrieved before upper scopes are hidden
             runtime.push_scope(true);
             int num_scopes = runtime._scopes.size();
+            int num_variables = runtime._scopes.back().prev_var_count;
 
             for(int i = 0; i < argc; ++i)
                 runtime.add_var(function->source.params[i], argv[i]);
 
             ic_exe_result out_result = {}; // if not initialized visual studio thorws an exception
-            out_result.lvalue_name.len = 0; // function can never return an lvalue
+            out_result.lvalue_address = nullptr;
 
             try
             {
@@ -1091,8 +1091,9 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
             catch (ic_exception_return& e)
             {
                 out_result.value = e.value;
-                // restore correct number of scopes
+                // restore correct number of scopes and variables
                 runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
+                runtime._var_deque.size = num_variables;
             }
 
             runtime.pop_scope();
@@ -1112,7 +1113,7 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         case IC_TOK_NUMBER:
         {
             ic_exe_result out_result;
-            out_result.lvalue_name.len = 0;
+            out_result.lvalue_address = nullptr;
             out_result.value.type = IC_VAL_NUMBER;
             out_result.value.indirection_count = 0;
             out_result.value.number = token.number;
@@ -1120,13 +1121,13 @@ ic_exe_result ic_ast_execute(const ic_ast_node* node, ic_runtime& runtime)
         }
         case IC_TOK_IDENTIFIER:
         {
-            const ic_value* value = runtime.get_var(token.string);
+            ic_value* value = runtime.get_var(token.string);
 
             if (!value)
                 exit_execution(token, "variable with such name does not exist");
 
             ic_exe_result out_result;
-            out_result.lvalue_name = token.string;
+            out_result.lvalue_address = value;
             out_result.value = *value;
             return out_result;
         }
@@ -1399,15 +1400,15 @@ enum ic_op_precedence
 
 // grammar, production rules hierarchy
 
-ic_global produce_global(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_stmt_var_definition(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem);
-ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem);
-ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem);
+ic_global produce_global(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_stmt(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_stmt_var_definition(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_stmt_expr(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_expr(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_expr_assignment(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime);
+ic_ast_node* produce_expr_unary(const ic_token** it, ic_runtime& runtime);
+ic_ast_node* produce_expr_primary(const ic_token** it, ic_runtime& runtime);
 
 void token_advance(const ic_token** it) { ++(*it); }
 bool token_match_type(const ic_token** it, ic_token_type type) { return (**it).type == type; }
@@ -1438,7 +1439,7 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
     throw ic_exception_parsing{};
 }
 
-ic_global produce_global(const ic_token** it, ic_mem& _mem)
+ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 {
     if (token_match_type(it, IC_TOK_IDENTIFIER))
     {
@@ -1458,7 +1459,7 @@ ic_global produce_global(const ic_token** it, ic_mem& _mem)
                 if (function.source.param_count > IC_MAX_ARGC)
                     exit_parsing(it, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
 
-                ic_ast_node* node_param = produce_expr_primary(it, _mem);
+                ic_ast_node* node_param = produce_expr_primary(it, runtime);
 
                 if (node_param->type != IC_AST_PRIMARY || node_param->_primary.token.type != IC_TOK_IDENTIFIER)
                     exit_parsing(it, "expected parameter name");
@@ -1470,7 +1471,7 @@ ic_global produce_global(const ic_token** it, ic_mem& _mem)
             }
         }
 
-        function.source.node_body = produce_stmt(it, _mem);
+        function.source.node_body = produce_stmt(it, runtime);
 
         if (function.source.node_body->type != IC_AST_BLOCK)
             exit_parsing(it, "expected block stmt after function parameter list");
@@ -1483,21 +1484,21 @@ ic_global produce_global(const ic_token** it, ic_mem& _mem)
     return {};
 }
 
-ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_stmt(const ic_token** it, ic_runtime& runtime)
 {
     switch ((**it).type)
     {
     case IC_TOK_LEFT_BRACE:
     {
         token_advance(it);
-        ic_ast_node* node = _mem.allocate_node(IC_AST_BLOCK);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_BLOCK);
         node->_block.push_scope = true;
         ic_ast_node* block_it = node;
 
         while (!token_match_type(it, IC_TOK_RIGHT_BRACE) && !token_match_type(it, IC_TOK_EOF))
         {
-            block_it->_block.node = produce_stmt(it, _mem);
-            block_it->_block.next = _mem.allocate_node(IC_AST_BLOCK);
+            block_it->_block.node = produce_stmt(it, runtime);
+            block_it->_block.next = runtime.allocate_node(IC_AST_BLOCK);
             block_it = block_it->_block.next;
         }
 
@@ -1508,80 +1509,80 @@ ic_ast_node* produce_stmt(const ic_token** it, ic_mem& _mem)
     {
         // implemented as a IC_AST_FOR
         token_advance(it);
-        ic_ast_node* node = _mem.allocate_node(IC_AST_FOR);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_FOR);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after while keyword");
         node->_for.token_header2 = **it;
-        node->_for.header2 = produce_expr(it, _mem);
+        node->_for.header2 = produce_expr(it, runtime);
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition");
-        node->_for.body = produce_stmt(it, _mem);
+        node->_for.body = produce_stmt(it, runtime);
         return node;
     }
     case IC_TOK_FOR:
     {
         token_advance(it);
-        ic_ast_node* node = _mem.allocate_node(IC_AST_FOR);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_FOR);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword");
-        node->_for.header1 = produce_stmt_var_definition(it, _mem); // only in header1 var definition is allowed
+        node->_for.header1 = produce_stmt_var_definition(it, runtime); // only in header1 var definition is allowed
         node->_for.token_header2 = **it;
-        node->_for.header2 = produce_stmt_expr(it, _mem);
+        node->_for.header2 = produce_stmt_expr(it, runtime);
 
         if (!token_match_type(it, IC_TOK_RIGHT_PAREN))
-            node->_for.header3 = produce_expr(it, _mem); // this one should not end with ';', that's why we don't use produce_stmt_expr()
+            node->_for.header3 = produce_expr(it, runtime); // this one should not end with ';', that's why we don't use produce_stmt_expr()
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header");
-        node->_for.body = produce_stmt(it, _mem);
+        node->_for.body = produce_stmt(it, runtime);
         return node;
     }
     case IC_TOK_IF:
     {
         token_advance(it);
-        ic_ast_node* node = _mem.allocate_node(IC_AST_IF);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_IF);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword");
         node->_if.token_header = **it;
-        node->_if.header = produce_expr(it, _mem);
+        node->_if.header = produce_expr(it, runtime);
 
         if (node->_if.header->type == IC_AST_BINARY && node->_if.header->_binary.token_operator.type == IC_TOK_EQUAL)
             exit_parsing(it, "assignment expression can't be used directly in if header, encolse it with ()");
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition");
-        node->_if.body_if = produce_stmt(it, _mem);
+        node->_if.body_if = produce_stmt(it, runtime);
 
         if (token_consume(it, IC_TOK_ELSE))
-            node->_if.body_else = produce_stmt(it, _mem);
+            node->_if.body_else = produce_stmt(it, runtime);
 
         return node;
     }
     case IC_TOK_RETURN:
     {
         token_advance(it);
-        ic_ast_node* node = _mem.allocate_node(IC_AST_RETURN);
-        node->_return.node = produce_stmt_expr(it, _mem);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_RETURN);
+        node->_return.node = produce_stmt_expr(it, runtime);
         return node;
     }
     case IC_TOK_BREAK:
     {
         token_advance(it);
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' after break keyword");
-        return _mem.allocate_node(IC_AST_BREAK);
+        return runtime.allocate_node(IC_AST_BREAK);
     }
     case IC_TOK_CONTINUE:
     {
         token_advance(it);
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' after continue keyword");
-        return _mem.allocate_node(IC_AST_CONTINUE);
+        return runtime.allocate_node(IC_AST_CONTINUE);
     }
     } // switch
 
-    return produce_stmt_var_definition(it, _mem);
+    return produce_stmt_var_definition(it, runtime);
 }
 
 // this function is seperate from produce_expr_assignment so we don't allow(): var x = var y = 5;
 // and: while(var x = 6);
-ic_ast_node* produce_stmt_var_definition(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_stmt_var_definition(const ic_token** it, ic_runtime& runtime)
 {
     if (token_consume(it, IC_TOK_VAR))
     {
-        ic_ast_node* node = _mem.allocate_node(IC_AST_VAR_DEFINITION);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_VAR_DEFINITION);
 
         while (token_consume(it, IC_TOK_STAR))
             node->_var_definition.indirection_count += 1;
@@ -1591,48 +1592,48 @@ ic_ast_node* produce_stmt_var_definition(const ic_token** it, ic_mem& _mem)
 
         if (token_consume(it, IC_TOK_EQUAL))
         {
-            node->_var_definition.node = produce_stmt_expr(it, _mem);
+            node->_var_definition.node = produce_stmt_expr(it, runtime);
             return node;
         }
 
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
         // uninitialized variable
-        node->_var_definition.node = _mem.allocate_node(IC_AST_PRIMARY);
+        node->_var_definition.node = runtime.allocate_node(IC_AST_PRIMARY);
         node->_var_definition.node->_primary.token.type = IC_TOK_NUMBER;
         return node;
     }
-    return produce_stmt_expr(it, _mem);
+    return produce_stmt_expr(it, runtime);
 }
 
-ic_ast_node* produce_stmt_expr(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_stmt_expr(const ic_token** it, ic_runtime& runtime)
 {
     if (token_consume(it, IC_TOK_SEMICOLON))
         return nullptr;
 
-    ic_ast_node* node = produce_expr(it, _mem);
+    ic_ast_node* node = produce_expr(it, runtime);
     token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression");
     return node;
 }
 
-ic_ast_node* produce_expr(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_expr(const ic_token** it, ic_runtime& runtime)
 {
-    return produce_expr_assignment(it, _mem);
+    return produce_expr_assignment(it, runtime);
 }
 
 // produce_expr_assignment() - grows down and right
 // produce_expr_binary() - grows up and right (given operators with the same precedence)
 
-ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
 {
-    ic_ast_node* node_left = produce_expr_binary(it, IC_PRECEDENCE_OR, _mem);
+    ic_ast_node* node_left = produce_expr_binary(it, IC_PRECEDENCE_OR, runtime);
 
     if (token_match_type(it, IC_TOK_EQUAL) || token_match_type(it, IC_TOK_PLUS_EQUAL) || token_match_type(it, IC_TOK_MINUS_EQUAL) ||
         token_match_type(it, IC_TOK_STAR_EQUAL) || token_match_type(it, IC_TOK_SLASH_EQUAL))
     {
-        ic_ast_node* node = _mem.allocate_node(IC_AST_BINARY);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_BINARY);
         node->_binary.token_operator = **it;
         token_advance(it);
-        node->_binary.right = produce_expr(it, _mem);
+        node->_binary.right = produce_expr(it, runtime);
         node->_binary.left = node_left;
         return node;
     }
@@ -1640,7 +1641,7 @@ ic_ast_node* produce_expr_assignment(const ic_token** it, ic_mem& _mem)
     return node_left;
 }
 
-ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_mem& _mem)
+ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime)
 {
     ic_token_type target_operators[5] = {};
 
@@ -1683,10 +1684,10 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
         break;
     }
     case IC_PRECEDENCE_UNARY:
-        return produce_expr_unary(it, _mem);
+        return produce_expr_unary(it, runtime);
     }
 
-    ic_ast_node* node = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), _mem);
+    ic_ast_node* node = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), runtime);
 
     for (;;)
     {
@@ -1707,10 +1708,10 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
             break;
 
         // operator matches given precedence
-        ic_ast_node* node_parent = _mem.allocate_node(IC_AST_BINARY);
+        ic_ast_node* node_parent = runtime.allocate_node(IC_AST_BINARY);
         node_parent->_binary.token_operator = **it;
         token_advance(it);
-        node_parent->_binary.right = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), _mem);
+        node_parent->_binary.right = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), runtime);
         node_parent->_binary.left = node;
         node = node_parent;
     }
@@ -1718,7 +1719,7 @@ ic_ast_node* produce_expr_binary(const ic_token** it, ic_op_precedence precedenc
     return node;
 }
 
-ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
 {
     switch ((**it).type)
     {
@@ -1729,18 +1730,18 @@ ic_ast_node* produce_expr_unary(const ic_token** it, ic_mem& _mem)
     case IC_TOK_AMPERSAND:
     case IC_TOK_STAR:
     {
-        ic_ast_node* node = _mem.allocate_node(IC_AST_UNARY);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_UNARY);
         node->_unary.token_operator = **it;
         token_advance(it);
-        node->_unary.node = produce_expr_unary(it, _mem);
+        node->_unary.node = produce_expr_unary(it, runtime);
         return node;
     }
     } // switch
 
-    return produce_expr_primary(it, _mem);
+    return produce_expr_primary(it, runtime);
 }
 
-ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
+ic_ast_node* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
 {
     switch ((**it).type)
     {
@@ -1748,13 +1749,13 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
     case IC_TOK_STRING:
     case IC_TOK_IDENTIFIER:
     {
-        ic_ast_node* node_id = _mem.allocate_node(IC_AST_PRIMARY);
+        ic_ast_node* node_id = runtime.allocate_node(IC_AST_PRIMARY);
         node_id->_primary.token = **it;
         token_advance(it);
 
         if (token_consume(it, IC_TOK_LEFT_PAREN))
         {
-            ic_ast_node* node = _mem.allocate_node(IC_AST_FUNCTION_CALL);
+            ic_ast_node* node = runtime.allocate_node(IC_AST_FUNCTION_CALL);
             node->_function_call.node = node_id;
             ic_ast_node* arg_it = node;
 
@@ -1765,8 +1766,8 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
 
             for(;;)
             {
-                ic_ast_node* cnode = _mem.allocate_node(IC_AST_FUNCTION_CALL);
-                cnode->_function_call.node = produce_expr(it, _mem);
+                ic_ast_node* cnode = runtime.allocate_node(IC_AST_FUNCTION_CALL);
+                cnode->_function_call.node = produce_expr(it, runtime);
                 arg_it->_function_call.next = cnode;
                 arg_it = cnode;
                 ++argc;
@@ -1788,8 +1789,8 @@ ic_ast_node* produce_expr_primary(const ic_token** it, ic_mem& _mem)
     case IC_TOK_LEFT_PAREN:
     {
         token_advance(it);
-        ic_ast_node* node = _mem.allocate_node(IC_AST_GROUPING);
-        node->_grouping.node = produce_expr(it, _mem);
+        ic_ast_node* node = runtime.allocate_node(IC_AST_GROUPING);
+        node->_grouping.node = produce_expr(it, runtime);
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after expression");
         return node;
     }
