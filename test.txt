@@ -6,10 +6,45 @@ factorial(n)
 	return n * factorial(n - 1);
 }
 
+change_ptr(d)
+{
+	*d += 10;
+}
+
 main()
 {
-	print(factorial(9));
-	print(factorial(1));
-	print(factorial(0));
-	print(factorial(3));
+	//print(factorial(9));
+	
+	//var x = 10;
+	//var* ptr = &x;
+	//var** ptr2 = &ptr;
+	//var* ptr3 = *ptr2;
+	
+	//ptr3 = ptr;
+	//*ptr3 = 20; // todo should compile
+	
+	// 5 = 8 // check this
+	// ++5;
+	
+	//print(**ptr2); // todo should compile
+	
+	
+	//print(*ptr3);
+	
+	var x = 10;
+	var* ptr = &x;
+	var** ptr2 = &ptr;
+	print(x);
+	*ptr = 20;
+	print(x);
+	
+	**ptr2 = 50;
+	
+	print(x);
+	
+	//change_ptr(ptr);
+	print(x);
+	
+	for(var i = 1; i < 5; ++i)
+		print(i);
 }
