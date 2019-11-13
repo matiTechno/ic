@@ -1,37 +1,18 @@
-// host vars - image_buf, width, height
-
 main()
 {
-
-	var left = -0.711580;
-	var right = -0.711562;
-	var top = 0.252133;
-	var bottom = 0.252143;
-	var iterations = 900;
-
-	for(var j = 0; j < height; ++j)
+	var x = 10;
+	var* ptr = &x;
+	for(var i = 0; i < 5; ++i)
 	{
-		for(var i = 0; i < width; ++i)
-		{
-			var xcoeff = i / (width - 1);
-			var ycoeff = j / (height - 1);
-			
-			var x0 = (1 - xcoeff) * left + xcoeff * right;
-			var y0 = (1 - ycoeff) * top  + ycoeff * bottom;
-			
-			var iteration = 0;
-			var x = 0;
-			var y = 0;
-			
-			while(x * x + y * y < 4 && iteration < iterations)
-			{
-				var x_temp = x * x - y * y + x0;
-				y = 2 * x * y + y0;
-				x = x_temp;
-				++iteration;
-			}
-			
-			*(image_buf + i + j * width) = 255 * iteration / iterations + 0.5;
-		}
+		*ptr -= 10;
+		print(i);
 	}
+	
+	print(*ptr);
+	print(x);
+	
+	var** ptr2 = &ptr;
+	
+	**ptr2 += 4;
+	print(**ptr2);
 }
