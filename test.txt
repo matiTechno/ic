@@ -1,18 +1,14 @@
+factorial(n)
+{
+	if(n == 0 || n == 1)
+		return 1;
+	return n * factorial(n-1);
+}
+
 main()
 {
-	var x = 10;
-	var* ptr = &x;
-	for(var i = 0; i < 5; ++i)
+
 	{
-		*ptr -= 10;
-		print(i);
+		print(6999); // todo
 	}
-	
-	print(*ptr);
-	print(x);
-	
-	var** ptr2 = &ptr;
-	
-	**ptr2 += 4;
-	print(**ptr2);
 }

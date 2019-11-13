@@ -11,10 +11,10 @@
 // comma operator
 // C types; type checking pass
 // print source code line on error
-// execution should always succeed
 // type casting operator
 // somehow support multithreading? run function ast on separate thread?
 // const char* should be null terminated, strings need to be allocated
+// break and continue can only be used in loops
 
 template<typename T, int N>
 struct ic_deque
@@ -97,7 +97,7 @@ enum ic_stmt_type
     IC_STMT_COMPOUND,
     IC_STMT_FOR,
     IC_STMT_IF,
-    IC_STMT_VAR_DEFINITION,
+    IC_STMT_VAR_DECLARATION,
     IC_STMT_RETURN,
     IC_STMT_BREAK,
     IC_STMT_CONTINUE,
@@ -199,7 +199,7 @@ struct ic_stmt
             ic_token token;
             ic_expr* expr;
             int indirection_level;
-        } _var_definition;
+        } _var_declaration;
 
         struct
         {
@@ -289,11 +289,10 @@ struct ic_function
 // todo; union?
 enum ic_global_type
 {
-    IC_GLOBAL_FUNCTION_DEFINITION,
-    IC_GLOBAL_FUNCTION_DECLARATION,
-    IC_GLOBAL_STRUCTURE_DEFINITION,
-    IC_GLOBAL_STRUCTURE_DECLARATION,
-    IC_GLOBAL_VAR_DEFINITION,
+    IC_GLOBAL_FUNCTION,
+    IC_GLOBAL_FUNCTION_FORWARD_DECLARATION,
+    IC_GLOBAL_STRUCTURE,
+    IC_GLOBAL_STRUCTURE_FORWARD_DECLARATION,
     IC_GLOBAL_VAR_DECLARATION,
     IC_GLOBAL_ENUM,
 };
@@ -314,14 +313,21 @@ struct ic_expr_result
     void* lvalue_data;
 };
 
-struct ic_exception_parsing {};
-struct ic_exception_execution {};
-struct ic_exception_break {};
-struct ic_exception_continue {};
-struct ic_exception_return
+enum ic_stmt_result_type
 {
+    IC_STMT_RESULT_BREAK,
+    IC_STMT_RESULT_CONTINUE,
+    IC_STMT_RESULT_RETURN,
+    IC_STMT_RESULT_NOP,
+};
+
+struct ic_stmt_result
+{
+    ic_stmt_result_type type;
     ic_value value;
 };
+
+struct ic_exception_parsing {};
 
 struct ic_runtime
 {
@@ -503,7 +509,7 @@ bool ic_runtime::run(const char* source_code)
             return false;
         }
 
-        assert(global.type == IC_GLOBAL_FUNCTION_DEFINITION);
+        assert(global.type == IC_GLOBAL_FUNCTION);
         ic_string name = global.function.name;
 
         if (get_function(name))
@@ -517,22 +523,14 @@ bool ic_runtime::run(const char* source_code)
 
     // execute main funtion
     const char* str = "main";
-    ic_string name = { str, int(strlen(str)) };
+    ic_string name = { str, strlen(str) };
     ic_token token;
     token.type = IC_TOK_IDENTIFIER;
     token.string = name;
     ic_expr* expr = allocate_expr(IC_EXPR_FUNCTION_CALL, token);
-
-    // todo; excecution should never fail
-    try
-    {
-        ic_evaluate_expr(expr, *this);
-    }
-    catch(ic_exception_execution)
-    {
-        return false;
-    }
-
+    ic_evaluate_expr(expr, *this);
+    assert(_scopes.size() == 1);
+    // todo return value from main()?
     return true;
 }
 
@@ -633,7 +631,7 @@ ic_function* ic_runtime::get_function(ic_string name)
     return nullptr;
 }
 
-void ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
+ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
     assert(stmt);
 
@@ -642,20 +640,25 @@ void ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     case IC_STMT_COMPOUND:
     {
         bool push = stmt->_compound.push_scope;
+        ic_stmt_result output = { IC_STMT_RESULT_NOP };
 
         if (push)
             runtime.push_scope();
 
         while (stmt->next)
         {
-            ic_execute_stmt(stmt->next, runtime);
+            output = ic_execute_stmt(stmt->next, runtime);
+
+            if (output.type != IC_STMT_RESULT_NOP)
+                break;
+
             stmt = stmt->next;
         }
 
         if (push)
             runtime.pop_scope();
 
-        break;
+        return output;
     }
     case IC_STMT_FOR:
     {
@@ -666,99 +669,98 @@ void ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         if (stmt->_for.header1)
             ic_execute_stmt(stmt->_for.header1, runtime);
 
+        ic_stmt_result output = { IC_STMT_RESULT_NOP };
+
         for (;;)
         {
             if (stmt->_for.header2)
             {
-                ic_expr_result result = ic_evaluate_expr(stmt->_for.header2, runtime);
+                ic_expr_result header2_result = ic_evaluate_expr(stmt->_for.header2, runtime);
 
-                assert(!result.value.indirection_level);
-                assert(result.value.type == IC_VAL_NUMBER);
+                assert(!header2_result.value.indirection_level);
+                assert(header2_result.value.type == IC_VAL_NUMBER);
 
-                if (!result.value.number)
+                if (!header2_result.value.number)
                     break;
             }
 
-            try
+            ic_stmt_result body_result = ic_execute_stmt(stmt->_for.body, runtime);
+
+            if (body_result.type == IC_STMT_RESULT_BREAK)
+                break;
+            else if (body_result.type == IC_STMT_RESULT_RETURN)
             {
-                ic_execute_stmt(stmt->_for.body, runtime);
-            }
-            catch (ic_exception_break)
-            {
-                // restore correct number of scopes
-                runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
-                runtime._var_deque.size = num_variables;
+                output = body_result;
                 break;
             }
-            catch (ic_exception_continue)
-            {
-                runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
-            }
+            // else do nothing on NOP and CONTINUE
 
             if (stmt->_for.header3)
                 ic_evaluate_expr(stmt->_for.header3, runtime);
         }
 
         runtime.pop_scope();
-        break;
+        return output;
     }
     case IC_STMT_IF:
     {
         runtime.push_scope();
-        ic_expr_result result = ic_evaluate_expr(stmt->_if.header, runtime);
+        ic_expr_result header_result = ic_evaluate_expr(stmt->_if.header, runtime);
 
-        assert(!result.value.indirection_level);
-        assert(result.value.type == IC_VAL_NUMBER);
+        assert(!header_result.value.indirection_level);
+        assert(header_result.value.type == IC_VAL_NUMBER);
 
-        if (result.value.number)
-            ic_execute_stmt(stmt->_if.body_if, runtime);
+        ic_stmt_result output = {}; // if not initialized visual studio throws an exception...
+
+        if (header_result.value.number)
+            output = ic_execute_stmt(stmt->_if.body_if, runtime);
         else if (stmt->_if.body_else)
-            ic_execute_stmt(stmt->_if.body_else, runtime);
+            output = ic_execute_stmt(stmt->_if.body_else, runtime);
 
         runtime.pop_scope();
-        break;
+        return output;
     }
     case IC_STMT_RETURN:
     {
-        if (stmt->_return.expr)
-        {
-            ic_expr_result result = ic_evaluate_expr(stmt->_return.expr, runtime);
-            throw ic_exception_return{ result.value };
-        }
+        ic_stmt_result output = {IC_STMT_RESULT_RETURN};
 
-        throw ic_exception_return{};
+        if (stmt->_return.expr)
+            output.value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
+
+        return output;
     }
     case IC_STMT_BREAK:
     {
-        throw ic_exception_break{};
+        return ic_stmt_result{ IC_STMT_RESULT_BREAK };
     }
     case IC_STMT_CONTINUE:
     {
-        throw ic_exception_continue{};
+        return ic_stmt_result{ IC_STMT_RESULT_CONTINUE };
     }
-    case IC_STMT_VAR_DEFINITION:
+    case IC_STMT_VAR_DECLARATION:
     {
         ic_value value;
 
-        if (stmt->_var_definition.expr)
+        if (stmt->_var_declaration.expr)
         {
-            value = ic_evaluate_expr(stmt->_var_definition.expr, runtime).value;
-            assert(stmt->_var_definition.indirection_level == value.indirection_level);
+            value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
+            assert(stmt->_var_declaration.indirection_level == value.indirection_level);
         }
         else
-            assert(false); // todo, set value type
+            assert(false); // todo, set type in value
 
-        assert(runtime.add_var(stmt->_var_definition.token.string, value));
-        break;
+        assert(runtime.add_var(stmt->_var_declaration.token.string, value));
+        return ic_stmt_result{ IC_STMT_RESULT_NOP };
     }
     case IC_STMT_EXPR:
     {
         ic_evaluate_expr(stmt->_expr, runtime);
-        break;
+        return ic_stmt_result{ IC_STMT_RESULT_NOP };
     }
-    default:
-        assert(false);
-    }
+    } // switch
+    
+    assert(false);
+    return {};
 }
 
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
@@ -978,26 +980,20 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             assert(argc == function->source.param_count);
             // all arguments must be retrieved before upper scopes are hidden
             runtime.push_scope(true);
-            int num_scopes = runtime._scopes.size();
-            int num_variables = runtime._scopes.back().prev_var_count;
 
             for(int i = 0; i < argc; ++i)
                 runtime.add_var(function->source.params[i], argv[i]);
 
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
+            ic_expr_result output = {}; // if not initialized visual studio throws an exception...
+            ic_stmt_result stmt_result = ic_execute_stmt(function->source.body, runtime);
 
-            try
+            if (stmt_result.type == IC_STMT_RESULT_RETURN)
             {
-                ic_execute_stmt(function->source.body, runtime);
+                output.lvalue_data = nullptr;
+                output.value = stmt_result.value;
             }
-            catch (ic_exception_return& e)
-            {
-                output.value = e.value;
-                // restore correct number of scopes and variables
-                runtime._scopes.erase(runtime._scopes.begin() + num_scopes, runtime._scopes.end());
-                runtime._var_deque.size = num_variables;
-            }
+            else
+                assert(stmt_result.type == IC_STMT_RESULT_NOP);
 
             runtime.pop_scope();
             return output;
@@ -1040,6 +1036,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     }
     } // switch
     assert(false);
+    return {};
 }
 
 struct ic_lexer
@@ -1305,7 +1302,7 @@ enum ic_op_precedence
 
 ic_global produce_global(const ic_token** it, ic_runtime& runtime);
 ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime);
-ic_stmt* produce_stmt_var_definition(const ic_token** it, ic_runtime& runtime);
+ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_stmt(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime);
@@ -1347,7 +1344,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
     if (token_match_type(it, IC_TOK_IDENTIFIER))
     {
         ic_global global;
-        global.type = IC_GLOBAL_FUNCTION_DEFINITION;
+        global.type = IC_GLOBAL_FUNCTION;
         ic_function& function = global.function;
         function.type = IC_FUN_SOURCE;
         function.name = (**it).string;
@@ -1422,7 +1419,7 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_FOR);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword");
-        stmt->_for.header1 = produce_stmt_var_definition(it, runtime); // only in header1 var definition is allowed
+        stmt->_for.header1 = produce_stmt_var_declaration(it, runtime); // only in header1 var declaration is allowed
         stmt->_for.header2 = produce_expr_stmt(it, runtime);
 
         if (!token_match_type(it, IC_TOK_RIGHT_PAREN))
@@ -1460,8 +1457,6 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_RETURN);
         stmt->_return.expr = produce_expr_stmt(it, runtime);
-
-        token_consume(it, IC_TOK_SEMICOLON, "expected ';' after break keyword");
         return stmt;
     }
     case IC_TOK_BREAK:
@@ -1478,26 +1473,26 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
     }
     } // switch
 
-    return produce_stmt_var_definition(it, runtime);
+    return produce_stmt_var_declaration(it, runtime);
 }
 
 // this function is seperate from produce_expr_assignment so we don't allow(): var x = var y = 5;
 // and: while(var x = 6);
-ic_stmt* produce_stmt_var_definition(const ic_token** it, ic_runtime& runtime)
+ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
 {
     if (token_consume(it, IC_TOK_VAR))
     {
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_VAR_DEFINITION);
+        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_VAR_DECLARATION);
 
         while (token_consume(it, IC_TOK_STAR))
-            stmt->_var_definition.indirection_level += 1;
+            stmt->_var_declaration.indirection_level += 1;
 
-        stmt->_var_definition.token = **it;
+        stmt->_var_declaration.token = **it;
         token_consume(it, IC_TOK_IDENTIFIER, "expected variable name");
 
         if (token_consume(it, IC_TOK_EQUAL))
         {
-            stmt->_var_definition.expr = produce_expr_stmt(it, runtime);
+            stmt->_var_declaration.expr = produce_expr_stmt(it, runtime);
             return stmt;
         }
 
