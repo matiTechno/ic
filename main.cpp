@@ -368,18 +368,53 @@ int main(int argc, const char** argv)
     runtime.init();
 
     // test
-    double image_buf[4] = { 666, 0, 1, 69 };
-    const char* var_name = "image_buf";
+    int width = 1920;
+    int height = 1080;
+    double* image_buf = (double*)malloc(sizeof(double) * width * height);
+    const char* var_name_buf = "image_buf";
+    const char* var_name_w = "width";
+    const char* var_name_h = "height";
+
     ic_value value;
     value.type = IC_VAL_NUMBER;
     value.indirection_count = 1;
     value.pointer = image_buf;
-    runtime.add_var({ var_name, int(strlen(var_name)) }, value);
+    runtime.add_var({ var_name_buf, int(strlen(var_name_buf)) }, value);
+
+    value.indirection_count = 0;
+    value.number = width;
+    runtime.add_var({ var_name_w, int(strlen(var_name_w)) }, value);
+
+    value.number = height;
+    runtime.add_var({ var_name_h, int(strlen(var_name_h)) }, value);
 
     runtime.run(source_code.data());
 
-    printf("image_buf[0] = %f\n", image_buf[0]);
-    printf("image_buf[3] = %f\n", image_buf[3]);
+    {
+        FILE* file = fopen("render.ppm", "w");
+
+        char buf[1024];
+        snprintf(buf, sizeof(buf), "P6 %d %d 255 ", width, height);
+        int len = strlen(buf);
+        fwrite(buf, 1, len, file);
+
+        // currently char type is not supported in compiler
+        unsigned char* out_buf = (unsigned char*)malloc(width * height * 3);
+        unsigned char* it = out_buf;
+
+        for (int i = 0; i < height * width; ++i)
+        {
+            *it = image_buf[i];
+            ++it;
+            *it = image_buf[i];
+            ++it;
+            *it = image_buf[i];
+            ++it;
+        }
+
+        fwrite(out_buf, 1, width * height * 3, file);
+        fclose(file);
+    }
 
     return 0;
 }
