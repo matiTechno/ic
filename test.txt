@@ -7,8 +7,8 @@ factorial(n)
 
 main()
 {
-
+	print(factorial(9));
 	{
-		print(6999); // todo
+		print(6999);
 	}
 }

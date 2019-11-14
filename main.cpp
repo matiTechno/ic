@@ -177,6 +177,7 @@ struct ic_stmt
         struct
         {
             bool push_scope;
+            ic_stmt* body;
         } _compound;
 
         struct
@@ -233,6 +234,11 @@ struct ic_expr
         {
             ic_expr* expr;
         } _parentheses;
+
+        struct
+        {
+            ic_expr* arg;
+        } _function_call;
     };
 };
 
@@ -639,23 +645,23 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     {
     case IC_STMT_COMPOUND:
     {
-        bool push = stmt->_compound.push_scope;
-        ic_stmt_result output = { IC_STMT_RESULT_NOP };
-
-        if (push)
+        if (stmt->_compound.push_scope)
             runtime.push_scope();
 
-        while (stmt->next)
+        ic_stmt_result output = { IC_STMT_RESULT_NOP };
+        const ic_stmt* body_stmt = stmt->_compound.body;
+
+        while (body_stmt)
         {
-            output = ic_execute_stmt(stmt->next, runtime);
+            output = ic_execute_stmt(body_stmt, runtime);
 
             if (output.type != IC_STMT_RESULT_NOP)
                 break;
 
-            stmt = stmt->next;
+            body_stmt = body_stmt->next;
         }
 
-        if (push)
+        if (stmt->_compound.push_scope)
             runtime.pop_scope();
 
         return output;
@@ -710,7 +716,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         assert(!header_result.value.indirection_level);
         assert(header_result.value.type == IC_VAL_NUMBER);
 
-        ic_stmt_result output = {}; // if not initialized visual studio throws an exception...
+        ic_stmt_result output = { IC_STMT_RESULT_NOP };
 
         if (header_result.value.number)
             output = ic_execute_stmt(stmt->_if.body_if, runtime);
@@ -952,13 +958,13 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         assert(function);
         int argc = 0;
         ic_value argv[IC_MAX_ARGC];
-        ic_expr* next = expr->next;
+        ic_expr* expr_arg = expr->_function_call.arg;
 
-        while (next)
+        while (expr_arg)
         {
             assert(argc < IC_MAX_ARGC);
-            ic_expr_result result = ic_evaluate_expr(next, runtime);
-            next = next->next;
+            ic_expr_result result = ic_evaluate_expr(expr_arg, runtime);
+            expr_arg = expr_arg->next;
             argv[argc] = result.value;
             argc += 1;
         }
@@ -1393,12 +1399,12 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_COMPOUND);
         stmt->_compound.push_scope = true;
-        ic_stmt* stmt_tail  = stmt;
+        ic_stmt** body_tail  = &(stmt->_compound.body);
 
         while (!token_match_type(it, IC_TOK_RIGHT_BRACE) && !token_match_type(it, IC_TOK_EOF))
         {
-            stmt_tail->next = produce_stmt(it, runtime);
-            stmt_tail = stmt_tail->next;
+            *body_tail = produce_stmt(it, runtime);
+            body_tail = &((*body_tail)->next);
         }
 
         token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a block statement");
@@ -1659,13 +1665,13 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
             if (token_consume(it, IC_TOK_RIGHT_PAREN))
                 return expr;
 
-            ic_expr* expr_tail = expr;
+            ic_expr** arg_tail = &expr->_function_call.arg;
             int argc = 0;
 
             for(;;)
             {
-                expr_tail->next = produce_expr(it, runtime);
-                expr_tail = expr_tail->next;
+                *arg_tail = produce_expr(it, runtime);
+                arg_tail = &((*arg_tail)->next);
                 ++argc;
 
                 if(argc > IC_MAX_ARGC)
