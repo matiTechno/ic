@@ -1385,7 +1385,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         function.source.body = produce_stmt(it, runtime);
 
         if (function.source.body->type != IC_STMT_COMPOUND)
-            exit_parsing(it, "expected block stmt after function parameter list");
+            exit_parsing(it, "expected compound stmt after function parameter list");
 
         function.source.body->_compound.push_scope = false; // do not allow shadowing of arguments
         return global;
@@ -1412,7 +1412,7 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
             body_tail = &((*body_tail)->next);
         }
 
-        token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a block statement");
+        token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a compound statement");
         return stmt;
     }
     case IC_TOK_WHILE:
@@ -1439,7 +1439,7 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header");
         stmt->_for.body = produce_stmt(it, runtime);
 
-        // prevent shadowing of for header variable
+        // prevent shadowing of header variable
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
             stmt->_for.body->_compound.push_scope = false;
 
@@ -1452,7 +1452,7 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword");
         stmt->_if.header = produce_expr(it, runtime);
 
-        if (stmt->_if.header->type == IC_EXPR_BINARY && stmt->_if.header->token.type == IC_TOK_EQUAL)
+        if (stmt->_if.header->token.type == IC_TOK_EQUAL)
             exit_parsing(it, "assignment expression can't be used directly in if header, encolse it with ()");
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition");
