@@ -124,7 +124,6 @@ enum ic_error_type
 {
     IC_ERR_LEXING,
     IC_ERR_PARSING,
-    IC_ERR_EXECUTION,
 };
 
 struct ic_keyword
@@ -285,6 +284,7 @@ struct ic_function
         ic_host_function host;
         struct
         {
+            ic_token token;
             int param_count;
             ic_string params[IC_MAX_ARGC];
             ic_stmt* body;
@@ -387,6 +387,25 @@ int main(int argc, const char** argv)
     return 0;
 }
 
+void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
+{
+    const char* str_err_type = nullptr;
+
+    if (error_type == IC_ERR_LEXING)
+        str_err_type = "lexing";
+    else if (error_type == IC_ERR_PARSING)
+        str_err_type = "parsing";
+
+    assert(str_err_type);
+
+    printf("%s error; line: %d; col: %d; ", str_err_type, line, col);
+    va_list list;
+    va_start(list, fmt);
+    vprintf(fmt, list);
+    va_end(list);
+    printf("\n");
+}
+
 ic_stmt* ic_runtime::allocate_stmt(ic_stmt_type type)
 {
     ic_stmt* stmt = _stmt_deque.allocate();
@@ -482,21 +501,11 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime);
 
 bool ic_runtime::run(const char* source_code)
 {
-    assert(_scopes.size() == 1);
+    assert(_scopes.size() == 1); // assert ic_runtime initialized
     assert(source_code);
     _tokens.clear();
     _stmt_deque.size = 0;
     _expr_deque.size = 0;
-    // remove source functions from previous run
-    {
-        auto it = _functions.begin();
-        for (; it != _functions.end(); ++it)
-        {
-            if (it->type == IC_FUN_SOURCE)
-                break;
-        }
-        _functions.erase(it, _functions.end());
-    }
 
     if (!ic_tokenize(_tokens, source_code))
         return false;
@@ -520,7 +529,8 @@ bool ic_runtime::run(const char* source_code)
 
         if (get_function(name))
         {
-            printf("execution error; function already exists: '%.*s'\n", name.len, name.data);
+            ic_token token = global.function.source.token;
+            ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
             return false;
         }
 
@@ -535,28 +545,22 @@ bool ic_runtime::run(const char* source_code)
     token.string = name;
     ic_expr* expr = allocate_expr(IC_EXPR_FUNCTION_CALL, token);
     ic_evaluate_expr(expr, *this);
-    assert(_scopes.size() == 1);
+
+    assert(_scopes.size() == 1); // all non global scopes are gone
+
+    // remove source functions from current run
+    {
+        auto it = _functions.begin();
+        for (; it != _functions.end(); ++it)
+        {
+            if (it->type == IC_FUN_SOURCE)
+                break;
+        }
+        _functions.erase(it, _functions.end()); // source function are always stored after host ones
+    }
+
     // todo return value from main()?
     return true;
-}
-
-void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
-{
-    const char* str_err_type;
-
-    if (error_type == IC_ERR_LEXING)
-        str_err_type = "lexing";
-    else if (error_type == IC_ERR_PARSING)
-        str_err_type = "parsing";
-    else
-        str_err_type = "execution";
-
-    printf("%s error; line: %d; col: %d; ", str_err_type, line, col);
-    va_list list;
-    va_start(list, fmt);
-    vprintf(fmt, list);
-    va_end(list);
-    printf("\n");
 }
 
 void ic_runtime::push_scope(bool new_call_frame)
@@ -1354,6 +1358,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         ic_function& function = global.function;
         function.type = IC_FUN_SOURCE;
         function.name = (**it).string;
+        function.source.token = **it;
         function.source.param_count = 0;
         token_advance(it);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after function name");
