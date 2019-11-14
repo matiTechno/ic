@@ -1293,7 +1293,12 @@ bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
         } // switch
     }
 
-    lexer.add_token(IC_TOK_EOF);
+    assert(lexer._tokens.size());
+    ic_token token;
+    token.type = IC_TOK_EOF;
+    token.col = lexer._tokens.back().col + 1;
+    token.line = lexer._tokens.back().line;
+    lexer._tokens.push_back(token);
     return success;
 }
 
@@ -1321,11 +1326,10 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime);
 
 void token_advance(const ic_token** it) { ++(*it); }
-bool token_match_type(const ic_token** it, ic_token_type type) { return (**it).type == type; }
 
 bool token_consume(const ic_token** it, ic_token_type type, const char* err_msg = nullptr)
 {
-    if (token_match_type(it, type))
+    if ((**it).type == type)
     {
         token_advance(it);
         return true;
@@ -1351,7 +1355,7 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
 
 ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 {
-    if (token_match_type(it, IC_TOK_IDENTIFIER))
+    if ((**it).type == IC_TOK_IDENTIFIER)
     {
         ic_global global;
         global.type = IC_GLOBAL_FUNCTION;
@@ -1365,7 +1369,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 
         if (!token_consume(it, IC_TOK_RIGHT_PAREN))
         {
-            for(;;)
+            for (;;)
             {
                 if (function.source.param_count > IC_MAX_ARGC)
                     exit_parsing(it, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
@@ -1390,8 +1394,9 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         function.source.body->_compound.push_scope = false; // do not allow shadowing of arguments
         return global;
     }
-    // todo; struct, var
-    assert(false);
+    else // todo; struct, var, etc.
+        exit_parsing(it, "expected function declaration");
+
     return {};
 }
 
@@ -1406,7 +1411,7 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         stmt->_compound.push_scope = true;
         ic_stmt** body_tail  = &(stmt->_compound.body);
 
-        while (!token_match_type(it, IC_TOK_RIGHT_BRACE) && !token_match_type(it, IC_TOK_EOF))
+        while ((**it).type != IC_TOK_RIGHT_BRACE && (**it).type != IC_TOK_EOF)
         {
             *body_tail = produce_stmt(it, runtime);
             body_tail = &((*body_tail)->next);
@@ -1433,7 +1438,7 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         stmt->_for.header1 = produce_stmt_var_declaration(it, runtime); // only in header1 var declaration is allowed
         stmt->_for.header2 = produce_expr_stmt(it, runtime);
 
-        if (!token_match_type(it, IC_TOK_RIGHT_PAREN))
+        if ((**it).type != IC_TOK_RIGHT_PAREN)
             stmt->_for.header3 = produce_expr(it, runtime); // this one should not end with ';', that's why we don't use produce_stmt_expr()
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header");
@@ -1541,9 +1546,13 @@ ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
 {
     ic_expr* expr_left = produce_expr_binary(it, IC_PRECEDENCE_OR, runtime);
 
-    if (token_match_type(it, IC_TOK_EQUAL) || token_match_type(it, IC_TOK_PLUS_EQUAL) || token_match_type(it, IC_TOK_MINUS_EQUAL) ||
-        token_match_type(it, IC_TOK_STAR_EQUAL) || token_match_type(it, IC_TOK_SLASH_EQUAL))
+    switch ((**it).type)
     {
+    case IC_TOK_EQUAL:
+    case IC_TOK_PLUS_EQUAL:
+    case IC_TOK_MINUS_EQUAL:
+    case IC_TOK_STAR_EQUAL:
+    case IC_TOK_SLASH_EQUAL:
         ic_expr* expr = runtime.allocate_expr(IC_EXPR_BINARY, **it);
         token_advance(it);
         expr->_binary.right = produce_expr(it, runtime);
