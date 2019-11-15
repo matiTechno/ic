@@ -8,13 +8,13 @@
 // todo
 // final goal: dump assembly that can be assembled by e.g. nasm to an object file
 // all api declarations should be named ic_, other ic_p_
-// comma, [], type casting operators
-// type checking pass + return, break, continue statments check (e.g. break can be only used in a loop)
+// comma, [], sizeof operators
 // print source code line on error
-// somehow support multithreading? run function ast on a separate thread?
-// string literal should be null terminated
+// somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
+// string literals should be null terminated
 // function and void pointers, typedefs (or better 'using = ')
-// const
+// host structures registering ?
+// ptrdiff_t ?; implicit type conversions; overflows; bool type; warnings on dubious type conversions
 
 template<typename T, int N>
 struct ic_deque
@@ -58,43 +58,15 @@ static_assert(sizeof(double) == sizeof(void*), "sizeof(double) == sizeof(void*)"
 enum ic_token_type
 {
     IC_TOK_EOF,
-    IC_TOK_LEFT_PAREN,
-    IC_TOK_RIGHT_PAREN,
-    IC_TOK_LEFT_BRACE,
-    IC_TOK_RIGHT_BRACE,
-    IC_TOK_MINUS,
-    IC_TOK_PLUS,
-    IC_TOK_SEMICOLON,
-    IC_TOK_SLASH,
-    IC_TOK_STAR,
-    IC_TOK_BANG,
-    IC_TOK_BANG_EQUAL,
-    IC_TOK_EQUAL,
-    IC_TOK_EQUAL_EQUAL,
-    IC_TOK_GREATER,
-    IC_TOK_GREATER_EQUAL,
-    IC_TOK_LESS,
-    IC_TOK_LESS_EQUAL,
     IC_TOK_IDENTIFIER,
-    IC_TOK_STRING,
-    IC_TOK_NUMBER,
-    IC_TOK_AND,
-    IC_TOK_ELSE,
+    // keywords
     IC_TOK_FOR,
-    IC_TOK_IF,
-    IC_TOK_OR,
-    IC_TOK_RETURN,
     IC_TOK_WHILE,
-    IC_TOK_PLUS_EQUAL,
-    IC_TOK_MINUS_EQUAL,
-    IC_TOK_STAR_EQUAL,
-    IC_TOK_SLASH_EQUAL,
-    IC_TOK_PLUS_PLUS,
-    IC_TOK_MINUS_MINUS,
+    IC_TOK_IF,
+    IC_TOK_ELSE,
+    IC_TOK_RETURN,
     IC_TOK_BREAK,
     IC_TOK_CONTINUE,
-    IC_TOK_COMMA,
-    IC_TOK_AMPERSAND,
     IC_TOK_U8,
     IC_TOK_S8,
     IC_TOK_U32,
@@ -102,6 +74,38 @@ enum ic_token_type
     IC_TOK_F32,
     IC_TOK_F64,
     IC_TOK_VOID,
+    // literals
+    IC_TOK_NUMBER,
+    IC_TOK_STRING,
+    // double character
+    IC_TOK_PLUS_EQUAL,
+    IC_TOK_MINUS_EQUAL,
+    IC_TOK_STAR_EQUAL,
+    IC_TOK_SLASH_EQUAL,
+    IC_TOK_VBAR_VBAR,
+    IC_TOK_AMPERSAND_AMPERSAND,
+    IC_TOK_EQUAL_EQUAL,
+    IC_TOK_BANG_EQUAL,
+    IC_TOK_GREATER_EQUAL,
+    IC_TOK_LESS_EQUAL,
+    IC_TOK_PLUS_PLUS,
+    IC_TOK_MINUS_MINUS,
+    // single character
+    IC_TOK_LEFT_PAREN,
+    IC_TOK_RIGHT_PAREN,
+    IC_TOK_LEFT_BRACE,
+    IC_TOK_RIGHT_BRACE,
+    IC_TOK_SEMICOLON,
+    IC_TOK_COMMA,
+    IC_TOK_EQUAL,
+    IC_TOK_GREATER,
+    IC_TOK_LESS,
+    IC_TOK_PLUS,
+    IC_TOK_MINUS,
+    IC_TOK_STAR,
+    IC_TOK_SLASH,
+    IC_TOK_BANG,
+    IC_TOK_AMPERSAND,
 };
 
 enum ic_stmt_type
@@ -176,13 +180,11 @@ struct ic_keyword
 };
 
 static ic_keyword _keywords[] = {
-    {"and", IC_TOK_AND},
-    {"else", IC_TOK_ELSE},
     {"for", IC_TOK_FOR},
-    {"if", IC_TOK_IF},
-    {"return", IC_TOK_RETURN},
-    {"or", IC_TOK_OR},
     {"while", IC_TOK_WHILE},
+    {"if", IC_TOK_IF},
+    {"else", IC_TOK_ELSE},
+    {"return", IC_TOK_RETURN},
     {"break", IC_TOK_BREAK},
     {"continue", IC_TOK_CONTINUE},
     {"u8", IC_TOK_U8},
@@ -307,6 +309,13 @@ struct ic_value
 {
     ic_value_type type;
 
+    // this is very important
+    // only f64 and pointer are used in expression evaluation (double can represent all other number types)
+    // when values are passed to host functions or assigned to an lvalue they are converted back to specified types
+    // SHIT, we can't do this - if we store internally values only as doubles and we write to an lvalue based on type
+    // we can corrupt variables that are stored in the interpreter - they will no longer be double
+    // shit
+    // well, I will have to change a few things, we could track host pointers but that seems off.
     union
     {
         unsigned char u8;
@@ -377,8 +386,8 @@ struct ic_stmt_result
 
 struct ic_expr_result
 {
-    ic_value value;
     void* lvalue_data;
+    ic_value value;
 };
 
 struct ic_exception_parsing {};
@@ -471,8 +480,7 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
     return expr;
 }
 
-// todo; implement as printf when string literals are supported
-// https://stackoverflow.com/questions/988290/populating-a-va-list
+// todo: support format string and arguments, but how to do it?
 ic_value ic_host_print(int argc, ic_value* argv)
 {
     assert(argc == 1);
@@ -691,29 +699,13 @@ ic_function* ic_runtime::get_function(ic_string name)
     return nullptr;
 }
 
-bool to_boolean(const ic_value& value)
+bool to_boolean(ic_value value)
 {
     if (value.type.indirection_level)
         return value.pointer;
 
-    switch (value.type.basic_type)
-    {
-    case IC_TYPE_U8:
-        return value.u8;
-    case IC_TYPE_S8:
-        return value.s8;
-    case IC_TYPE_U32:
-        return value.u32;
-    case IC_TYPE_S32:
-        return value.s32;
-    case IC_TYPE_F32:
-        return value.f32;
-    case IC_TYPE_F64:
-        return value.f64;
-    }
-    
-    assert(false);
-    return {};
+    assert(value.type.basic_type != IC_TYPE_VOID);
+    return value.f64;
 }
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
@@ -848,108 +840,100 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     return {};
 }
 
+// precedence from lowest to highest
+
+ic_expr_result evaluate_assign(void* lvalue_data, ic_value left, ic_value right);
+ic_expr_result evaluate_assign_add(void* lvalue_data, ic_value left, ic_value right);
+ic_expr_result evaluate_assign_subtract(void* lvalue_data, ic_value left, ic_value right);
+ic_expr_result evaluate_assign_multiply(void* lvalue_data, ic_value left, ic_value right);
+ic_expr_result evaluate_assign_divide(void* lvalue_data, ic_value left, ic_value right);
+
+ic_value evaluate_logical_or(ic_value left, ic_value right);
+ic_value evaluate_logical_and(ic_value left, ic_value right);
+
+ic_value evaluate_compare_equal(ic_value left, ic_value right);
+ic_value evaluate_compare_not_equal(ic_value left, ic_value right);
+
+ic_value evaluate_compare_greater(ic_value left, ic_value right);
+ic_value evaluate_compare_greater_equal(ic_value left, ic_value right);
+ic_value evaluate_compare_less(ic_value left, ic_value right);
+ic_value evaluate_compare_less_equal(ic_value left, ic_value right);
+
+ic_value evaluate_add(ic_value left, ic_value right);
+ic_value evaluate_subtract(ic_value left, ic_value right);
+
+ic_value evaluate_multiply(ic_value left, ic_value right);
+ic_value evaluate_divide(ic_value left, ic_value right);
+
+ic_value evaluate_arithmetic_negation(ic_value value);
+ic_value evaluate_logical_negation(ic_value value);
+ic_expr_result evaluate_decrement(void* lvalue_data, ic_value value);
+ic_expr_result evaluate_increment(void* lvalue_data, ic_value value);
+ic_value evaluate_address_of(void* lvalue_data, ic_value value);
+ic_expr_result evaluate_dereference(ic_value value);
+
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 {
     assert(expr);
 
-    // todo !!!!!!!!!!
     switch(expr->type)
     {
     case IC_EXPR_BINARY:
     {
-        ic_expr_result input_left = ic_evaluate_expr(expr->_binary.left, runtime);
-        ic_expr_result input_right = ic_evaluate_expr(expr->_binary.right, runtime);
-        assert(input_left.value.type.basic_type == input_right.value.type.basic_type);
-        assert(input_left.value.type.basic_type == IC_TYPE_F64);
-
-        // todo
+        ic_expr_result result_left = ic_evaluate_expr(expr->_binary.left, runtime);
+        void* lvalue_data = result_left.lvalue_data;
+        ic_value left = result_left.value;
+        ic_value right = ic_evaluate_expr(expr->_binary.right, runtime).value;
         ic_expr_result output;
         output.lvalue_data = nullptr;
-        output.value.type = { IC_TYPE_F64, 0 };
-
-        // todo
-        if (expr->token.type == IC_TOK_PLUS)
-        {
-            assert(input_right.value.type.indirection_level == 0);
-
-            if (input_left.value.type.indirection_level)
-            {
-                // todo; only int types can be added to a pointer
-                output.value.pointer = (double*)input_left.value.pointer + (int)input_right.value.f64;
-                output.value.type.indirection_level = input_left.value.type.indirection_level;
-            }
-            else
-                output.value.f64 = input_left.value.f64 + input_right.value.f64;
-
-            return output;
-        }
-        
-        assert(input_left.value.type.indirection_level == input_right.value.type.indirection_level);
-        
-        if (expr->token.type == IC_TOK_EQUAL)
-        {
-            assert(input_left.lvalue_data);
-            input_left.value = input_right.value;
-            *(double*)input_left.lvalue_data = input_left.value.f64;
-            return input_left;
-        }
-
-        assert(input_left.value.type.indirection_level == 0);
 
         switch (expr->token.type)
         {
-        case IC_TOK_AND:
-            output.value.f64 = input_left.value.f64 && input_right.value.f64;
-            return output;
-        case IC_TOK_OR:
-            output.value.f64 = input_left.value.f64 || input_right.value.f64;
-            return output;
+        case IC_TOK_EQUAL:
+            return evaluate_assign(lvalue_data, left, right);
         case IC_TOK_PLUS_EQUAL:
-            assert(input_left.lvalue_data);
-            input_left.value.f64 += input_right.value.f64;
-            *(double*)input_left.lvalue_data = input_left.value.f64;
-            return input_left;
+            return evaluate_assign_add(lvalue_data, left, right);
         case IC_TOK_MINUS_EQUAL:
-            assert(input_left.lvalue_data);
-            input_left.value.f64 -= input_right.value.f64;
-            *(double*)input_left.lvalue_data = input_left.value.f64;
-            return input_left;
+            return evaluate_assign_subtract(lvalue_data, left, right);
         case IC_TOK_STAR_EQUAL:
-            assert(input_left.lvalue_data);
-            input_left.value.f64 *= input_right.value.f64;
-            *(double*)input_left.lvalue_data = input_left.value.f64;
-            return input_left;
+            return evaluate_assign_multiply(lvalue_data, left, right);
         case IC_TOK_SLASH_EQUAL:
-            assert(input_left.lvalue_data);
-            input_left.value.f64 /= input_right.value.f64;
-            *(double*)input_left.lvalue_data = input_left.value.f64;
-            return input_left;
-        case IC_TOK_BANG_EQUAL:
-            output.value.f64 = input_left.value.f64 != input_right.value.f64;
+            return evaluate_assign_divide(lvalue_data, left, right);
+        case IC_TOK_VBAR_VBAR:
+            output.value = evaluate_logical_or(left, right);
+            return output;
+        case IC_TOK_AMPERSAND_AMPERSAND:
+            output.value = evaluate_logical_and(left, right);
             return output;
         case IC_TOK_EQUAL_EQUAL:
-            output.value.f64 = input_left.value.f64 == input_right.value.f64;
+            output.value = evaluate_compare_equal(left, right);
             return output;
-        case IC_TOK_MINUS:
-            output.value.f64 = input_left.value.f64 - input_right.value.f64;
-            return output;
-        case IC_TOK_STAR:
-            output.value.f64 = input_left.value.f64 * input_right.value.f64;
-            return output;
-        case IC_TOK_SLASH:
-            output.value.f64 = input_left.value.f64 / input_right.value.f64;
+        case IC_TOK_BANG_EQUAL:
+            output.value = evaluate_compare_not_equal(left, right);
             return output;
         case IC_TOK_GREATER:
-            output.value.f64 = input_left.value.f64 > input_right.value.f64;
+            output.value = evaluate_compare_greater(left, right);
             return output;
         case IC_TOK_GREATER_EQUAL:
-            output.value.f64 = input_left.value.f64 >= input_right.value.f64;
+            output.value = evaluate_compare_greater_equal(left, right);
             return output;
         case IC_TOK_LESS:
-            output.value.f64 = input_left.value.f64 < input_right.value.f64;
+            output.value = evaluate_compare_less(left, right);
             return output;
         case IC_TOK_LESS_EQUAL:
-            output.value.f64 = input_left.value.f64 <= input_right.value.f64;
+            output.value = evaluate_compare_less_equal(left, right);
+            return output;
+        case IC_TOK_PLUS:
+            output.value = evaluate_add(left, right);
+            return output;
+        case IC_TOK_MINUS:
+            output.value = evaluate_subtract(left, right);
+            return output;
+        case IC_TOK_STAR:
+            output.value = evaluate_multiply(left, right);
+            return output;
+        case IC_TOK_SLASH:
+            output.value = evaluate_divide(left, right);
             return output;
         }
 
@@ -958,78 +942,27 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     case IC_EXPR_UNARY:
     {
         ic_expr_result input = ic_evaluate_expr(expr->_unary.expr, runtime);
+        ic_expr_result output;
+        output.lvalue_data = nullptr;
 
         switch (expr->token.type)
         {
         case IC_TOK_MINUS:
-            assert(input.value.type.basic_type == IC_TYPE_F64);
-            assert(!input.value.type.indirection_level);
-            input.value.f64 *= -1.0;
-            input.lvalue_data = nullptr;
-            return input;
+            output.value = evaluate_arithmetic_negation(input.value);
+            return output;
         case IC_TOK_BANG:
-            assert(input.value.type.basic_type == IC_TYPE_F64);
-            assert(!input.value.type.indirection_level);
-            input.value.f64 = !input.value.f64;
-            input.lvalue_data = nullptr;
-            return input;
+            output.value = evaluate_logical_negation(input.value);
+            return output;
         case IC_TOK_MINUS_MINUS:
-            assert(input.value.type.basic_type == IC_TYPE_F64);
-            assert(!input.value.type.indirection_level);
-            assert(input.lvalue_data);
-            input.value.f64 -= 1;
-            *(double*)input.lvalue_data = input.value.f64;
-            return input;
+            return evaluate_decrement(input.lvalue_data, input.value);
         case IC_TOK_PLUS_PLUS:
-            assert(input.value.type.basic_type == IC_TYPE_F64);
-            assert(!input.value.type.indirection_level);
-            assert(input.lvalue_data);
-            input.value.f64 += 1;
-            *(double*)input.lvalue_data = input.value.f64;
-            return input;
+            return evaluate_increment(input.lvalue_data, input.value);
         case IC_TOK_AMPERSAND:
-        {
-            assert(input.lvalue_data);
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
-            output.value.type = input.value.type;
-            output.value.type.indirection_level += 1;
-            output.value.pointer = input.lvalue_data;
+            output.value = evaluate_address_of(input.lvalue_data, input.value);
             return output;
-        }
         case IC_TOK_STAR:
-        {
-            assert(input.value.type.indirection_level);
-            ic_expr_result output;
-            output.value.type = input.value.type;
-            output.value.type.indirection_level -= 1;
-            output.lvalue_data = input.value.pointer;
-            // using 'output.value.f64 = *(double*)input.value.pointer;' for all the cases
-            // may trigger segmentation fault if a host pointer is read and is of type smaller than double
-
-            if (output.value.type.indirection_level || output.value.type.basic_type == IC_TYPE_F64)
-                output.value.f64 = *(double*)input.value.pointer;
-            else
-            {
-                switch (output.value.type.basic_type)
-                {
-                case IC_TYPE_U8:
-                case IC_TYPE_S8:
-                    output.value.s8 = *(char*)input.value.pointer;
-                    break;
-                case IC_TYPE_U32:
-                case IC_TYPE_S32:
-                case IC_TYPE_F32:
-                    output.value.s32 = *(int*)input.value.pointer;
-                    break;
-                default:
-                    assert(false);
-                }
-            }
-
-            return output;
+            return evaluate_dereference(input.value);
         }
-        } // switch
 
         assert(false);
     }
@@ -1129,15 +1062,308 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             assert(value);
             ic_expr_result output;
             output.value = *value;
-            output.lvalue_data = &value->u8; // all union members start at the same address
+            output.lvalue_data = &value->f64; // all union members start at the same address
             return output;
         }
         } // switch
+
         assert(false);
     }
     } // switch
+
     assert(false);
     return {};
+}
+
+void assert_same_type(ic_value l, ic_value r)
+{
+    assert(l.type.indirection_level || l.type.basic_type != IC_TYPE_VOID);
+    assert(l.type == r.type);
+}
+
+void assert_non_pointer(ic_value value)
+{
+    assert(value.type.indirection_level == 0);
+}
+
+void set_lvalue_data(void* lvalue_data, ic_value value)
+{
+    if (value.type.indirection_level || value.type.basic_type == IC_TYPE_F64)
+    {
+        *(double*)lvalue_data = value.f64;
+        return;
+    }
+
+    // convert f64 to value type - this is very important step
+    switch (value.type.basic_type)
+    {
+    case IC_TYPE_U8:
+        *(unsigned char*)lvalue_data = value.f64;
+        return;
+    case IC_TYPE_S8:
+        *(char*)lvalue_data = value.f64;
+        return;
+    case IC_TYPE_U32:
+        *(unsigned int*)lvalue_data = value.f64;
+        return;
+    case IC_TYPE_S32:
+        *(int*)lvalue_data = value.f64;
+        return;
+    case IC_TYPE_F32:
+        *(float*)lvalue_data = value.f64;
+        return;
+    }
+    
+    assert(false);
+}
+
+ic_expr_result evaluate_assign(void* lvalue_data, ic_value left, ic_value right)
+{
+    assert(lvalue_data);
+    assert_same_type(left, right);
+    set_lvalue_data(lvalue_data, right);
+    return { lvalue_data, right };
+}
+
+ic_expr_result evaluate_assign_add(void* lvalue_data, ic_value left, ic_value right)
+{
+    assert(lvalue_data);
+    right = evaluate_add(left, right);
+    assert_same_type(left, right);
+    set_lvalue_data(lvalue_data, right);
+    return { lvalue_data, right };
+}
+
+ic_expr_result evaluate_assign_subtract(void* lvalue_data, ic_value left, ic_value right)
+{
+    assert(lvalue_data);
+    right = evaluate_subtract(left, right);
+    assert_same_type(left, right);
+    set_lvalue_data(lvalue_data, right);
+    return { lvalue_data, right };
+}
+
+ic_expr_result evaluate_assign_multiply(void* lvalue_data, ic_value left, ic_value right)
+{
+    assert(lvalue_data);
+    right = evaluate_multiply(left, right);
+    assert_same_type(left, right);
+    set_lvalue_data(lvalue_data, right);
+    return { lvalue_data, right };
+}
+
+ic_expr_result evaluate_assign_divide(void* lvalue_data, ic_value left, ic_value right)
+{
+    assert(lvalue_data);
+    right = evaluate_divide(left, right);
+    assert_same_type(left, right);
+    set_lvalue_data(lvalue_data, right);
+    return { lvalue_data, right };
+}
+
+ic_value evaluate_logical_or(ic_value left, ic_value right)
+{
+    left.f64 = to_boolean(left) || to_boolean(right);
+    left.type = { IC_TYPE_U8, 0 }; // todo, bool type?
+    return left;
+}
+
+ic_value evaluate_logical_and(ic_value left, ic_value right)
+{
+    left.f64 = to_boolean(left) && to_boolean(right);
+    left.type = { IC_TYPE_U8, 0 };
+    return left;
+}
+
+ic_value evaluate_compare_equal(ic_value left, ic_value right)
+{
+    assert_same_type(left, right);
+    left.f64 = left.f64 == right.f64;
+    left.type = { IC_TYPE_U8, 0 };
+    return left;
+}
+
+ic_value evaluate_compare_not_equal(ic_value left, ic_value right)
+{
+    left = evaluate_compare_equal(left, right);
+    left.f64 = !left.f64;
+    return left;
+}
+
+ic_value evaluate_compare_greater(ic_value left, ic_value right)
+{
+    assert_same_type(left, right);
+
+    if (left.type.indirection_level)
+        left.f64 = left.pointer > right.pointer;
+    else
+    {
+        assert_same_type(left, right);
+        left.f64 = left.f64 > right.f64;
+    }
+
+    left.type = { IC_TYPE_U8, 0 };
+    return left;
+}
+
+ic_value evaluate_compare_greater_equal(ic_value left, ic_value right)
+{
+    left = evaluate_compare_equal(left, right);
+    left.f64 = left.f64 || evaluate_compare_greater(left, right).f64;
+    return left;
+}
+
+ic_value evaluate_compare_less(ic_value left, ic_value right)
+{
+    left = evaluate_compare_greater_equal(left, right);
+    left.f64 = !left.f64;
+    return left;
+}
+
+ic_value evaluate_compare_less_equal(ic_value left, ic_value right)
+{
+    left = evaluate_compare_greater(left, right);
+    left.f64 = !left.f64;
+    return left;
+}
+
+ic_value evaluate_add(ic_value left, ic_value right)
+{
+    if (left.type.indirection_level)
+    {
+        int pointed_type_size;
+
+        if (left.type.indirection_level > 1)
+            pointed_type_size = sizeof(void*);
+        else // == 1
+        {
+            switch (left.type.basic_type)
+            {
+            case IC_TYPE_U8:
+            case IC_TYPE_S8:
+                pointed_type_size = sizeof(char);
+            case IC_TYPE_U32:
+            case IC_TYPE_S32:
+            case IC_TYPE_F32:
+                pointed_type_size = sizeof(int);
+            case IC_TYPE_F64:
+                pointed_type_size = sizeof(double);
+            default:
+                assert(false);
+            }
+        }
+
+        assert_non_pointer(right);
+        assert(right.type.basic_type == IC_TYPE_U8 || right.type.basic_type == IC_TYPE_S8 || right.type.basic_type == IC_TYPE_U32 ||
+            right.type.basic_type == IC_TYPE_S32); // only integer types can be added to a pointer
+        left.pointer = (char*)left.pointer + (ptrdiff_t)right.f64 * pointed_type_size;
+    }
+    else
+    {
+        assert_same_type(left, right);
+        left.f64 += right.f64;
+    }
+
+    return left;
+}
+
+ic_value evaluate_subtract(ic_value left, ic_value right)
+{
+    right.f64 = -right.f64;
+    return evaluate_add(left, right);
+}
+
+ic_value evaluate_multiply(ic_value left, ic_value right)
+{
+    assert_same_type(left, right);
+    assert_non_pointer(left);
+    left.f64 *= right.f64;
+    return left;
+}
+
+ic_value evaluate_divide(ic_value left, ic_value right)
+{
+    assert_same_type(left, right);
+    assert_non_pointer(left);
+    left.f64 /= right.f64;
+    return left;
+}
+
+ic_value evaluate_arithmetic_negation(ic_value value)
+{
+    // todo; negating unsigned types (error, warning?)
+    assert_non_pointer(value);
+    assert(value.type.basic_type != IC_TYPE_VOID);
+    value.f64 = -value.f64;
+    return value;
+}
+
+ic_value evaluate_logical_negation(ic_value value)
+{
+    // todo; negating unsigned types
+    assert_non_pointer(value);
+    assert(value.type.basic_type != IC_TYPE_VOID);
+    value.f64 = !value.f64;
+    return value;
+}
+
+ic_expr_result evaluate_decrement(void* lvalue_data, ic_value value)
+{
+    ic_value one;
+    one.type = { IC_TYPE_U8, 0 };
+    one.f64 = 1;
+    value = evaluate_subtract(value, one);
+    set_lvalue_data(lvalue_data, value);
+    return { lvalue_data, value };
+}
+
+ic_expr_result evaluate_increment(void* lvalue_data, ic_value value)
+{
+    ic_value one;
+    one.type = { IC_TYPE_U8, 0 };
+    one.f64 = 1;
+    value = evaluate_add(value, one);
+    set_lvalue_data(lvalue_data, value);
+    return { lvalue_data, value };
+}
+
+ic_value evaluate_address_of(void* lvalue_data, ic_value value)
+{
+    assert(lvalue_data);
+    value.type.indirection_level += 1;
+    value.pointer = lvalue_data;
+    return value;
+}
+
+ic_expr_result evaluate_dereference(ic_value value)
+{
+    assert(value.type.indirection_level);
+    value.type.indirection_level -= 1;
+
+    // using 'output.value.f64 = *(double*)input.value.pointer;' for all the cases
+    // may trigger segmentation fault if a host pointer is read and is of type smaller than double
+
+    if (value.type.indirection_level || value.type.basic_type == IC_TYPE_F64)
+        value.f64 = *(double*)value.pointer;
+    else
+    {
+        switch (value.type.basic_type)
+        {
+        case IC_TYPE_U8:
+        case IC_TYPE_S8:
+            value.f64 = *(char*)value.pointer;
+            break;
+        case IC_TYPE_U32:
+        case IC_TYPE_S32:
+        case IC_TYPE_F32:
+            value.f64 = *(int*)value.pointer;
+            break;
+        default:
+            assert(false);
+        }
+    }
+
+    return { value.pointer, value };
 }
 
 struct ic_lexer
@@ -1261,7 +1487,7 @@ bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
             lexer.add_token(lexer.consume('=') ? IC_TOK_LESS_EQUAL : IC_TOK_LESS);
             break;
         case '&':
-            lexer.add_token(lexer.consume('&') ? IC_TOK_AND : IC_TOK_AMPERSAND);
+            lexer.add_token(lexer.consume('&') ? IC_TOK_AMPERSAND_AMPERSAND : IC_TOK_AMPERSAND);
             break;
         case '*':
         {
@@ -1297,7 +1523,7 @@ bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
         case '|':
         {
             if (lexer.consume('|'))
-                lexer.add_token(IC_TOK_OR);
+                lexer.add_token(IC_TOK_VBAR_VBAR);
             break;
         }
         case '/':
@@ -1395,12 +1621,12 @@ bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
 
 enum ic_op_precedence
 {
-    IC_PRECEDENCE_OR,
-    IC_PRECEDENCE_AND,
+    IC_PRECEDENCE_LOGICAL_OR,
+    IC_PRECEDENCE_LOGICAL_AND,
     IC_PRECEDENCE_COMPARE_EQUAL,
     IC_PRECEDENCE_COMPARE_GREATER,
-    IC_PRECEDENCE_ADDITION,
-    IC_PRECEDENCE_MULTIPLICATION,
+    IC_PRECEDENCE_ADD,
+    IC_PRECEDENCE_MULTIPLY,
     IC_PRECEDENCE_UNARY,
 };
 
@@ -1682,7 +1908,7 @@ ic_expr* produce_expr(const ic_token** it, ic_runtime& runtime)
 
 ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
 {
-    ic_expr* expr_left = produce_expr_binary(it, IC_PRECEDENCE_OR, runtime);
+    ic_expr* expr_left = produce_expr_binary(it, IC_PRECEDENCE_LOGICAL_OR, runtime);
 
     switch ((**it).type)
     {
@@ -1703,44 +1929,44 @@ ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
 
 ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime)
 {
-    ic_token_type target_operators[5] = {};
+    ic_token_type target_token_types[5] = {}; // this is important, initialize all elements to IC_TOK_EOF
 
     switch (precedence)
     {
-    case IC_PRECEDENCE_OR:
+    case IC_PRECEDENCE_LOGICAL_OR:
     {
-        target_operators[0] = IC_TOK_OR;
+        target_token_types[0] = IC_TOK_VBAR_VBAR;
         break;
     }
-    case IC_PRECEDENCE_AND:
+    case IC_PRECEDENCE_LOGICAL_AND:
     {
-        target_operators[0] = IC_TOK_AND;
+        target_token_types[0] = IC_TOK_AMPERSAND_AMPERSAND;
         break;
     }
     case IC_PRECEDENCE_COMPARE_EQUAL:
     {
-        target_operators[0] = IC_TOK_EQUAL_EQUAL;
-        target_operators[1] = IC_TOK_BANG_EQUAL;
+        target_token_types[0] = IC_TOK_EQUAL_EQUAL;
+        target_token_types[1] = IC_TOK_BANG_EQUAL;
         break;
     }
     case IC_PRECEDENCE_COMPARE_GREATER:
     {
-        target_operators[0] = IC_TOK_GREATER;
-        target_operators[1] = IC_TOK_GREATER_EQUAL;
-        target_operators[2] = IC_TOK_LESS;
-        target_operators[3] = IC_TOK_LESS_EQUAL;
+        target_token_types[0] = IC_TOK_GREATER;
+        target_token_types[1] = IC_TOK_GREATER_EQUAL;
+        target_token_types[2] = IC_TOK_LESS;
+        target_token_types[3] = IC_TOK_LESS_EQUAL;
         break;
     }
-    case IC_PRECEDENCE_ADDITION:
+    case IC_PRECEDENCE_ADD:
     {
-        target_operators[0] = IC_TOK_PLUS;
-        target_operators[1] = IC_TOK_MINUS;
+        target_token_types[0] = IC_TOK_PLUS;
+        target_token_types[1] = IC_TOK_MINUS;
         break;
     }
-    case IC_PRECEDENCE_MULTIPLICATION:
+    case IC_PRECEDENCE_MULTIPLY:
     {
-        target_operators[0] = IC_TOK_STAR;
-        target_operators[1] = IC_TOK_SLASH;
+        target_token_types[0] = IC_TOK_STAR;
+        target_token_types[1] = IC_TOK_SLASH;
         break;
     }
     case IC_PRECEDENCE_UNARY:
@@ -1751,17 +1977,17 @@ ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, i
 
     for (;;)
     {
-        const ic_token_type* op = target_operators;
+        const ic_token_type* target_token_type  = target_token_types;
         bool match = false;
 
-        while (*op != IC_TOK_EOF)
+        while (*target_token_type != IC_TOK_EOF)
         {
-            if (*op == (**it).type)
+            if (*target_token_type == (**it).type)
             {
                 match = true;
                 break;
             }
-            ++op;
+            ++target_token_type;
         }
 
         if (!match)
