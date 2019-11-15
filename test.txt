@@ -1,14 +1,29 @@
-factorial(n)
+f64 factorial(f64 n)
 {
 	if(n == 0 || n == 1)
 		return 1;
 	return n * factorial(n-1);
 }
 
-main()
+void main()
 {
 	print(factorial(9));
 	{
 		print(6999);
 	}
+	
+	f64* ptr;
+	
+	f64 i  = 8;
+	
+	ptr = &i;
+	
+	*ptr = 10;
+	print(i);
+	
+	f64** ptr2 = &ptr;
+	
+	**ptr2 = 20;
+	
+	print(i);
 }

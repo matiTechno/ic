@@ -4,17 +4,17 @@
 #include <vector>
 #include <stdarg.h>
 
-// ic - interpreted c
+// ic - interpreted C
 // todo
-// all functions should be named ic_
-// all implementation functions / enums / etc. should be named ic_p_
-// comma operator
-// C types; type checking pass
+// final goal: dump assembly that can be assembled by e.g. nasm to an object file
+// all api declarations should be named ic_, other ic_p_
+// comma, [], type casting operators
+// type checking pass + return, break, continue statments check (e.g. break can be only used in a loop)
 // print source code line on error
-// type casting operator
-// somehow support multithreading? run function ast on separate thread?
-// const char* should be null terminated, strings need to be allocated
-// break and continue can only be used in loops
+// somehow support multithreading? run function ast on a separate thread?
+// string literal should be null terminated
+// function and void pointers, typedefs (or better 'using = ')
+// const
 
 template<typename T, int N>
 struct ic_deque
@@ -46,6 +46,12 @@ struct ic_deque
         return &get(size - 1);
     }
 };
+
+static_assert(sizeof(int) == 4, "sizeof(int) == 4");
+static_assert(sizeof(float) == 4, "sizeof(float) == 4");
+static_assert(sizeof(double) == 8, "sizeof(double) == 8");
+// it is asserted that a write at ic_value.double will cover ic_value.pointer and vice versa (union)
+static_assert(sizeof(double) == sizeof(void*), "sizeof(double) == sizeof(void*)");
 
 #define IC_MAX_ARGC 10
 
@@ -79,7 +85,6 @@ enum ic_token_type
     IC_TOK_OR,
     IC_TOK_RETURN,
     IC_TOK_WHILE,
-    IC_TOK_VAR,
     IC_TOK_PLUS_EQUAL,
     IC_TOK_MINUS_EQUAL,
     IC_TOK_STAR_EQUAL,
@@ -90,6 +95,13 @@ enum ic_token_type
     IC_TOK_CONTINUE,
     IC_TOK_COMMA,
     IC_TOK_AMPERSAND,
+    IC_TOK_U8,
+    IC_TOK_S8,
+    IC_TOK_U32,
+    IC_TOK_S32,
+    IC_TOK_F32,
+    IC_TOK_F64,
+    IC_TOK_VOID,
 };
 
 enum ic_stmt_type
@@ -115,15 +127,46 @@ enum ic_expr_type
     IC_EXPR_PRIMARY,
 };
 
-enum ic_value_type
+enum ic_basic_type
 {
-    IC_VAL_NUMBER,
+    IC_TYPE_U8,
+    IC_TYPE_S8,
+    IC_TYPE_U32,
+    IC_TYPE_S32,
+    IC_TYPE_F32,
+    IC_TYPE_F64,
+    IC_TYPE_VOID,
 };
 
 enum ic_error_type
 {
     IC_ERR_LEXING,
     IC_ERR_PARSING,
+};
+
+enum ic_function_type
+{
+    IC_FUN_HOST,
+    IC_FUN_SOURCE,
+};
+
+// todo; union?
+enum ic_global_type
+{
+    IC_GLOBAL_FUNCTION,
+    IC_GLOBAL_FUNCTION_FORWARD_DECLARATION,
+    IC_GLOBAL_STRUCTURE,
+    IC_GLOBAL_STRUCTURE_FORWARD_DECLARATION,
+    IC_GLOBAL_VAR_DECLARATION,
+    IC_GLOBAL_ENUM,
+};
+
+enum ic_stmt_result_type
+{
+    IC_STMT_RESULT_BREAK,
+    IC_STMT_RESULT_CONTINUE,
+    IC_STMT_RESULT_RETURN,
+    IC_STMT_RESULT_NOP,
 };
 
 struct ic_keyword
@@ -139,10 +182,16 @@ static ic_keyword _keywords[] = {
     {"if", IC_TOK_IF},
     {"return", IC_TOK_RETURN},
     {"or", IC_TOK_OR},
-    {"var", IC_TOK_VAR},
     {"while", IC_TOK_WHILE},
     {"break", IC_TOK_BREAK},
     {"continue", IC_TOK_CONTINUE},
+    {"u8", IC_TOK_U8},
+    {"s8", IC_TOK_S8},
+    {"u32", IC_TOK_U32},
+    {"s32", IC_TOK_S32},
+    {"f32", IC_TOK_F32},
+    {"f64", IC_TOK_F64},
+    {"void", IC_TOK_VOID},
 };
 
 struct ic_string
@@ -162,6 +211,19 @@ struct ic_token
         double number;
         ic_string string;
     };
+};
+
+struct ic_value_type
+{
+    ic_basic_type basic_type;
+    int indirection_level;
+
+    // without this visual c++ does not compile, I have no idea why...
+    // I should test with gcc
+    bool operator==(const ic_value_type& other) const
+    {
+        return basic_type == other.basic_type && indirection_level == other.indirection_level;
+    }
 };
 
 struct ic_expr;
@@ -196,9 +258,9 @@ struct ic_stmt
 
         struct
         {
+            ic_value_type type;
             ic_token token;
             ic_expr* expr;
-            int indirection_level;
         } _var_declaration;
 
         struct
@@ -244,11 +306,15 @@ struct ic_expr
 struct ic_value
 {
     ic_value_type type;
-    int indirection_level;
 
     union
     {
-        double number;
+        unsigned char u8;
+        char s8;
+        int s32;
+        unsigned int u32;
+        float f32;
+        double f64;
         void* pointer;
     };
 };
@@ -265,42 +331,32 @@ struct ic_scope
     bool new_call_frame; // so variables do not leak to lower functions
 };
 
-using ic_host_function = ic_value(*)(int argc, ic_value* argv);
-
-enum ic_function_type
+struct ic_param
 {
-    IC_FUN_HOST,
-    IC_FUN_SOURCE,
+    ic_value_type type;
+    ic_string name;
 };
+
+using ic_host_function = ic_value(*)(int argc, ic_value* argv);
 
 struct ic_function
 {
     ic_function_type type;
-    ic_string name;
+    ic_value_type return_type;
+    ic_token token;
+    int param_count;
+    ic_param params[IC_MAX_ARGC];
 
     union
     {
-        // todo; function signature for type checking
-        ic_host_function host;
         struct
         {
-            ic_token token;
-            int param_count;
-            ic_string params[IC_MAX_ARGC];
-            ic_stmt* body;
-        } source;
-    };
-};
+            ic_host_function callback;
+            bool type_check;
+        } host;
 
-// todo; union?
-enum ic_global_type
-{
-    IC_GLOBAL_FUNCTION,
-    IC_GLOBAL_FUNCTION_FORWARD_DECLARATION,
-    IC_GLOBAL_STRUCTURE,
-    IC_GLOBAL_STRUCTURE_FORWARD_DECLARATION,
-    IC_GLOBAL_VAR_DECLARATION,
-    IC_GLOBAL_ENUM,
+        ic_stmt* body;
+    };
 };
 
 struct ic_global
@@ -313,24 +369,16 @@ struct ic_global
     };
 };
 
-struct ic_expr_result
-{
-    ic_value value;
-    void* lvalue_data;
-};
-
-enum ic_stmt_result_type
-{
-    IC_STMT_RESULT_BREAK,
-    IC_STMT_RESULT_CONTINUE,
-    IC_STMT_RESULT_RETURN,
-    IC_STMT_RESULT_NOP,
-};
-
 struct ic_stmt_result
 {
     ic_stmt_result_type type;
     ic_value value;
+};
+
+struct ic_expr_result
+{
+    ic_value value;
+    void* lvalue_data;
 };
 
 struct ic_exception_parsing {};
@@ -423,29 +471,32 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
     return expr;
 }
 
+// todo, after implementing string literals implement it as printf, i.e. string and values
+// without type checking
 ic_value ic_host_print(int argc, ic_value* argv)
 {
-    // todo; check argc and argv at compile time
-    if (argc != 1 || argv[0].type != IC_VAL_NUMBER || argv[0].indirection_level)
-    {
-        printf("expected number argument\n");
-        return {};
-    }
-    printf("print: %f\n", argv[0].number);
-    return {};
+    assert(argc == 1);
+    assert(argv[0].type.basic_type == IC_TYPE_F64);
+    assert(argv[0].type.indirection_level == 0);
+    printf("print: %f\n", argv[0].f64);
+    return { IC_TYPE_VOID, 0 }; // todo; void should be implicit?
 }
 
 void ic_runtime::init()
 {
     push_scope(); // global scope
 
+    // todo; use add_host_function()
     const char* str = "print";
     ic_string name = { str, strlen(str) };
     ic_function function;
     function.type = IC_FUN_HOST;
-    function.name = name;
-    function.host = ic_host_print;
-    // todo; use add_host_function("print")
+    function.token.string = name;
+    function.return_type = { IC_TYPE_VOID, 0 };
+    function.param_count = 1;
+    function.params[0].type = { IC_TYPE_F64, 0 };
+    function.host.callback = ic_host_print;
+    function.host.type_check = true;
     _functions.push_back(function);
 }
 
@@ -456,7 +507,7 @@ void ic_runtime::free()
     _var_deque.free();
 }
 
-// todo; these functions should manage host strings
+// todo; these functions should allocate and then free memory for host strings (which can be temporary variables)
 
 void ic_runtime::clear_host_functions()
 {
@@ -525,11 +576,10 @@ bool ic_runtime::run(const char* source_code)
         }
 
         assert(global.type == IC_GLOBAL_FUNCTION);
-        ic_string name = global.function.name;
+        ic_token token = global.function.token;
 
-        if (get_function(name))
+        if (get_function(token.string))
         {
-            ic_token token = global.function.source.token;
             ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
             return false;
         }
@@ -548,7 +598,7 @@ bool ic_runtime::run(const char* source_code)
 
     assert(_scopes.size() == 1); // all non global scopes are gone
 
-    // remove source functions from current run
+    // remove source functions so they don't collide with next run()
     {
         auto it = _functions.begin();
         for (; it != _functions.end(); ++it)
@@ -635,10 +685,35 @@ ic_function* ic_runtime::get_function(ic_string name)
 {
     for (ic_function& function : _functions)
     {
-        if (ic_string_compare(function.name, name))
+        if (ic_string_compare(function.token.string, name))
             return& function;
     }
     return nullptr;
+}
+
+bool to_boolean(const ic_value& value)
+{
+    if (value.type.indirection_level)
+        return value.pointer;
+
+    switch (value.type.basic_type)
+    {
+    case IC_TYPE_U8:
+        return value.u8;
+    case IC_TYPE_S8:
+        return value.s8;
+    case IC_TYPE_U32:
+        return value.u32;
+    case IC_TYPE_S32:
+        return value.s32;
+    case IC_TYPE_F32:
+        return value.f32;
+    case IC_TYPE_F64:
+        return value.f64;
+    }
+    
+    assert(false);
+    return {};
 }
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
@@ -687,10 +762,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
             {
                 ic_expr_result header2_result = ic_evaluate_expr(stmt->_for.header2, runtime);
 
-                assert(!header2_result.value.indirection_level);
-                assert(header2_result.value.type == IC_VAL_NUMBER);
-
-                if (!header2_result.value.number)
+                if (!to_boolean(header2_result.value))
                     break;
             }
 
@@ -715,14 +787,10 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     case IC_STMT_IF:
     {
         runtime.push_scope();
+        ic_stmt_result output = { IC_STMT_RESULT_NOP };
         ic_expr_result header_result = ic_evaluate_expr(stmt->_if.header, runtime);
 
-        assert(!header_result.value.indirection_level);
-        assert(header_result.value.type == IC_VAL_NUMBER);
-
-        ic_stmt_result output = { IC_STMT_RESULT_NOP };
-
-        if (header_result.value.number)
+        if (to_boolean(header_result.value))
             output = ic_execute_stmt(stmt->_if.body_if, runtime);
         else if (stmt->_if.body_else)
             output = ic_execute_stmt(stmt->_if.body_else, runtime);
@@ -736,6 +804,13 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 
         if (stmt->_return.expr)
             output.value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
+        else
+        {
+            // this is only for bug detection; type pass should detect that
+            // function returns void where non-void value is expected (e.g. if condition)
+            output.value.type.basic_type = IC_TYPE_VOID;
+            output.value.type.indirection_level = 0;
+        }
 
         return output;
     }
@@ -750,14 +825,14 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     case IC_STMT_VAR_DECLARATION:
     {
         ic_value value;
+        value.type = stmt->_var_declaration.type;
 
         if (stmt->_var_declaration.expr)
         {
-            value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
-            assert(stmt->_var_declaration.indirection_level == value.indirection_level);
+            ic_value expr_value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
+            assert(value.type == expr_value.type);
+            value = expr_value;
         }
-        else
-            assert(false); // todo, set type in value
 
         assert(runtime.add_var(stmt->_var_declaration.token.string, value));
         return ic_stmt_result{ IC_STMT_RESULT_NOP };
@@ -777,109 +852,104 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 {
     assert(expr);
 
+    // todo !!!!!!!!!!
     switch(expr->type)
     {
     case IC_EXPR_BINARY:
     {
         ic_expr_result input_left = ic_evaluate_expr(expr->_binary.left, runtime);
         ic_expr_result input_right = ic_evaluate_expr(expr->_binary.right, runtime);
-        assert(input_left.value.type == input_right.value.type);
-        assert(input_left.value.type == IC_VAL_NUMBER);
+        assert(input_left.value.type.basic_type == input_right.value.type.basic_type);
+        assert(input_left.value.type.basic_type == IC_TYPE_F64);
 
         // todo
         ic_expr_result output;
         output.lvalue_data = nullptr;
-        output.value.indirection_level = 0;
-        output.value.type = IC_VAL_NUMBER;
+        output.value.type = { IC_TYPE_F64, 0 };
 
         // todo
         if (expr->token.type == IC_TOK_PLUS)
         {
-            assert(input_right.value.indirection_level == 0);
+            assert(input_right.value.type.indirection_level == 0);
 
-            if (input_left.value.indirection_level)
+            if (input_left.value.type.indirection_level)
             {
                 // todo; only int types can be added to a pointer
-                output.value.pointer = (double*)input_left.value.pointer + (int)input_right.value.number;
-                output.value.indirection_level = input_left.value.indirection_level;
+                output.value.pointer = (double*)input_left.value.pointer + (int)input_right.value.f64;
+                output.value.type.indirection_level = input_left.value.type.indirection_level;
             }
             else
-                output.value.number = input_left.value.number + input_right.value.number;
+                output.value.f64 = input_left.value.f64 + input_right.value.f64;
 
             return output;
         }
         
-        assert(input_left.value.indirection_level == input_right.value.indirection_level);
+        assert(input_left.value.type.indirection_level == input_right.value.type.indirection_level);
         
         if (expr->token.type == IC_TOK_EQUAL)
         {
             assert(input_left.lvalue_data);
             input_left.value = input_right.value;
-            *(double*)input_left.lvalue_data = input_left.value.number;
+            *(double*)input_left.lvalue_data = input_left.value.f64;
             return input_left;
         }
 
-        assert(input_left.value.indirection_level == 0);
+        assert(input_left.value.type.indirection_level == 0);
 
         switch (expr->token.type)
         {
         case IC_TOK_AND:
-            output.value.number = input_left.value.number && input_right.value.number;
+            output.value.f64 = input_left.value.f64 && input_right.value.f64;
             return output;
         case IC_TOK_OR:
-            output.value.number = input_left.value.number || input_right.value.number;
+            output.value.f64 = input_left.value.f64 || input_right.value.f64;
             return output;
-
         case IC_TOK_PLUS_EQUAL:
             assert(input_left.lvalue_data);
-            input_left.value.number += input_right.value.number;
-            *(double*)input_left.lvalue_data = input_left.value.number;
+            input_left.value.f64 += input_right.value.f64;
+            *(double*)input_left.lvalue_data = input_left.value.f64;
             return input_left;
-
         case IC_TOK_MINUS_EQUAL:
             assert(input_left.lvalue_data);
-            input_left.value.number -= input_right.value.number;
-            *(double*)input_left.lvalue_data = input_left.value.number;
+            input_left.value.f64 -= input_right.value.f64;
+            *(double*)input_left.lvalue_data = input_left.value.f64;
             return input_left;
-
         case IC_TOK_STAR_EQUAL:
             assert(input_left.lvalue_data);
-            input_left.value.number *= input_right.value.number;
-            *(double*)input_left.lvalue_data = input_left.value.number;
+            input_left.value.f64 *= input_right.value.f64;
+            *(double*)input_left.lvalue_data = input_left.value.f64;
             return input_left;
-
         case IC_TOK_SLASH_EQUAL:
             assert(input_left.lvalue_data);
-            input_left.value.number /= input_right.value.number;
-            *(double*)input_left.lvalue_data = input_left.value.number;
+            input_left.value.f64 /= input_right.value.f64;
+            *(double*)input_left.lvalue_data = input_left.value.f64;
             return input_left;
-
         case IC_TOK_BANG_EQUAL:
-            output.value.number = input_left.value.number != input_right.value.number;
+            output.value.f64 = input_left.value.f64 != input_right.value.f64;
             return output;
         case IC_TOK_EQUAL_EQUAL:
-            output.value.number = input_left.value.number == input_right.value.number;
+            output.value.f64 = input_left.value.f64 == input_right.value.f64;
             return output;
         case IC_TOK_MINUS:
-            output.value.number = input_left.value.number - input_right.value.number;
+            output.value.f64 = input_left.value.f64 - input_right.value.f64;
             return output;
         case IC_TOK_STAR:
-            output.value.number = input_left.value.number * input_right.value.number;
+            output.value.f64 = input_left.value.f64 * input_right.value.f64;
             return output;
         case IC_TOK_SLASH:
-            output.value.number = input_left.value.number / input_right.value.number;
+            output.value.f64 = input_left.value.f64 / input_right.value.f64;
             return output;
         case IC_TOK_GREATER:
-            output.value.number = input_left.value.number > input_right.value.number;
+            output.value.f64 = input_left.value.f64 > input_right.value.f64;
             return output;
         case IC_TOK_GREATER_EQUAL:
-            output.value.number = input_left.value.number >= input_right.value.number;
+            output.value.f64 = input_left.value.f64 >= input_right.value.f64;
             return output;
         case IC_TOK_LESS:
-            output.value.number = input_left.value.number < input_right.value.number;
+            output.value.f64 = input_left.value.f64 < input_right.value.f64;
             return output;
         case IC_TOK_LESS_EQUAL:
-            output.value.number = input_left.value.number <= input_right.value.number;
+            output.value.f64 = input_left.value.f64 <= input_right.value.f64;
             return output;
         }
 
@@ -892,30 +962,30 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         switch (expr->token.type)
         {
         case IC_TOK_MINUS:
-            assert(input.value.type == IC_VAL_NUMBER);
-            assert(!input.value.indirection_level);
-            input.value.number *= -1.0;
+            assert(input.value.type.basic_type == IC_TYPE_F64);
+            assert(!input.value.type.indirection_level);
+            input.value.f64 *= -1.0;
             input.lvalue_data = nullptr;
             return input;
         case IC_TOK_BANG:
-            assert(input.value.type == IC_VAL_NUMBER);
-            assert(!input.value.indirection_level);
-            input.value.number = !input.value.number;
+            assert(input.value.type.basic_type == IC_TYPE_F64);
+            assert(!input.value.type.indirection_level);
+            input.value.f64 = !input.value.f64;
             input.lvalue_data = nullptr;
             return input;
         case IC_TOK_MINUS_MINUS:
-            assert(input.value.type == IC_VAL_NUMBER);
-            assert(!input.value.indirection_level);
+            assert(input.value.type.basic_type == IC_TYPE_F64);
+            assert(!input.value.type.indirection_level);
             assert(input.lvalue_data);
-            input.value.number -= 1;
-            *(double*)input.lvalue_data = input.value.number;
+            input.value.f64 -= 1;
+            *(double*)input.lvalue_data = input.value.f64;
             return input;
         case IC_TOK_PLUS_PLUS:
-            assert(input.value.type == IC_VAL_NUMBER);
-            assert(!input.value.indirection_level);
+            assert(input.value.type.basic_type == IC_TYPE_F64);
+            assert(!input.value.type.indirection_level);
             assert(input.lvalue_data);
-            input.value.number += 1;
-            *(double*)input.lvalue_data = input.value.number;
+            input.value.f64 += 1;
+            *(double*)input.lvalue_data = input.value.f64;
             return input;
         case IC_TOK_AMPERSAND:
         {
@@ -923,27 +993,39 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             ic_expr_result output;
             output.lvalue_data = nullptr;
             output.value.type = input.value.type;
-            output.value.indirection_level = input.value.indirection_level + 1;
+            output.value.type.indirection_level += 1;
             output.value.pointer = input.lvalue_data;
             return output;
         }
         case IC_TOK_STAR:
         {
-            int indirection_level = input.value.indirection_level;
-            assert(indirection_level);
-            
+            assert(input.value.type.indirection_level);
             ic_expr_result output;
-            output.value.indirection_level = indirection_level - 1;
             output.value.type = input.value.type;
+            output.value.type.indirection_level -= 1;
             output.lvalue_data = input.value.pointer;
+            // using 'output.value.f64 = *(double*)input.value.pointer;' for all the cases
+            // may trigger segmentation fault if a host pointer is read and is of type smaller than double
 
-            if (indirection_level == 1)
-            {
-                assert(input.value.type == IC_VAL_NUMBER);
-                output.value.number = *(double*)input.value.pointer;
-            }
+            if (output.value.type.indirection_level || output.value.type.basic_type == IC_TYPE_F64)
+                output.value.f64 = *(double*)input.value.pointer;
             else
-                output.value.pointer = (void*)*(char**)input.value.pointer;
+            {
+                switch (output.value.type.basic_type)
+                {
+                case IC_TYPE_U8:
+                case IC_TYPE_S8:
+                    output.value.s8 = *(char*)input.value.pointer;
+                    break;
+                case IC_TYPE_U32:
+                case IC_TYPE_S32:
+                case IC_TYPE_F32:
+                    output.value.s32 = *(int*)input.value.pointer;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
 
             return output;
         }
@@ -960,6 +1042,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         ic_token token = expr->token;
         ic_function* function = runtime.get_function(token.string);
         assert(function);
+
         int argc = 0;
         ic_value argv[IC_MAX_ARGC];
         ic_expr* expr_arg = expr->_function_call.arg;
@@ -973,11 +1056,20 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             argc += 1;
         }
 
+        if (function->type == IC_FUN_SOURCE || function->host.type_check)
+        {
+            assert(argc == function->param_count);
+
+            for (int i = 0; i < argc; ++i)
+                assert(argv[i].type == function->params[i].type);
+        }
+
         if (function->type == IC_FUN_HOST)
         {
-            assert(function->host);
-            // todo; check arguments against function signature
-            ic_value value = function->host(argc, argv);
+            assert(function->host.callback);
+            ic_value value = function->host.callback(argc, argv);
+            // execution will fail but only because of a host fault
+            assert(value.type == function->return_type);
             ic_expr_result output;
             // function can never return an lvalue
             output.lvalue_data = nullptr;
@@ -987,15 +1079,17 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         else
         {
             assert(function->type == IC_FUN_SOURCE);
-            assert(argc == function->source.param_count);
             // all arguments must be retrieved before upper scopes are hidden
             runtime.push_scope(true);
 
             for(int i = 0; i < argc; ++i)
-                runtime.add_var(function->source.params[i], argv[i]);
+                runtime.add_var(function->params[i].name, argv[i]);
 
-            ic_expr_result output = {}; // if not initialized visual studio throws an exception...
-            ic_stmt_result stmt_result = ic_execute_stmt(function->source.body, runtime);
+            ic_expr_result output;
+            ic_stmt_result stmt_result = ic_execute_stmt(function->body, runtime);
+
+            if(function->return_type.basic_type != IC_TYPE_VOID || function->return_type.indirection_level)
+                assert(stmt_result.value.type == function->return_type);
 
             if (stmt_result.type == IC_STMT_RESULT_RETURN)
             {
@@ -1003,7 +1097,13 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 output.value = stmt_result.value;
             }
             else
+            {
+                // function without return statement
                 assert(stmt_result.type == IC_STMT_RESULT_NOP);
+                // this is only for debugging purposes, type pass should detect cases
+                // where void is used as a value; there is no other reason to initialize this
+                output.value.type = { IC_TYPE_VOID, 0 };
+            }
 
             runtime.pop_scope();
             return output;
@@ -1019,9 +1119,8 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_expr_result output;
             output.lvalue_data = nullptr;
-            output.value.type = IC_VAL_NUMBER;
-            output.value.indirection_level = 0;
-            output.value.number = token.number;
+            output.value.type = { IC_TYPE_F64, 0 };
+            output.value.f64 = token.number;
             return output;
         }
         case IC_TOK_IDENTIFIER:
@@ -1030,15 +1129,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             assert(value);
             ic_expr_result output;
             output.value = *value;
-
-            if (value->indirection_level)
-                output.lvalue_data = &value->pointer;
-            else
-            {
-                assert(value->type == IC_VAL_NUMBER);
-                output.lvalue_data = &value->number;
-            }
-
+            output.lvalue_data = &value->u8; // all union members start at the same address
             return output;
         }
         } // switch
@@ -1353,51 +1444,97 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
     throw ic_exception_parsing{};
 }
 
+bool produce_type(const ic_token** it, ic_runtime& runtime, ic_value_type& type)
+{
+    switch ((**it).type)
+    {
+    case IC_TOK_U8:
+        type.basic_type = IC_TYPE_U8;
+        break;
+    case IC_TOK_S8:
+        type.basic_type = IC_TYPE_S8;
+        break;
+    case IC_TOK_U32:
+        type.basic_type = IC_TYPE_U32;
+        break;
+    case IC_TOK_S32:
+        type.basic_type = IC_TYPE_S32;
+        break;
+    case IC_TOK_F32:
+        type.basic_type = IC_TYPE_F32;
+        break;
+    case IC_TOK_F64:
+        type.basic_type = IC_TYPE_F64;
+        break;
+    case IC_TOK_VOID:
+        type.basic_type = IC_TYPE_VOID;
+        break;
+    default:
+        return false;
+    }
+
+    token_advance(it);
+    type.indirection_level = 0;
+
+    while (token_consume(it, IC_TOK_STAR))
+        type.indirection_level += 1;
+
+    // todo; void*
+    if (type.basic_type == IC_TYPE_VOID && type.indirection_level)
+        assert(false);
+
+    return true;
+}
+
+// todo; struct, enum, etc.
 ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 {
-    if ((**it).type == IC_TOK_IDENTIFIER)
+    ic_value_type return_type;
+
+    if (!produce_type(it, runtime, return_type))
+        exit_parsing(it, "expected return type");
+
+    ic_global global;
+    global.type = IC_GLOBAL_FUNCTION;
+    ic_function& function = global.function;
+    function.type = IC_FUN_SOURCE;
+    function.token = **it;
+    token_consume(it, IC_TOK_IDENTIFIER, "expected function name");
+    function.return_type = return_type;
+    function.param_count = 0;
+    token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after function name");
+
+    if (!token_consume(it, IC_TOK_RIGHT_PAREN))
     {
-        ic_global global;
-        global.type = IC_GLOBAL_FUNCTION;
-        ic_function& function = global.function;
-        function.type = IC_FUN_SOURCE;
-        function.name = (**it).string;
-        function.source.token = **it;
-        function.source.param_count = 0;
-        token_advance(it);
-        token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after function name");
-
-        if (!token_consume(it, IC_TOK_RIGHT_PAREN))
+        for (;;)
         {
-            for (;;)
-            {
-                if (function.source.param_count > IC_MAX_ARGC)
-                    exit_parsing(it, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
+            if (function.param_count >= IC_MAX_ARGC)
+                exit_parsing(it, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
 
-                ic_expr* expr = produce_expr_primary(it, runtime);
+            ic_value_type param_type;
 
-                if (expr->token.type != IC_TOK_IDENTIFIER)
-                    exit_parsing(it, "expected parameter name");
+            if (!produce_type(it, runtime, param_type))
+                exit_parsing(it, "expected parameter type");
 
-                function.source.params[function.source.param_count] = expr->token.string;
-                function.source.param_count += 1;
-                if (token_consume(it, IC_TOK_RIGHT_PAREN)) break;
-                token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument");
-            }
+            function.params[function.param_count].type = param_type;
+            function.params[function.param_count].name = (**it).string;
+            token_consume(it, IC_TOK_IDENTIFIER, "expected parameter name");
+            function.param_count += 1;
+
+            if (token_consume(it, IC_TOK_RIGHT_PAREN))
+                break;
+
+            token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument");
         }
-
-        function.source.body = produce_stmt(it, runtime);
-
-        if (function.source.body->type != IC_STMT_COMPOUND)
-            exit_parsing(it, "expected compound stmt after function parameter list");
-
-        function.source.body->_compound.push_scope = false; // do not allow shadowing of arguments
-        return global;
     }
-    else // todo; struct, var, etc.
-        exit_parsing(it, "expected function declaration");
 
-    return {};
+    function.body = produce_stmt(it, runtime);
+
+    if (function.body->type != IC_STMT_COMPOUND)
+        exit_parsing(it, "expected compound stmt after function parameter list");
+
+    function.body->_compound.push_scope = false; // do not allow shadowing of arguments
+    return global;
 }
 
 ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
@@ -1496,13 +1633,15 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
 // and: while(var x = 6);
 ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
 {
-    if (token_consume(it, IC_TOK_VAR))
+    ic_value_type type;
+
+    if (produce_type(it, runtime, type))
     {
+        if (type.basic_type == IC_TYPE_VOID && !type.indirection_level)
+            exit_parsing(it, "variable can't be of type void");
+
         ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_VAR_DECLARATION);
-
-        while (token_consume(it, IC_TOK_STAR))
-            stmt->_var_declaration.indirection_level += 1;
-
+        stmt->_var_declaration.type = type;
         stmt->_var_declaration.token = **it;
         token_consume(it, IC_TOK_IDENTIFIER, "expected variable name");
 
@@ -1512,7 +1651,6 @@ ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
             return stmt;
         }
 
-        assert(false); // right now variable must be initialized - we don't have explicit types
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
         return stmt;
     }
