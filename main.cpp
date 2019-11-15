@@ -471,8 +471,8 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
     return expr;
 }
 
-// todo, after implementing string literals implement it as printf, i.e. string and values
-// without type checking
+// todo; implement as printf when string literals are supported
+// https://stackoverflow.com/questions/988290/populating-a-va-list
 ic_value ic_host_print(int argc, ic_value* argv)
 {
     assert(argc == 1);
@@ -806,8 +806,8 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
             output.value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
         else
         {
-            // this is only for bug detection; type pass should detect that
-            // function returns void where non-void value is expected (e.g. if condition)
+            // this value should never be used (type pass should terminate)
+            // this is only for bug detection, e.g. failing in to_boolean()
             output.value.type.basic_type = IC_TYPE_VOID;
             output.value.type.indirection_level = 0;
         }
@@ -1086,22 +1086,21 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 runtime.add_var(function->params[i].name, argv[i]);
 
             ic_expr_result output;
-            ic_stmt_result stmt_result = ic_execute_stmt(function->body, runtime);
+            ic_stmt_result fun_result = ic_execute_stmt(function->body, runtime);
 
-            if(function->return_type.basic_type != IC_TYPE_VOID || function->return_type.indirection_level)
-                assert(stmt_result.value.type == function->return_type);
-
-            if (stmt_result.type == IC_STMT_RESULT_RETURN)
+            if (fun_result.type == IC_STMT_RESULT_RETURN)
             {
+                assert(fun_result.value.type == function->return_type);
                 output.lvalue_data = nullptr;
-                output.value = stmt_result.value;
+                output.value = fun_result.value;
             }
             else
             {
                 // function without return statement
-                assert(stmt_result.type == IC_STMT_RESULT_NOP);
-                // this is only for debugging purposes, type pass should detect cases
-                // where void is used as a value; there is no other reason to initialize this
+                assert(fun_result.type == IC_STMT_RESULT_NOP);
+                assert(function->return_type.basic_type == IC_TYPE_VOID && !function->return_type.indirection_level);
+                // this value should never be used (type pass should terminate)
+                // this is only for bug detection, e.g. failing in to_boolean()
                 output.value.type = { IC_TYPE_VOID, 0 };
             }
 
@@ -1113,6 +1112,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
         ic_token token = expr->token;
 
+        // todo; string literal
         switch (token.type)
         {
         case IC_TOK_NUMBER:
