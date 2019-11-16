@@ -7,14 +7,15 @@
 // ic - interpreted C
 // todo
 // final goal: dump assembly that can be assembled by e.g. nasm to an object file
-// all api declarations should be named ic_, other ic_p_
+// use common prefix for all declaration names
 // comma, [], sizeof operators
 // print source code line on error
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
 // string literals should be null terminated
 // function and void pointers, typedefs (or better 'using = ')
 // host structures registering ?
-// ptrdiff_t ?; implicit type conversions; overflows; bool type; warnings on dubious type conversions
+// bool, nullptr; ptrdiff_t ?; implicit type conversions (warnings, overflows, etc.)
+// I'm not sure if what I do with unions is not ub.
 
 template<typename T, int N>
 struct ic_deque
@@ -309,13 +310,6 @@ struct ic_value
 {
     ic_value_type type;
 
-    // this is very important
-    // only f64 and pointer are used in expression evaluation (double can represent all other number types)
-    // when values are passed to host functions or assigned to an lvalue they are converted back to specified types
-    // SHIT, we can't do this - if we store internally values only as doubles and we write to an lvalue based on type
-    // we can corrupt variables that are stored in the interpreter - they will no longer be double
-    // shit
-    // well, I will have to change a few things, we could track host pointers but that seems off.
     union
     {
         unsigned char u8;
@@ -480,7 +474,8 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
     return expr;
 }
 
-// todo: support format string and arguments, but how to do it?
+// todo: support format string and arguments, but how to do it? parse the format and
+// call printf by printf?
 ic_value ic_host_print(int argc, ic_value* argv)
 {
     assert(argc == 1);
@@ -540,7 +535,7 @@ ic_value* ic_runtime::get_global_var(const char* name)
     return {};
 }
 
-// todo; overwrite if exists
+// todo; overwrite if exists; parameters can't be of type void
 void ic_runtime::add_host_function(const char* name, ic_host_function function)
 {
     assert(false);
@@ -840,37 +835,17 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     return {};
 }
 
-// precedence from lowest to highest
+void assert_same_type(ic_value l, ic_value r)
+{
+    assert(l.type == r.type);
+}
 
-ic_expr_result evaluate_assign(void* lvalue_data, ic_value left, ic_value right);
-ic_expr_result evaluate_assign_add(void* lvalue_data, ic_value left, ic_value right);
-ic_expr_result evaluate_assign_subtract(void* lvalue_data, ic_value left, ic_value right);
-ic_expr_result evaluate_assign_multiply(void* lvalue_data, ic_value left, ic_value right);
-ic_expr_result evaluate_assign_divide(void* lvalue_data, ic_value left, ic_value right);
-
-ic_value evaluate_logical_or(ic_value left, ic_value right);
-ic_value evaluate_logical_and(ic_value left, ic_value right);
-
-ic_value evaluate_compare_equal(ic_value left, ic_value right);
-ic_value evaluate_compare_not_equal(ic_value left, ic_value right);
-
-ic_value evaluate_compare_greater(ic_value left, ic_value right);
-ic_value evaluate_compare_greater_equal(ic_value left, ic_value right);
-ic_value evaluate_compare_less(ic_value left, ic_value right);
-ic_value evaluate_compare_less_equal(ic_value left, ic_value right);
-
+// interpreter does calculations only in double type and then converts back
+// to value type; this is to avoid boilerplate code + double can contain all other supported types
+double get_numeric_data(ic_value value);
+void set_numeric_data(ic_value& value, double number);
+void set_lvalue_data(void* lvalue_data, ic_value value);
 ic_value evaluate_add(ic_value left, ic_value right);
-ic_value evaluate_subtract(ic_value left, ic_value right);
-
-ic_value evaluate_multiply(ic_value left, ic_value right);
-ic_value evaluate_divide(ic_value left, ic_value right);
-
-ic_value evaluate_arithmetic_negation(ic_value value);
-ic_value evaluate_logical_negation(ic_value value);
-ic_expr_result evaluate_decrement(void* lvalue_data, ic_value value);
-ic_expr_result evaluate_increment(void* lvalue_data, ic_value value);
-ic_value evaluate_address_of(void* lvalue_data, ic_value value);
-ic_expr_result evaluate_dereference(ic_value value);
 
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 {
@@ -880,89 +855,225 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
     case IC_EXPR_BINARY:
     {
-        ic_expr_result result_left = ic_evaluate_expr(expr->_binary.left, runtime);
-        void* lvalue_data = result_left.lvalue_data;
-        ic_value left = result_left.value;
         ic_value right = ic_evaluate_expr(expr->_binary.right, runtime).value;
-        ic_expr_result output;
-        output.lvalue_data = nullptr;
+        void* lvalue_data;
+        ic_value left;
+        {
+            ic_expr_result result = ic_evaluate_expr(expr->_binary.left, runtime);
+            lvalue_data = result.lvalue_data;
+            left = result.value;
+        }
 
         switch (expr->token.type)
         {
         case IC_TOK_EQUAL:
-            return evaluate_assign(lvalue_data, left, right);
-        case IC_TOK_PLUS_EQUAL:
-            return evaluate_assign_add(lvalue_data, left, right);
-        case IC_TOK_MINUS_EQUAL:
-            return evaluate_assign_subtract(lvalue_data, left, right);
-        case IC_TOK_STAR_EQUAL:
-            return evaluate_assign_multiply(lvalue_data, left, right);
-        case IC_TOK_SLASH_EQUAL:
-            return evaluate_assign_divide(lvalue_data, left, right);
-        case IC_TOK_VBAR_VBAR:
-            output.value = evaluate_logical_or(left, right);
-            return output;
-        case IC_TOK_AMPERSAND_AMPERSAND:
-            output.value = evaluate_logical_and(left, right);
-            return output;
-        case IC_TOK_EQUAL_EQUAL:
-            output.value = evaluate_compare_equal(left, right);
-            return output;
-        case IC_TOK_BANG_EQUAL:
-            output.value = evaluate_compare_not_equal(left, right);
-            return output;
-        case IC_TOK_GREATER:
-            output.value = evaluate_compare_greater(left, right);
-            return output;
-        case IC_TOK_GREATER_EQUAL:
-            output.value = evaluate_compare_greater_equal(left, right);
-            return output;
-        case IC_TOK_LESS:
-            output.value = evaluate_compare_less(left, right);
-            return output;
-        case IC_TOK_LESS_EQUAL:
-            output.value = evaluate_compare_less_equal(left, right);
-            return output;
-        case IC_TOK_PLUS:
-            output.value = evaluate_add(left, right);
-            return output;
-        case IC_TOK_MINUS:
-            output.value = evaluate_subtract(left, right);
-            return output;
-        case IC_TOK_STAR:
-            output.value = evaluate_multiply(left, right);
-            return output;
-        case IC_TOK_SLASH:
-            output.value = evaluate_divide(left, right);
-            return output;
+        {
+            assert_same_type(left, right);
+            set_lvalue_data(lvalue_data, right);
+            return { lvalue_data, right };
         }
+        case IC_TOK_PLUS_EQUAL:
+        {
+            ic_value output = evaluate_add(left, right);
+            set_lvalue_data(lvalue_data, output);
+            return { lvalue_data, output };
+        }
+        case IC_TOK_MINUS_EQUAL:
+        {
+            double number = get_numeric_data(right);
+            number *= -1;
+            set_numeric_data(right, number);
+            ic_value output = evaluate_add(left, right);
+            set_lvalue_data(lvalue_data, output);
+            return { lvalue_data, output };
+        }
+        case IC_TOK_STAR_EQUAL:
+        {
+            assert_same_type(left, right);
+            double number = get_numeric_data(left) * get_numeric_data(right);
+            set_numeric_data(left, number);
+            set_lvalue_data(lvalue_data, left);
+            return { lvalue_data, left };
+        }
+        case IC_TOK_SLASH_EQUAL:
+        {
+            assert_same_type(left, right);
+            double number = get_numeric_data(left) / get_numeric_data(right);
+            set_numeric_data(left, number);
+            set_lvalue_data(lvalue_data, left);
+            return { lvalue_data, left };
+        }
+        case IC_TOK_VBAR_VBAR:
+        {
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = to_boolean(left) || to_boolean(right);
+            return { nullptr, output };
+        }
+        case IC_TOK_AMPERSAND_AMPERSAND:
+        {
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = to_boolean(left) && to_boolean(right);
+            return { nullptr, output };
+        }
+        case IC_TOK_EQUAL_EQUAL:
+        {
+            assert_same_type(left, right);
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = left.type.indirection_level ? left.pointer == right.pointer : get_numeric_data(left) == get_numeric_data(right);
+            return { nullptr, output};
+        }
+        case IC_TOK_BANG_EQUAL:
+        {
+            assert_same_type(left, right);
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = left.type.indirection_level ? left.pointer != right.pointer : get_numeric_data(left) != get_numeric_data(right);
+            return { nullptr, output};
+        }
+        case IC_TOK_GREATER:
+        {
+            assert_same_type(left, right);
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = left.type.indirection_level ? left.pointer > right.pointer : get_numeric_data(left) > get_numeric_data(right);
+            return { nullptr, output};
+        }
+        case IC_TOK_GREATER_EQUAL:
+        {
+            assert_same_type(left, right);
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = left.type.indirection_level ? left.pointer >= right.pointer : get_numeric_data(left) >= get_numeric_data(right);
+            return { nullptr, output};
+        }
+        case IC_TOK_LESS:
+        {
+            assert_same_type(left, right);
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = left.type.indirection_level ? left.pointer < right.pointer : get_numeric_data(left) < get_numeric_data(right);
+            return { nullptr, output};
+        }
+        case IC_TOK_LESS_EQUAL:
+        {
+            assert_same_type(left, right);
+            ic_value output;
+            output.type = { IC_TYPE_U8, 0 };
+            output.u8 = left.type.indirection_level ? left.pointer <= right.pointer : get_numeric_data(left) <= get_numeric_data(right);
+            return { nullptr, output};
+        }
+        case IC_TOK_PLUS:
+        {
+            return { nullptr, evaluate_add(left, right) };
+        }
+        case IC_TOK_MINUS:
+        {
+            double number = get_numeric_data(right);
+            number *= -1;
+            set_numeric_data(right, number);
+            return { nullptr, evaluate_add(left, right) };
+        }
+        case IC_TOK_STAR:
+        {
+            assert_same_type(left, right);
+            double number = get_numeric_data(left) * get_numeric_data(right);
+            set_numeric_data(left, number);
+            return { nullptr, left };
+        }
+        case IC_TOK_SLASH:
+        {
+            assert_same_type(left, right);
+            double number = get_numeric_data(left) / get_numeric_data(right);
+            set_numeric_data(left, number);
+            return { nullptr, left };
+        }
+        } // switch
 
         assert(false);
     }
     case IC_EXPR_UNARY:
     {
-        ic_expr_result input = ic_evaluate_expr(expr->_unary.expr, runtime);
-        ic_expr_result output;
-        output.lvalue_data = nullptr;
+        void* lvalue_data;
+        ic_value value;
+        {
+            ic_expr_result result = ic_evaluate_expr(expr->_unary.expr, runtime);
+            lvalue_data = result.lvalue_data;
+            value = result.value;
+        }
 
         switch (expr->token.type)
         {
         case IC_TOK_MINUS:
-            output.value = evaluate_arithmetic_negation(input.value);
-            return output;
-        case IC_TOK_BANG:
-            output.value = evaluate_logical_negation(input.value);
-            return output;
-        case IC_TOK_MINUS_MINUS:
-            return evaluate_decrement(input.lvalue_data, input.value);
-        case IC_TOK_PLUS_PLUS:
-            return evaluate_increment(input.lvalue_data, input.value);
-        case IC_TOK_AMPERSAND:
-            output.value = evaluate_address_of(input.lvalue_data, input.value);
-            return output;
-        case IC_TOK_STAR:
-            return evaluate_dereference(input.value);
+        {
+            double number = get_numeric_data(value);
+            number *= -1;
+            set_numeric_data(value, number);
+            return { nullptr, value };
         }
+        case IC_TOK_BANG:
+        {
+            double number = get_numeric_data(value);
+            number = !number;
+            set_numeric_data(value, number);
+            return { nullptr, value };
+        }
+        case IC_TOK_MINUS_MINUS:
+        {
+            ic_value right;
+            right.type = { IC_TYPE_U8, 0 };
+            right.u8 = -1;
+            value = evaluate_add(value, right);
+            set_lvalue_data(lvalue_data, value);
+            return { lvalue_data, value };
+        }
+        case IC_TOK_PLUS_PLUS:
+        {
+            ic_value right;
+            right.type = { IC_TYPE_U8, 0 };
+            right.u8 = 1;
+            value = evaluate_add(value, right);
+            set_lvalue_data(lvalue_data, value);
+            return { lvalue_data, value };
+        }
+        case IC_TOK_AMPERSAND:
+        {
+            assert(lvalue_data);
+            ic_value output;
+            output.type = { value.type.basic_type, value.type.indirection_level + 1 };
+            output.pointer = lvalue_data;
+            return { nullptr, output };
+        }
+        case IC_TOK_STAR:
+        {
+            assert(value.type.indirection_level);
+            ic_value output;
+            output.type = { value.type.basic_type, value.type.indirection_level - 1 };
+
+            // the exact amount of data needs to be read to not trigger segmentation fault, without any conversion
+            if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64)
+                output.pointer = *(void**)value.pointer;
+            else
+            {
+                switch (value.type.basic_type)
+                {
+                case IC_TYPE_U8:
+                case IC_TYPE_S8:
+                    output.s8 = *(char*)value.pointer;
+                case IC_TYPE_U32:
+                case IC_TYPE_S32:
+                case IC_TYPE_F32:
+                    output.s32 = *(int*)value.pointer;
+                default:
+                    assert(false);
+                }
+            }
+
+            return { value.pointer, output };
+        }
+        } // switch
 
         assert(false);
     }
@@ -994,20 +1105,20 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             assert(argc == function->param_count);
 
             for (int i = 0; i < argc; ++i)
+            {
                 assert(argv[i].type == function->params[i].type);
+                assert(argv[i].type.indirection_level || argv[i].type.basic_type != IC_TYPE_VOID);
+            }
         }
 
         if (function->type == IC_FUN_HOST)
         {
             assert(function->host.callback);
             ic_value value = function->host.callback(argc, argv);
-            // execution will fail but only because of a host fault
+            // execution will fail because of a host fault
             assert(value.type == function->return_type);
-            ic_expr_result output;
             // function can never return an lvalue
-            output.lvalue_data = nullptr;
-            output.value = value;
-            return output;
+            return { nullptr, value };
         }
         else
         {
@@ -1019,6 +1130,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 runtime.add_var(function->params[i].name, argv[i]);
 
             ic_expr_result output;
+            output.lvalue_data = nullptr;
             ic_stmt_result fun_result = ic_execute_stmt(function->body, runtime);
 
             if (fun_result.type == IC_STMT_RESULT_RETURN)
@@ -1060,10 +1172,8 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_value* value = runtime.get_var(token.string);
             assert(value);
-            ic_expr_result output;
-            output.value = *value;
-            output.lvalue_data = &value->f64; // all union members start at the same address
-            return output;
+            // all union members start at the same address
+            return { &value->u8, *value };
         }
         } // switch
 
@@ -1075,295 +1185,122 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     return {};
 }
 
-void assert_same_type(ic_value l, ic_value r)
+double get_numeric_data(ic_value value)
 {
-    assert(l.type.indirection_level || l.type.basic_type != IC_TYPE_VOID);
-    assert(l.type == r.type);
+    assert(!value.type.indirection_level);
+
+    switch (value.type.basic_type)
+    {
+    case IC_TYPE_U8:
+        return value.u8;
+    case IC_TYPE_S8:
+        return value.s8;
+    case IC_TYPE_U32:
+        return value.u32;
+    case IC_TYPE_S32:
+        return value.s32;
+    case IC_TYPE_F32:
+        return value.f32;
+    case IC_TYPE_F64:
+        return value.f64;
+    }
+
+    assert(false);
 }
 
-void assert_non_pointer(ic_value value)
+void set_numeric_data(ic_value& value, double number)
 {
-    assert(value.type.indirection_level == 0);
+    assert(!value.type.indirection_level);
+
+    switch (value.type.basic_type)
+    {
+    case IC_TYPE_U8:
+        value.u8 = number;
+        return;
+    case IC_TYPE_S8:
+        value.s8 = number;
+        return;
+    case IC_TYPE_U32:
+        value.u32 = number;
+        return;
+    case IC_TYPE_S32:
+        value.s32 = number;
+        return;
+    case IC_TYPE_F32:
+        value.f32 = number;
+        return;
+    case IC_TYPE_F64:
+        value.f64 = number;
+        return;
+    }
+
+    assert(false);
 }
 
+// the main point of this function is to write the right amount of data (to not trigger segmentation fault)
+// without any conversion
 void set_lvalue_data(void* lvalue_data, ic_value value)
 {
     if (value.type.indirection_level || value.type.basic_type == IC_TYPE_F64)
     {
+        assert(lvalue_data);
         *(double*)lvalue_data = value.f64;
         return;
     }
 
-    // convert f64 to value type - this is very important step
     switch (value.type.basic_type)
     {
     case IC_TYPE_U8:
-        *(unsigned char*)lvalue_data = value.f64;
-        return;
     case IC_TYPE_S8:
-        *(char*)lvalue_data = value.f64;
+        *(char*)lvalue_data = value.s8;
         return;
     case IC_TYPE_U32:
-        *(unsigned int*)lvalue_data = value.f64;
-        return;
     case IC_TYPE_S32:
-        *(int*)lvalue_data = value.f64;
-        return;
     case IC_TYPE_F32:
-        *(float*)lvalue_data = value.f64;
+        *(int*)lvalue_data = value.s32;
         return;
     }
     
     assert(false);
 }
 
-ic_expr_result evaluate_assign(void* lvalue_data, ic_value left, ic_value right)
-{
-    assert(lvalue_data);
-    assert_same_type(left, right);
-    set_lvalue_data(lvalue_data, right);
-    return { lvalue_data, right };
-}
-
-ic_expr_result evaluate_assign_add(void* lvalue_data, ic_value left, ic_value right)
-{
-    assert(lvalue_data);
-    right = evaluate_add(left, right);
-    assert_same_type(left, right);
-    set_lvalue_data(lvalue_data, right);
-    return { lvalue_data, right };
-}
-
-ic_expr_result evaluate_assign_subtract(void* lvalue_data, ic_value left, ic_value right)
-{
-    assert(lvalue_data);
-    right = evaluate_subtract(left, right);
-    assert_same_type(left, right);
-    set_lvalue_data(lvalue_data, right);
-    return { lvalue_data, right };
-}
-
-ic_expr_result evaluate_assign_multiply(void* lvalue_data, ic_value left, ic_value right)
-{
-    assert(lvalue_data);
-    right = evaluate_multiply(left, right);
-    assert_same_type(left, right);
-    set_lvalue_data(lvalue_data, right);
-    return { lvalue_data, right };
-}
-
-ic_expr_result evaluate_assign_divide(void* lvalue_data, ic_value left, ic_value right)
-{
-    assert(lvalue_data);
-    right = evaluate_divide(left, right);
-    assert_same_type(left, right);
-    set_lvalue_data(lvalue_data, right);
-    return { lvalue_data, right };
-}
-
-ic_value evaluate_logical_or(ic_value left, ic_value right)
-{
-    left.f64 = to_boolean(left) || to_boolean(right);
-    left.type = { IC_TYPE_U8, 0 }; // todo, bool type?
-    return left;
-}
-
-ic_value evaluate_logical_and(ic_value left, ic_value right)
-{
-    left.f64 = to_boolean(left) && to_boolean(right);
-    left.type = { IC_TYPE_U8, 0 };
-    return left;
-}
-
-ic_value evaluate_compare_equal(ic_value left, ic_value right)
-{
-    assert_same_type(left, right);
-    left.f64 = left.f64 == right.f64;
-    left.type = { IC_TYPE_U8, 0 };
-    return left;
-}
-
-ic_value evaluate_compare_not_equal(ic_value left, ic_value right)
-{
-    left = evaluate_compare_equal(left, right);
-    left.f64 = !left.f64;
-    return left;
-}
-
-ic_value evaluate_compare_greater(ic_value left, ic_value right)
-{
-    assert_same_type(left, right);
-
-    if (left.type.indirection_level)
-        left.f64 = left.pointer > right.pointer;
-    else
-    {
-        assert_same_type(left, right);
-        left.f64 = left.f64 > right.f64;
-    }
-
-    left.type = { IC_TYPE_U8, 0 };
-    return left;
-}
-
-ic_value evaluate_compare_greater_equal(ic_value left, ic_value right)
-{
-    left = evaluate_compare_equal(left, right);
-    left.f64 = left.f64 || evaluate_compare_greater(left, right).f64;
-    return left;
-}
-
-ic_value evaluate_compare_less(ic_value left, ic_value right)
-{
-    left = evaluate_compare_greater_equal(left, right);
-    left.f64 = !left.f64;
-    return left;
-}
-
-ic_value evaluate_compare_less_equal(ic_value left, ic_value right)
-{
-    left = evaluate_compare_greater(left, right);
-    left.f64 = !left.f64;
-    return left;
-}
-
 ic_value evaluate_add(ic_value left, ic_value right)
 {
+    ic_value output;
+    output.type = left.type;
+
     if (left.type.indirection_level)
     {
-        int pointed_type_size;
+        ic_basic_type rbtype = right.type.basic_type;
+        // only integer types can be added to a pointer
+        assert(rbtype == IC_TYPE_U8 || rbtype == IC_TYPE_S8 || rbtype == IC_TYPE_U32 || rbtype == IC_TYPE_S32); 
+        ptrdiff_t offset = get_numeric_data(right);
 
-        if (left.type.indirection_level > 1)
-            pointed_type_size = sizeof(void*);
-        else // == 1
+        if (left.type.indirection_level > 1 || left.type.basic_type == IC_TYPE_F64) // pointer to pointer or double
+            output.pointer = (void**)left.pointer + offset;
+        else
         {
             switch (left.type.basic_type)
             {
             case IC_TYPE_U8:
             case IC_TYPE_S8:
-                pointed_type_size = sizeof(char);
+                output.pointer = (char*)left.pointer + offset;
             case IC_TYPE_U32:
             case IC_TYPE_S32:
             case IC_TYPE_F32:
-                pointed_type_size = sizeof(int);
-            case IC_TYPE_F64:
-                pointed_type_size = sizeof(double);
+                output.pointer = (int*)left.pointer + offset;
             default:
                 assert(false);
             }
         }
-
-        assert_non_pointer(right);
-        assert(right.type.basic_type == IC_TYPE_U8 || right.type.basic_type == IC_TYPE_S8 || right.type.basic_type == IC_TYPE_U32 ||
-            right.type.basic_type == IC_TYPE_S32); // only integer types can be added to a pointer
-        left.pointer = (char*)left.pointer + (ptrdiff_t)right.f64 * pointed_type_size;
     }
     else
     {
         assert_same_type(left, right);
-        left.f64 += right.f64;
+        set_numeric_data(output, get_numeric_data(left) + get_numeric_data(right));
     }
 
-    return left;
-}
-
-ic_value evaluate_subtract(ic_value left, ic_value right)
-{
-    right.f64 = -right.f64;
-    return evaluate_add(left, right);
-}
-
-ic_value evaluate_multiply(ic_value left, ic_value right)
-{
-    assert_same_type(left, right);
-    assert_non_pointer(left);
-    left.f64 *= right.f64;
-    return left;
-}
-
-ic_value evaluate_divide(ic_value left, ic_value right)
-{
-    assert_same_type(left, right);
-    assert_non_pointer(left);
-    left.f64 /= right.f64;
-    return left;
-}
-
-ic_value evaluate_arithmetic_negation(ic_value value)
-{
-    // todo; negating unsigned types (error, warning?)
-    assert_non_pointer(value);
-    assert(value.type.basic_type != IC_TYPE_VOID);
-    value.f64 = -value.f64;
-    return value;
-}
-
-ic_value evaluate_logical_negation(ic_value value)
-{
-    // todo; negating unsigned types
-    assert_non_pointer(value);
-    assert(value.type.basic_type != IC_TYPE_VOID);
-    value.f64 = !value.f64;
-    return value;
-}
-
-ic_expr_result evaluate_decrement(void* lvalue_data, ic_value value)
-{
-    ic_value one;
-    one.type = { IC_TYPE_U8, 0 };
-    one.f64 = 1;
-    value = evaluate_subtract(value, one);
-    set_lvalue_data(lvalue_data, value);
-    return { lvalue_data, value };
-}
-
-ic_expr_result evaluate_increment(void* lvalue_data, ic_value value)
-{
-    ic_value one;
-    one.type = { IC_TYPE_U8, 0 };
-    one.f64 = 1;
-    value = evaluate_add(value, one);
-    set_lvalue_data(lvalue_data, value);
-    return { lvalue_data, value };
-}
-
-ic_value evaluate_address_of(void* lvalue_data, ic_value value)
-{
-    assert(lvalue_data);
-    value.type.indirection_level += 1;
-    value.pointer = lvalue_data;
-    return value;
-}
-
-ic_expr_result evaluate_dereference(ic_value value)
-{
-    assert(value.type.indirection_level);
-    value.type.indirection_level -= 1;
-
-    // using 'output.value.f64 = *(double*)input.value.pointer;' for all the cases
-    // may trigger segmentation fault if a host pointer is read and is of type smaller than double
-
-    if (value.type.indirection_level || value.type.basic_type == IC_TYPE_F64)
-        value.f64 = *(double*)value.pointer;
-    else
-    {
-        switch (value.type.basic_type)
-        {
-        case IC_TYPE_U8:
-        case IC_TYPE_S8:
-            value.f64 = *(char*)value.pointer;
-            break;
-        case IC_TYPE_U32:
-        case IC_TYPE_S32:
-        case IC_TYPE_F32:
-            value.f64 = *(int*)value.pointer;
-            break;
-        default:
-            assert(false);
-        }
-    }
-
-    return { value.pointer, value };
+    return output;
 }
 
 struct ic_lexer
@@ -1864,7 +1801,7 @@ ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
     if (produce_type(it, runtime, type))
     {
         if (type.basic_type == IC_TYPE_VOID && !type.indirection_level)
-            exit_parsing(it, "variable can't be of type void");
+            exit_parsing(it, "variables can't be of type void");
 
         ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_VAR_DECLARATION);
         stmt->_var_declaration.type = type;
