@@ -1206,6 +1206,7 @@ double get_numeric_data(ic_value value)
     }
 
     assert(false);
+    return {};
 }
 
 void set_numeric_data(ic_value& value, double number)
