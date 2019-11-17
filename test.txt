@@ -41,6 +41,24 @@ void main()
 	bool lolo = true;
 	lolo = false;
 	f64 dd = true + false;
-	f64 dd = true + false;
 	print(dd);
+	
+	dd = 666;
+	print(dd);
+	print(!!dd);
+	
+	s32 dua = true + true +  true * 2;
+	print(dua);
+	print(true + true + false);
+	
+	{
+		void* ptr1 = &lolo;
+		//ptr1 = nullptr;
+		
+		if(ptr1)
+			print(38924983);
+		else
+			print(11111111);
+			
+	}
 }

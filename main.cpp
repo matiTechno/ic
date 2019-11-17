@@ -707,31 +707,22 @@ ic_function* ic_runtime::get_function(ic_string name)
     return nullptr;
 }
 
-bool to_boolean(ic_value value)
-{
-    if (value.type.indirection_level)
-        return value.pointer;
+// interpreter does calculations only in double type and then converts value to expression result type
+// this is to avoid boilerplate code + double can contain all other supported types
+// why not just store everything as f64? in short - host data is supported
+// why can't every numeric expression result in f64? only integer types can be added to pointers; ptr + (5 + 6); would fail then
 
-    switch (value.type.basic_type)
-    {
-    case IC_TYPE_BOOL:
-    case IC_TYPE_S8:
-        return value.s8;
-    case IC_TYPE_U8:
-        return value.u8;
-    case IC_TYPE_S32:
-        return value.s32;
-    case IC_TYPE_U32:
-        return value.u32;
-    case IC_TYPE_F32:
-        return value.f32;
-    case IC_TYPE_F64:
-        return value.f64;
-    }
-
-    assert(false);
-    return {};
-}
+bool to_boolean(ic_value value);
+double get_numeric_data(ic_value value);
+void set_numeric_data(ic_value& value, double number);
+ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right);
+ic_value produce_numeric_value(ic_basic_type btype, double number);
+// use before set_lvalue_data(); for only numeric expressions use set_numeric_data() instead
+ic_value implicit_convert_type(ic_value_type target_type, ic_value value);
+void set_lvalue_data(void* lvalue_data, ic_value value);
+ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
+bool compare_equal(ic_value left, ic_value right);
+bool compare_greater(ic_value left, ic_value right);
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
@@ -847,8 +838,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         if (stmt->_var_declaration.expr)
         {
             ic_value expr_value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
-            assert(value.type == expr_value.type);
-            value = expr_value;
+            value = implicit_convert_type(value.type, expr_value);
         }
 
         assert(runtime.add_var(stmt->_var_declaration.token.string, value));
@@ -864,22 +854,6 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     assert(false);
     return {};
 }
-
-// interpreter does calculations only in double type and then converts value to expression result type
-// this is to avoid boilerplate code + double can contain all other supported types
-// why not just store everything as f64? in short - host data is supported
-// why can't every numeric expression result in f64? only integer types can be added to pointers; ptr + (5 + 6); would fail then
-
-double get_numeric_data(ic_value value);
-void set_numeric_data(ic_value& value, double number);
-ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right);
-ic_value produce_numeric_value(ic_basic_type btype, double number);
-// use before set_lvalue_data(); for only numeric expressions use set_numeric_data() instead
-ic_value implicit_convert_type(ic_value_type target_type, ic_value value);
-void set_lvalue_data(void* lvalue_data, ic_value value);
-ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
-bool compare_equal(ic_value left, ic_value right);
-bool compare_greater(ic_value left, ic_value right);
 
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 {
@@ -1125,8 +1099,9 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
             for (int i = 0; i < argc; ++i)
             {
-                assert(argv[i].type == function->params[i].type);
-                assert(argv[i].type.indirection_level || argv[i].type.basic_type != IC_TYPE_VOID);
+                // parameter can't be of type void
+                assert(function->params[i].type.indirection_level || function->params[i].type.basic_type != IC_TYPE_VOID);
+                argv[i] = implicit_convert_type(function->params[i].type, argv[i]);
             }
         }
 
@@ -1134,7 +1109,6 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             assert(function->host.callback);
             ic_value value = function->host.callback(argc, argv);
-            // execution will fail because of a host fault
             assert(value.type == function->return_type);
             // function can never return an lvalue
             return { nullptr, value };
@@ -1154,9 +1128,8 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
             if (fun_result.type == IC_STMT_RESULT_RETURN)
             {
-                assert(fun_result.value.type == function->return_type);
                 output.lvalue_data = nullptr;
-                output.value = fun_result.value;
+                output.value = implicit_convert_type(function->return_type, fun_result.value);
             }
             else
             {
@@ -1230,6 +1203,14 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     return {};
 }
 
+bool to_boolean(ic_value value)
+{
+    if (value.type.indirection_level)
+        return value.pointer;
+
+    return get_numeric_data(value);
+}
+
 double get_numeric_data(ic_value value)
 {
     assert(!value.type.indirection_level);
@@ -1292,8 +1273,10 @@ ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right)
 {
     assert(!left.type.indirection_level);
     assert(!right.type.indirection_level);
-    ic_basic_type lbtype = left.type.basic_type, rbtype = right.type.basic_type;
-    return lbtype > rbtype ? lbtype : rbtype;
+    ic_basic_type lbtype = left.type.basic_type;
+    ic_basic_type rbtype = right.type.basic_type;
+    ic_basic_type output = lbtype > rbtype ? lbtype : rbtype;
+    return output > IC_TYPE_BOOL ? output : IC_TYPE_S8; // true + true should return 2 not 1, this is a fix
 }
 
 ic_value produce_numeric_value(ic_basic_type btype, double number)
@@ -1807,6 +1790,9 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 
             if (!produce_type(it, runtime, param_type))
                 exit_parsing(it, "expected parameter type");
+
+            if (!param_type.indirection_level && param_type.basic_type == IC_TYPE_VOID)
+                exit_parsing(it, "parameter can't be of type void");
 
             function.params[function.param_count].type = param_type;
             function.params[function.param_count].name = (**it).string;
