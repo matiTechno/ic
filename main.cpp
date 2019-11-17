@@ -1031,7 +1031,9 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
         case IC_TOK_MINUS:
         {
-            return { nullptr, evaluate_add(value, produce_numeric_value(IC_TYPE_S8, -1))};
+            // todo; don't pass -true expression; but it is not a big deal
+            set_numeric_data(value, -get_numeric_data(value));
+            return { nullptr, value };
         }
         case IC_TOK_BANG:
         {
@@ -1127,7 +1129,6 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         // argc  check
         if (function->type == IC_FUN_SOURCE || function->host.arg_count_check)
             assert(argc == function->param_count);
-
 
         // argv type check
         if (function->type == IC_FUN_SOURCE || function->host.arg_type_check)

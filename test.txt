@@ -14,6 +14,8 @@ void mod(f64* value)
 void main()
 {
 
+	print(-true);
+	print(-5);
 	//s8* string = malloc(10);
 	
 
