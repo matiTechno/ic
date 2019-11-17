@@ -368,7 +368,8 @@ struct ic_function
         struct
         {
             ic_host_function callback;
-            bool type_check;
+            bool arg_type_check;
+            bool arg_count_check;
         } host;
 
         ic_stmt* body;
@@ -487,15 +488,29 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
     return expr;
 }
 
+double get_numeric_data(ic_value value);
+
 // todo: support format string and arguments, but how to do it? parse the format and
 // call printf by printf?
 ic_value ic_host_print(int argc, ic_value* argv)
 {
-    assert(argc == 1);
-    assert(argv[0].type.basic_type == IC_TYPE_F64);
-    assert(argv[0].type.indirection_level == 0);
-    printf("print: %f\n", argv[0].f64);
+    if (argv[0].type.indirection_level)
+    {
+        assert(argv[0].type.basic_type == IC_TYPE_S8);
+        printf("print: %s", (const char*)argv[0].pointer);
+    }
+
+    printf("print: %f\n", get_numeric_data(argv[0]));
     return { IC_TYPE_VOID, 0 }; // todo; void should be implicit?
+}
+
+ic_value ic_host_malloc(int argc, ic_value* argv)
+{
+    void* ptr = malloc(argv[0].u32);
+    ic_value value;
+    value.type = { IC_TYPE_VOID, 1 };
+    value.pointer = ptr;
+    return value;
 }
 
 void ic_runtime::init()
@@ -503,17 +518,33 @@ void ic_runtime::init()
     push_scope(); // global scope
 
     // todo; use add_host_function()
-    const char* str = "print";
-    ic_string name = { str, strlen(str) };
-    ic_function function;
-    function.type = IC_FUN_HOST;
-    function.token.string = name;
-    function.return_type = { IC_TYPE_VOID, 0 };
-    function.param_count = 1;
-    function.params[0].type = { IC_TYPE_F64, 0 };
-    function.host.callback = ic_host_print;
-    function.host.type_check = true;
-    _functions.push_back(function);
+    {
+        const char* str = "print";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = { IC_TYPE_VOID, 0 };
+        function.param_count = 1;
+        function.host.callback = ic_host_print;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = false;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "malloc";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = { IC_TYPE_VOID, 1 };
+        function.param_count = 1;
+        function.params[0].type = { IC_TYPE_U32, 0 };
+        function.host.callback = ic_host_malloc;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = true;
+        _functions.push_back(function);
+    }
 }
 
 void ic_runtime::free()
@@ -1093,10 +1124,14 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             argc += 1;
         }
 
-        if (function->type == IC_FUN_SOURCE || function->host.type_check)
-        {
+        // argc  check
+        if (function->type == IC_FUN_SOURCE || function->host.arg_count_check)
             assert(argc == function->param_count);
 
+
+        // argv type check
+        if (function->type == IC_FUN_SOURCE || function->host.arg_type_check)
+        {
             for (int i = 0; i < argc; ++i)
             {
                 // parameter can't be of type void

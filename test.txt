@@ -13,6 +13,10 @@ void mod(f64* value)
 
 void main()
 {
+
+	//s8* string = malloc(10);
+	
+
     print(factorial(9));
     {
         print(6999);
