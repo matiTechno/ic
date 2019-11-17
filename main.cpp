@@ -131,6 +131,7 @@ enum ic_expr_type
 {
     IC_EXPR_BINARY,
     IC_EXPR_UNARY,
+    IC_EXPR_CAST_OPERATOR,
     // parentheses expr exists so if(x=3) doesn't compile
     // and if((x=3)) compiles
     IC_EXPR_PARENTHESES,
@@ -306,6 +307,12 @@ struct ic_expr
         {
             ic_expr* expr;
         } _unary;
+
+        struct
+        {
+            ic_value_type type;
+            ic_expr* expr;
+        } _cast_operator;
 
         struct
         {
@@ -499,8 +506,9 @@ ic_value ic_host_print(int argc, ic_value* argv)
         assert(argv[0].type.basic_type == IC_TYPE_S8);
         printf("print: %s", (const char*)argv[0].pointer);
     }
+    else
+        printf("print: %f\n", get_numeric_data(argv[0]));
 
-    printf("print: %f\n", get_numeric_data(argv[0]));
     return { IC_TYPE_VOID, 0 }; // todo; void should be implicit?
 }
 
@@ -1103,6 +1111,23 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
         assert(false);
     }
+    case IC_EXPR_CAST_OPERATOR:
+    {
+        // allows only non-pointer to non-pointer and pointer to pointer conversions
+        // creates temporary value, that's why lvalue_data is set to nullptr
+
+        ic_value value = ic_evaluate_expr(expr->_cast_operator.expr, runtime).value;
+        ic_value_type target_type = expr->_cast_operator.type;
+
+        if (target_type.indirection_level)
+        {
+            assert(value.type.indirection_level);
+            value.type = target_type;
+            return { nullptr, value };
+        }
+
+        return { nullptr, produce_numeric_value(target_type.basic_type, get_numeric_data(value)) };
+    }
     case IC_EXPR_PARENTHESES:
     {
         return ic_evaluate_expr(expr->_parentheses.expr, runtime);
@@ -1385,7 +1410,7 @@ ic_value evaluate_add(ic_value left, ic_value right, bool subtract)
         ic_basic_type rbtype = right.type.basic_type;
         // only integer types can be added to a pointer
         assert(rbtype == IC_TYPE_U8 || rbtype == IC_TYPE_S8 || rbtype == IC_TYPE_U32 || rbtype == IC_TYPE_S32); 
-        ptrdiff_t offset = subtract ? get_numeric_data(right) : -get_numeric_data(right);
+        ptrdiff_t offset = subtract ? -get_numeric_data(right) : get_numeric_data(right);
 
         if (left.type.indirection_level > 1 || left.type.basic_type == IC_TYPE_F64) // pointer to pointer or pointer to double
             left.pointer = (void**)left.pointer + offset;
@@ -1397,10 +1422,12 @@ ic_value evaluate_add(ic_value left, ic_value right, bool subtract)
             case IC_TYPE_S8:
             case IC_TYPE_U8:
                 left.pointer = (char*)left.pointer + offset;
+                break;
             case IC_TYPE_S32:
             case IC_TYPE_U32:
             case IC_TYPE_F32:
                 left.pointer = (int*)left.pointer + offset;
+                break;
             default:
                 assert(false);
             }
@@ -1763,6 +1790,7 @@ bool produce_type(const ic_token** it, ic_runtime& runtime, ic_value_type& type)
     {
     case IC_TOK_BOOL:
         type.basic_type = IC_TYPE_BOOL;
+        break;
     case IC_TOK_S8:
         type.basic_type = IC_TYPE_S8;
         break;
@@ -2108,6 +2136,23 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
         expr->_unary.expr = produce_expr_unary(it, runtime);
         return expr;
     }
+    case IC_TOK_LEFT_PAREN:
+    {
+        token_advance(it);
+        ic_value_type type;
+
+        if (produce_type(it, runtime, type))
+        {
+            token_consume(it, IC_TOK_RIGHT_PAREN, "expected ) at the end of a cast operator");
+            ic_expr* expr = runtime.allocate_expr(IC_EXPR_CAST_OPERATOR, **it);
+            expr->_cast_operator.type = type;
+            expr->_cast_operator.expr = produce_expr_unary(it, runtime);
+            return expr;
+        }
+
+        *it -= 1; // go back by one
+        break;
+    }
     } // switch
 
     return produce_expr_primary(it, runtime);
@@ -2120,10 +2165,16 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_INT_NUMBER:
     case IC_TOK_FLOAT_NUMBER:
     case IC_TOK_STRING:
-    case IC_TOK_IDENTIFIER:
     case IC_TOK_TRUE:
     case IC_TOK_FALSE:
     case IC_TOK_NULLPTR:
+    {
+        ic_expr* expr = runtime.allocate_expr(IC_EXPR_PRIMARY, **it);
+        token_advance(it);
+        return expr;
+    }
+
+    case IC_TOK_IDENTIFIER:
     {
         ic_token token_id = **it;
         token_advance(it);

@@ -13,10 +13,22 @@ void mod(f64* value)
 
 void main()
 {
-
-	print(-true);
-	print(-5);
-	//s8* string = malloc(10);
+	print( (5 + 2) * 2 );
+	s8* string = (s8*)malloc(10);
+	*(string) =  65;
+	*(string + 1) = 66;
+	*(string + 2) = 10;
+	*(string + 3) = 0;
+	print(string); // AB
+	f64 lik = 70;
+	print((bool)lik);
+	bool cc = 900;
+	print(cc);
+	cc -= 1;
+	print(cc);
+	cc = 1;
+	cc -= 2;
+	print(cc);
 	
 
     print(factorial(9));
