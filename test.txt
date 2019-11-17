@@ -37,4 +37,10 @@ void main()
     print(i);
 	
 	print(5 + 6);
+	
+	bool lolo = true;
+	lolo = false;
+	f64 dd = true + false;
+	f64 dd = true + false;
+	print(dd);
 }
