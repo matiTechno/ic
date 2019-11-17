@@ -1263,7 +1263,7 @@ void set_numeric_data(ic_value& value, double number)
     switch (value.type.basic_type)
     {
     case IC_TYPE_BOOL:
-        value.s8 = (char)number ? true : false;
+        value.s8 = number ? true : false;
         return;
     case IC_TYPE_S8:
         value.s8 = (char)number;
