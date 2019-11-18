@@ -8,11 +8,10 @@
 // todo
 // final goal: dump assembly that can be assembled by e.g. nasm to an object file
 // use common prefix for all declaration names
-// comma, [], sizeof operators
+// comma, sizeof operators
 // print source code line on error
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// string literals should be null terminated
-// function and void pointers, typedefs (or better 'using = ')
+// function pointers, typedefs (or better 'using = ')
 // host structures registering ?
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // rename left, right to lhs and rhs
@@ -80,6 +79,7 @@ enum ic_token_type
     IC_TOK_F64,
     IC_TOK_VOID,
     IC_TOK_NULLPTR,
+    IC_TOK_CONST,
     // literals
     IC_TOK_INT_NUMBER,
     IC_TOK_FLOAT_NUMBER,
@@ -200,7 +200,6 @@ static ic_keyword _keywords[] = {
     {"continue", IC_TOK_CONTINUE},
     {"true", IC_TOK_TRUE},
     {"false", IC_TOK_FALSE},
-    {"nullptr", IC_TOK_NULLPTR},
     {"bool", IC_TOK_BOOL},
     {"s8", IC_TOK_S8},
     {"u8", IC_TOK_U8},
@@ -209,6 +208,8 @@ static ic_keyword _keywords[] = {
     {"f32", IC_TOK_F32},
     {"f64", IC_TOK_F64},
     {"void", IC_TOK_VOID},
+    {"nullptr", IC_TOK_NULLPTR},
+    {"const", IC_TOK_CONST},
 };
 
 struct ic_string
@@ -234,12 +235,13 @@ struct ic_value_type
 {
     ic_basic_type basic_type;
     int indirection_level;
+    unsigned int const_mask;
 
     // without this visual c++ does not compile, I have no idea why...
     // I should test with gcc
     bool operator==(const ic_value_type& other) const
     {
-        return basic_type == other.basic_type && indirection_level == other.indirection_level;
+        return basic_type == other.basic_type && indirection_level == other.indirection_level && const_mask == other.const_mask;
     }
 };
 
@@ -459,6 +461,25 @@ int main(int argc, const char** argv)
     return 0;
 }
 
+// these type functions exist to avoid bugs in value.type initialization
+
+ic_value_type non_pointer_type(ic_basic_type type)
+{
+    return { type, 0, 0 };
+}
+
+ic_value_type pointer1_type(ic_basic_type type)
+{
+    return { type, 1, 0 };
+}
+
+ic_value void_value()
+{
+    ic_value value;
+    value.type = non_pointer_type(IC_TYPE_VOID);
+    return value;
+}
+
 void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
 {
     const char* str_err_type = nullptr;
@@ -509,14 +530,14 @@ ic_value ic_host_print(int argc, ic_value* argv)
     else
         printf("print: %f\n", get_numeric_data(argv[0]));
 
-    return { IC_TYPE_VOID, 0 }; // todo; void should be implicit?
+    return void_value();
 }
 
 ic_value ic_host_malloc(int argc, ic_value* argv)
 {
     void* ptr = malloc(argv[0].u32);
     ic_value value;
-    value.type = { IC_TYPE_VOID, 1 };
+    value.type = pointer1_type(IC_TYPE_VOID);
     value.pointer = ptr;
     return value;
 }
@@ -532,7 +553,7 @@ void ic_runtime::init()
         ic_function function;
         function.type = IC_FUN_HOST;
         function.token.string = name;
-        function.return_type = { IC_TYPE_VOID, 0 };
+        function.return_type = non_pointer_type(IC_TYPE_VOID);
         function.param_count = 1;
         function.host.callback = ic_host_print;
         function.host.arg_count_check = true;
@@ -545,9 +566,9 @@ void ic_runtime::init()
         ic_function function;
         function.type = IC_FUN_HOST;
         function.token.string = name;
-        function.return_type = { IC_TYPE_VOID, 1 };
+        function.return_type = pointer1_type(IC_TYPE_VOID);
         function.param_count = 1;
-        function.params[0].type = { IC_TYPE_U32, 0 };
+        function.params[0].type = non_pointer_type(IC_TYPE_U32);
         function.host.callback = ic_host_malloc;
         function.host.arg_count_check = true;
         function.host.arg_type_check = true;
@@ -758,7 +779,7 @@ ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right);
 ic_value produce_numeric_value(ic_basic_type btype, double number);
 // use before set_lvalue_data(); for only numeric expressions use set_numeric_data() instead
 ic_value implicit_convert_type(ic_value_type target_type, ic_value value);
-void set_lvalue_data(void* lvalue_data, ic_value value);
+void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value);
 ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
 bool compare_equal(ic_value left, ic_value right);
 bool compare_greater(ic_value left, ic_value right);
@@ -879,6 +900,8 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
             ic_value expr_value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
             value = implicit_convert_type(value.type, expr_value);
         }
+        else if (value.type.const_mask & 1) // const variable must be initialized
+            assert(false);
 
         assert(runtime.add_var(stmt->_var_declaration.token.string, value));
         return ic_stmt_result{ IC_STMT_RESULT_NOP };
@@ -902,7 +925,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
     case IC_EXPR_BINARY:
     {
-        ic_value right = ic_evaluate_expr(expr->_binary.right, runtime).value;
+        const ic_value right = ic_evaluate_expr(expr->_binary.right, runtime).value;
         void* lvalue_data;
         ic_value left;
         {
@@ -916,90 +939,90 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         case IC_TOK_EQUAL:
         {
             ic_value output = implicit_convert_type(left.type, right);
-            set_lvalue_data(lvalue_data, output);
+            set_lvalue_data(lvalue_data, left.type.const_mask, output);
             return { lvalue_data, output };
         }
         case IC_TOK_PLUS_EQUAL:
         {
             ic_value output = evaluate_add(left, right);
             output = implicit_convert_type(left.type, output);
-            set_lvalue_data(lvalue_data, output);
+            set_lvalue_data(lvalue_data, left.type.const_mask, output);
             return { lvalue_data, output };
         }
         case IC_TOK_MINUS_EQUAL:
         {
             ic_value output = evaluate_add(left, right, true);
             output = implicit_convert_type(left.type, output);
-            set_lvalue_data(lvalue_data, output);
+            set_lvalue_data(lvalue_data, left.type.const_mask, output);
             return { lvalue_data, output };
         }
         case IC_TOK_STAR_EQUAL:
         {
             double number = get_numeric_data(left) * get_numeric_data(right);
             set_numeric_data(left, number);
-            set_lvalue_data(lvalue_data, left);
+            set_lvalue_data(lvalue_data, left.type.const_mask, left);
             return { lvalue_data, left };
         }
         case IC_TOK_SLASH_EQUAL:
         {
             double number = get_numeric_data(left) * get_numeric_data(right);
             set_numeric_data(left, number);
-            set_lvalue_data(lvalue_data, left);
+            set_lvalue_data(lvalue_data, left.type.const_mask, left);
             return { lvalue_data, left };
         }
         case IC_TOK_VBAR_VBAR:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = to_boolean(left) || to_boolean(right);
             return { nullptr, output };
         }
         case IC_TOK_AMPERSAND_AMPERSAND:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = to_boolean(left) && to_boolean(right);
             return { nullptr, output };
         }
         case IC_TOK_EQUAL_EQUAL:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = compare_equal(left, right);
             return { nullptr, output};
         }
         case IC_TOK_BANG_EQUAL:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = !compare_equal(left, right);
             return { nullptr, output};
         }
         case IC_TOK_GREATER:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = compare_greater(left, right);
             return { nullptr, output};
         }
         case IC_TOK_GREATER_EQUAL:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = compare_greater(left, right) || compare_equal(left, right);
             return { nullptr, output};
         }
         case IC_TOK_LESS:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = !compare_greater(left, right) && !compare_equal(left, right);
             return { nullptr, output};
         }
         case IC_TOK_LESS_EQUAL:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = !compare_greater(left, right) || compare_equal(left, right);
             return { nullptr, output};
         }
@@ -1046,29 +1069,29 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         case IC_TOK_BANG:
         {
             ic_value output;
-            output.type = { IC_TYPE_BOOL, 0 };
+            output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = !to_boolean(value);
             return { nullptr, output };
         }
         case IC_TOK_MINUS_MINUS:
         {
             ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, -1));
-            assert(output.type == value.type);
-            set_lvalue_data(lvalue_data, output);
+            output = implicit_convert_type(value.type, output);
+            set_lvalue_data(lvalue_data, value.type.const_mask, output);
             return { lvalue_data, output };
         }
         case IC_TOK_PLUS_PLUS:
         {
             ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, 1));
-            assert(output.type == value.type);
-            set_lvalue_data(lvalue_data, output);
+            output = implicit_convert_type(value.type, output);
+            set_lvalue_data(lvalue_data, value.type.const_mask, output);
             return { lvalue_data, output };
         }
         case IC_TOK_AMPERSAND:
         {
             assert(lvalue_data);
             ic_value output;
-            output.type = { value.type.basic_type, value.type.indirection_level + 1 };
+            output.type = { value.type.basic_type, value.type.indirection_level + 1, value.type.const_mask << 1 };
             output.pointer = lvalue_data;
             return { nullptr, output };
         }
@@ -1077,7 +1100,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             assert(value.type.indirection_level);
             assert(value.type.basic_type != IC_TYPE_NULLPTR);
             ic_value output;
-            output.type = { value.type.basic_type, value.type.indirection_level - 1 };
+            output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1 };
 
             // the exact amount of data needs to be read to not trigger segmentation fault, without any conversion
             if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64)
@@ -1155,15 +1178,11 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         if (function->type == IC_FUN_SOURCE || function->host.arg_count_check)
             assert(argc == function->param_count);
 
-        // argv type check
+        // type conversion of arguments to match parameters
         if (function->type == IC_FUN_SOURCE || function->host.arg_type_check)
         {
             for (int i = 0; i < argc; ++i)
-            {
-                // parameter can't be of type void
-                assert(function->params[i].type.indirection_level || function->params[i].type.basic_type != IC_TYPE_VOID);
                 argv[i] = implicit_convert_type(function->params[i].type, argv[i]);
-            }
         }
 
         if (function->type == IC_FUN_HOST)
@@ -1199,7 +1218,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 assert(function->return_type.basic_type == IC_TYPE_VOID && !function->return_type.indirection_level);
                 // this value should never be used (type pass should terminate)
                 // this is only for bug detection, e.g. failing in to_boolean()
-                output.value.type = { IC_TYPE_VOID, 0 };
+                output.value.type = non_pointer_type(IC_TYPE_VOID);
             }
 
             runtime.pop_scope();
@@ -1210,7 +1229,6 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
         ic_token token = expr->token;
 
-        // todo; string literal
         switch (token.type)
         {
         case IC_TOK_INT_NUMBER:
@@ -1218,7 +1236,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             // todo; decide which type to use (signed or unsigned) based on the number
             ic_expr_result output;
             output.lvalue_data = nullptr;
-            output.value.type = { IC_TYPE_S32, 0 };
+            output.value.type = non_pointer_type(IC_TYPE_S32);
             output.value.s32 = token.number;
             return output;
         }
@@ -1226,7 +1244,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_expr_result output;
             output.lvalue_data = nullptr;
-            output.value.type = { IC_TYPE_F64, 0 };
+            output.value.type = non_pointer_type(IC_TYPE_F64);
             output.value.f64 = token.number;
             return output;
         }
@@ -1242,7 +1260,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_expr_result output;
             output.lvalue_data = nullptr;
-            output.value.type = { IC_TYPE_BOOL, 0 };
+            output.value.type = non_pointer_type(IC_TYPE_BOOL);
             output.value.s8 = token.type == IC_TOK_TRUE ? 1 : 0;
             return output;
         }
@@ -1250,7 +1268,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_expr_result output;
             output.lvalue_data = nullptr;
-            output.value.type = { IC_TYPE_NULLPTR, 1 };
+            output.value.type = pointer1_type(IC_TYPE_NULLPTR);
             output.value.pointer = nullptr;
             return output;
         }
@@ -1343,7 +1361,7 @@ ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right)
 ic_value produce_numeric_value(ic_basic_type btype, double number)
 {
     ic_value value;
-    value.type = { btype, 0 };
+    value.type = non_pointer_type(btype);
     set_numeric_data(value, number);
     return value;
 }
@@ -1352,33 +1370,45 @@ ic_value implicit_convert_type(ic_value_type target_type, ic_value value)
 {
     assert(target_type.indirection_level == value.type.indirection_level);
 
-    if (target_type.basic_type == value.type.basic_type)
-        return value;
-
-    ic_value output;
-    output.type = target_type;
-
     if (target_type.indirection_level)
     {
-        if (value.type.basic_type == IC_TYPE_NULLPTR || target_type.basic_type == IC_TYPE_VOID)
+        // target_type must be 'more' const than value.type
+        for (int i = 0; i <= target_type.indirection_level; ++i)
         {
-            output.pointer = value.pointer;
-            return output;
+            int const_lhs = target_type.const_mask & (1 << i);
+            int const_rhs = value.type.const_mask & (1 << i);
+            assert(const_lhs >= const_rhs);
+        }
+
+        if (value.type.basic_type == IC_TYPE_NULLPTR || target_type.basic_type == IC_TYPE_VOID ||
+            (target_type.basic_type == value.type.basic_type))
+        {
+            value.type = target_type;
+            return value;
         }
 
         assert(false);
     }
 
-    // else - numeric conversion
+    if (target_type.basic_type == value.type.basic_type)
+    {
+        value.type.const_mask = target_type.const_mask; // preserve const, it matters for variable initialization
+        return value;
+    }
+
+    ic_value output;
+    output.type = target_type;
     set_numeric_data(output, get_numeric_data(value));
     return output;
 }
 
 // the main point of this function is to write the right amount of data (to not trigger segmentation fault)
 // without any conversion
-void set_lvalue_data(void* lvalue_data, ic_value value)
+void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value)
 {
-    assert(lvalue_data);
+    assert(lvalue_data); // todo type pass - this is a type error
+    // can't assign new data to a const variable
+    assert((lvalue_const_mask & 1) == 0); // watch out for operator precendence
 
     if (value.type.indirection_level || value.type.basic_type == IC_TYPE_F64) // pointer and double are both 8 bytes
     {
@@ -1786,6 +1816,16 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
 
 bool produce_type(const ic_token** it, ic_runtime& runtime, ic_value_type& type)
 {
+    bool init = false;
+    type.indirection_level = 0;
+    type.const_mask = 0;
+
+    if (token_consume(it, IC_TOK_CONST))
+    {
+        type.const_mask = 1 << 31;
+        init = true;
+    }
+
     switch ((**it).type)
     {
     case IC_TOK_BOOL:
@@ -1813,15 +1853,25 @@ bool produce_type(const ic_token** it, ic_runtime& runtime, ic_value_type& type)
         type.basic_type = IC_TYPE_VOID;
         break;
     default:
+        if (init)
+            exit_parsing(it, "expected type name after const keyword");
         return false;
     }
 
     token_advance(it);
-    type.indirection_level = 0;
 
     while (token_consume(it, IC_TOK_STAR))
+    {
+        if (type.indirection_level == 31)
+            exit_parsing(it, "exceeded maximal level of indirection");
+
         type.indirection_level += 1;
 
+        if (token_consume(it, IC_TOK_CONST))
+            type.const_mask += 1 << (31 - type.indirection_level);
+    }
+
+    type.const_mask = type.const_mask >> (31 - type.indirection_level);
     return true;
 }
 

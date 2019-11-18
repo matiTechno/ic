@@ -1,5 +1,6 @@
-f64 factorial(f64 n)
+const f64 factorial(const f64 n)
 {
+	//n = 0;
     if(n == 0 || n == 1)
         return 1;
     return n * factorial(n-1);
@@ -10,13 +11,55 @@ void mod(f64* value)
     *value = 666;
 }
 
+void mod2(s8* s)
+{
+	*s = 44;
+}
+
+void mod3(const s8* const * ptr)
+{
+	print(**ptr + 44);
+	**(s8**)ptr  = 69;
+}
 
 void main()
 {
+	factorial(3.0);
+	{
+		s32 x = 10;
+		s32* const  ptr = &x;
+		*ptr = 20;
+		//ptr = nullptr;
+		print(x);
+	}
+	
+	{
+		const s8 x = 6;
+		const s8* const ptr = &x;
+		//mod2(ptr);
+		mod3(&ptr);
+		print(x);
+	}
+	{
+		const s8 x = -1;
+		//(s8)x = 5;
+		print(6969);
+		print(x);
+	}
+
+	const s8 dddd = factorial(3);
+	bool d = true;
+	++d;
+	print(d);
+	d = 0;
+	print(d);
+	++d;
+	print(d);
+	print(666 != 69);
 	print( (5 + 2) * 2 );
 	s8* string = (s8*)malloc(10);
 	*(string) =  65;
-	*(string + 1) = 66;
+	*(string + (s32)1.1) = 66;
 	*(string + 2) = 10;
 	*(string + 3) = 0;
 	print(string); // AB
