@@ -4,6 +4,7 @@
 #include <vector>
 #include <stdarg.h>
 #include <stdint.h>
+#include <chrono>
 
 // ic - interpreted C
 // todo
@@ -472,7 +473,12 @@ int main(int argc, const char** argv)
 
     ic_runtime runtime;
     runtime.init();
+
+    // I hate chrono api, but it is easy to use and there is no portable C version for high resolution timers
+    auto t1 = std::chrono::high_resolution_clock::now();
     runtime.run(source_code.data());
+    auto t2 = std::chrono::high_resolution_clock::now();
+    printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     return 0;
 }
 
