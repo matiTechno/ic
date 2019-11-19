@@ -1528,20 +1528,25 @@ struct ic_lexer
     int _token_line;
     const char* _source_it;
 
+    // when string.data is nullptr number is used
     void add_token_impl(ic_token_type type, ic_string string, double number)
     {
         ic_token token;
         token.type = type;
         token.col = _token_col;
         token.line = _token_line;
-        token.string = string;
-        token.number = number;
+
+        if(string.data)
+            token.string = string;
+        else
+            token.number = number;
+
         _tokens.push_back(token);
     }
 
-    void add_token(ic_token_type type) { add_token_impl(type, {}, {}); }
+    void add_token(ic_token_type type) { add_token_impl(type, {nullptr}, {}); }
     void add_token(ic_token_type type, ic_string string) { add_token_impl(type, string, {}); }
-    void add_token(ic_token_type type, double number) { add_token_impl(type, {}, number); }
+    void add_token(ic_token_type type, double number) { add_token_impl(type, {nullptr}, number); }
     bool end() { return *_source_it == '\0'; }
     char peek() { return *_source_it; }
     char peek_second() { return *(_source_it + 1); }
@@ -1593,7 +1598,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
     lexer._source_it = source_code;
     bool success = true;
 
-    while (!lexer.end())
+    while (!lexer.end() && success)
     {
         const char c = lexer.advance();
         lexer._token_col = lexer._col;
@@ -1652,7 +1657,13 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
         {
             if (lexer.consume('|'))
                 lexer.add_token(IC_TOK_VBAR_VBAR);
-            // don't break - single '|' is not allowed
+            else // single | is not allowed in the source code
+            {
+                success = false;
+                ic_print_error(IC_ERR_LEXING, lexer._line, lexer._col, "unexpected character '%c'", c);
+            }
+
+            break;
         }
         case '/':
         {
