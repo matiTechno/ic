@@ -221,8 +221,8 @@ struct ic_string
 struct ic_token
 {
     ic_token_type type;
-    int col;
     int line;
+    int col;
 
     union
     {
@@ -1523,9 +1523,9 @@ struct ic_lexer
 {
     std::vector<ic_token>& _tokens;
     int _line = 1;
-    int _col = 0;
-    int _token_col;
+    int _col = 1;
     int _token_line;
+    int _token_col;
     const char* _source_it;
 
     // when string.data is nullptr number is used
@@ -1533,8 +1533,8 @@ struct ic_lexer
     {
         ic_token token;
         token.type = type;
-        token.col = _token_col;
         token.line = _token_line;
+        token.col = _token_col;
 
         if(string.data)
             token.string = string;
@@ -1560,7 +1560,7 @@ struct ic_lexer
         if (c == '\n')
         {
             ++_line;
-            _col = 0;
+            _col = 1;
         }
         else
             ++_col;
@@ -1586,7 +1586,7 @@ bool is_digit(char c)
     return c >= '0' && c <= '9';
 }
 
-bool is_alphanumeric(char c)
+bool is_identifier_char(char c)
 {
     return is_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c == '_');
 }
@@ -1597,11 +1597,14 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
     lexer._source_it = source_code;
     bool success = true;
 
-    while (!lexer.end() && success)
+    while (!lexer.end())
     {
-        const char c = lexer.advance();
-        lexer._token_col = lexer._col;
+        if (!success)
+            return false;
+
         lexer._token_line = lexer._line;
+        lexer._token_col = lexer._col;
+        const char c = lexer.advance();
         const char* const token_begin = lexer.pos();
 
         switch (c)
@@ -1725,9 +1728,9 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 buf[len] = '\0';
                 lexer.add_token(token_type, atof(buf));
             }
-            else if (is_alphanumeric(c))
+            else if (is_identifier_char(c))
             {
-                while (!lexer.end() && is_alphanumeric(lexer.peek()))
+                while (!lexer.end() && is_identifier_char(lexer.peek()))
                     lexer.advance();
 
                 ic_string string = { token_begin, (lexer.pos() + 1) - token_begin };
@@ -1758,13 +1761,12 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
         } // switch
     }
 
-    assert(lexer._tokens.size());
     ic_token token;
     token.type = IC_TOK_EOF;
-    token.col = lexer._tokens.back().col + 1;
-    token.line = lexer._tokens.back().line;
+    token.line = lexer._line;
+    token.col = lexer._col;
     lexer._tokens.push_back(token);
-    return success;
+    return true;
 }
 
 enum ic_op_precedence
