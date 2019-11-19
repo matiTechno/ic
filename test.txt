@@ -24,6 +24,10 @@ void mod3(const s8* const * ptr)
 
 void main()
 {
+	print((s8)4.0 % 3);
+	print(6 % 2);
+	print(5 % 3);
+	print(2 % 8);
 	print("hello from script, nice to see you!");
 	const s8* const strr = "fjkdfjdkl";
 	factorial(3.0);

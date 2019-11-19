@@ -3,12 +3,13 @@
 #include <stdio.h>
 #include <vector>
 #include <stdarg.h>
+#include <stdint.h>
 
 // ic - interpreted C
 // todo
 // final goal: dump assembly that can be assembled by e.g. nasm to an object file
 // use common prefix for all declaration names
-// comma, sizeof operators
+// comma, sizeof, ternary operators
 // print source code line on error
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
 // function pointers, typedefs (or better 'using = ')
@@ -115,6 +116,7 @@ enum ic_token_type
     IC_TOK_SLASH,
     IC_TOK_BANG,
     IC_TOK_AMPERSAND,
+    IC_TOK_PERCENT,
 };
 
 enum ic_stmt_type
@@ -796,6 +798,7 @@ void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value
 ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
 bool compare_equal(ic_value left, ic_value right);
 bool compare_greater(ic_value left, ic_value right);
+void assert_integer_type(ic_value_type type);
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
@@ -1055,6 +1058,17 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             double number = get_numeric_data(left) / get_numeric_data(right);
             return { nullptr, produce_numeric_value(get_numeric_expr_result_type(left, right), number) };
+        }
+        case IC_TOK_PERCENT:
+        {
+            ic_value output;
+            output.type = non_pointer_type(get_numeric_expr_result_type(left, right));
+            assert_integer_type(output.type);
+            // int64_t can contain all supported integer types; todo; this code feels bad, too many conversions
+            // the entire code for operators feels bad
+            int64_t number = (int64_t)get_numeric_data(left) % (int64_t)get_numeric_data(right);
+            set_numeric_data(output, number);
+            return { nullptr, output };
         }
         } // switch
 
@@ -1461,9 +1475,7 @@ ic_value evaluate_add(ic_value left, ic_value right, bool subtract)
 {
     if (left.type.indirection_level)
     {
-        ic_basic_type rbtype = right.type.basic_type;
-        // only integer types can be added to a pointer
-        assert(rbtype == IC_TYPE_U8 || rbtype == IC_TYPE_S8 || rbtype == IC_TYPE_U32 || rbtype == IC_TYPE_S32); 
+        assert_integer_type(right.type);
         ptrdiff_t offset = subtract ? -get_numeric_data(right) : get_numeric_data(right);
 
         if (left.type.indirection_level > 1 || left.type.basic_type == IC_TYPE_F64) // pointer to pointer or pointer to double
@@ -1527,6 +1539,23 @@ bool compare_greater(ic_value left, ic_value right)
     }
 
     return get_numeric_data(left) > get_numeric_data(right);
+}
+
+void assert_integer_type(ic_value_type type)
+{
+    assert(!type.indirection_level);
+
+    switch (type.basic_type)
+    {
+    case IC_TYPE_BOOL:
+    case IC_TYPE_S8:
+    case IC_TYPE_U8:
+    case IC_TYPE_S32:
+    case IC_TYPE_U32:
+        return;
+    }
+
+    assert(false);
 }
 
 struct ic_lexer
@@ -1636,6 +1665,9 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             break;
         case ',':
             lexer.add_token(IC_TOK_COMMA);
+            break;
+        case '%':
+            lexer.add_token(IC_TOK_PERCENT);
             break;
         case '!':
             lexer.add_token(lexer.consume('=') ? IC_TOK_BANG_EQUAL : IC_TOK_BANG);
@@ -2185,6 +2217,7 @@ ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, i
     {
         target_token_types[0] = IC_TOK_STAR;
         target_token_types[1] = IC_TOK_SLASH;
+        target_token_types[2] = IC_TOK_PERCENT;
         break;
     }
     case IC_PRECEDENCE_UNARY:
