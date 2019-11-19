@@ -1545,10 +1545,11 @@ struct ic_lexer
     bool end() { return *_source_it == '\0'; }
     char peek() { return *_source_it; }
     char peek_second() { return *(_source_it + 1); }
-    const char* prev_it() { return _source_it - 1; }
+    const char* pos() { return _source_it - 1; } // this function name makes sense from the interface perspective
 
     char advance()
     {
+        assert(!end());
         const char c = *_source_it;
         ++_source_it;
 
@@ -1597,7 +1598,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
         const char c = lexer.advance();
         lexer._token_col = lexer._col;
         lexer._token_line = lexer._line;
-        const char* const begin_it = lexer.prev_it();
+        const char* const token_begin = lexer.pos();
 
         switch (c)
         {
@@ -1639,41 +1640,19 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             lexer.add_token(lexer.consume('&') ? IC_TOK_AMPERSAND_AMPERSAND : IC_TOK_AMPERSAND);
             break;
         case '*':
-        {
-            if (lexer.consume('='))
-                lexer.add_token(IC_TOK_STAR_EQUAL);
-            else
-                lexer.add_token(IC_TOK_STAR);
-
+            lexer.add_token(lexer.consume('=') ? IC_TOK_STAR_EQUAL : IC_TOK_STAR);
             break;
-        }
         case '-':
-        {
-            if (lexer.consume('='))
-                lexer.add_token(IC_TOK_MINUS_EQUAL);
-            else if (lexer.consume('-'))
-                lexer.add_token(IC_TOK_MINUS_MINUS);
-            else
-                lexer.add_token(IC_TOK_MINUS);
-
+            lexer.add_token(lexer.consume('=') ? IC_TOK_MINUS_EQUAL : lexer.consume('-') ? IC_TOK_MINUS_MINUS : IC_TOK_MINUS);
             break;
-        }
         case '+':
-        {
-            if (lexer.consume('='))
-                lexer.add_token(IC_TOK_PLUS_EQUAL);
-            else if (lexer.consume('+'))
-                lexer.add_token(IC_TOK_PLUS_PLUS);
-            else
-                lexer.add_token(IC_TOK_PLUS);
-
+            lexer.add_token(lexer.consume('=') ? IC_TOK_PLUS_EQUAL : lexer.consume('+') ? IC_TOK_PLUS_PLUS : IC_TOK_PLUS);
             break;
-        }
         case '|':
         {
             if (lexer.consume('|'))
                 lexer.add_token(IC_TOK_VBAR_VBAR);
-            break;
+            // don't break - single '|' is not allowed
         }
         case '/':
         {
@@ -1694,15 +1673,15 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             while (!lexer.end() && lexer.advance() != '"')
                 ;
 
-            if (lexer.end() && *lexer.prev_it() != '"')
+            if (lexer.end() && *lexer.pos() != '"')
             {
                 success = false;
                 ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col, "unterminated string literal");
             }
             else
             {
-                const char* string_begin = begin_it + 1; // skip first "
-                int len = lexer.prev_it() - string_begin;
+                const char* string_begin = token_begin + 1; // skip first "
+                int len = lexer.pos() - string_begin; // this doesn't count last "
                 char* data = (char*)malloc(len + 1); // one more for \0
                 memcpy(data, string_begin, len);
                 data[len] = '\0';
@@ -1720,7 +1699,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
 
                 ic_token_type token_type = IC_TOK_INT_NUMBER;
 
-                if (lexer.peek() == '.' && is_digit(lexer.peek_second()))
+                if (lexer.peek() == '.')
                 {
                     token_type = IC_TOK_FLOAT_NUMBER;
                     lexer.advance();
@@ -1729,10 +1708,10 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 while (!lexer.end() && is_digit(lexer.peek()))
                     lexer.advance();
 
-                const int len = lexer.prev_it() - begin_it + 1;
+                const int len = (lexer.pos() + 1) - token_begin;
                 char buf[1024];
                 assert(len < sizeof(buf));
-                memcpy(buf, begin_it, len);
+                memcpy(buf, token_begin, len);
                 buf[len] = '\0';
                 lexer.add_token(token_type, atof(buf));
             }
@@ -1741,13 +1720,13 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 while (!lexer.end() && is_alphanumeric(lexer.peek()))
                     lexer.advance();
 
-                const int len = lexer.prev_it() - begin_it + 1;
+                ic_string string = { token_begin, (lexer.pos() + 1) - token_begin };
                 bool is_keyword = false;
                 ic_token_type token_type;
 
                 for (const ic_keyword& keyword : _keywords)
                 {
-                    if (ic_string_compare({ begin_it, len }, { keyword.str, int(strlen(keyword.str)) }))
+                    if (ic_string_compare(string, { keyword.str, int(strlen(keyword.str)) }))
                     {
                         is_keyword = true;
                         token_type = keyword.token_type;
@@ -1756,7 +1735,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 }
 
                 if (!is_keyword)
-                    lexer.add_token(IC_TOK_IDENTIFIER, { begin_it, int(lexer.prev_it() - begin_it + 1) });
+                    lexer.add_token(IC_TOK_IDENTIFIER, string);
                 else
                     lexer.add_token(token_type);
             }
