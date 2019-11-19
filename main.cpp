@@ -1549,7 +1549,6 @@ struct ic_lexer
     void add_token(ic_token_type type, double number) { add_token_impl(type, {nullptr}, number); }
     bool end() { return *_source_it == '\0'; }
     char peek() { return *_source_it; }
-    char peek_second() { return *(_source_it + 1); }
     const char* pos() { return _source_it - 1; } // this function name makes sense from the interface perspective
 
     char advance()
