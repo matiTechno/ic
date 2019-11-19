@@ -425,6 +425,7 @@ struct ic_runtime
     ic_deque<ic_stmt, 1000> _stmt_deque;
     ic_deque<ic_expr, 1000> _expr_deque;
     ic_deque<ic_var, 1000> _var_deque; // deque is used because variables must not be invalidated (pointers are supported)
+    std::vector<char*> _string_literals;
     std::vector<ic_token> _tokens;
     std::vector<ic_scope> _scopes;
     std::vector<ic_function> _functions;
@@ -525,7 +526,7 @@ ic_value ic_host_print(int argc, ic_value* argv)
     if (argv[0].type.indirection_level)
     {
         assert(argv[0].type.basic_type == IC_TYPE_S8);
-        printf("print: %s", (const char*)argv[0].pointer);
+        printf("print: %s\n", (const char*)argv[0].pointer);
     }
     else
         printf("print: %f\n", get_numeric_data(argv[0]));
@@ -581,6 +582,11 @@ void ic_runtime::free()
     _stmt_deque.free();
     _expr_deque.free();
     _var_deque.free();
+
+    for (char* str : _string_literals)
+        ::free(str);
+
+    _string_literals.clear();
 }
 
 // todo; these functions should allocate and then free memory for host strings (which can be temporary variables)
@@ -622,7 +628,7 @@ bool ic_string_compare(ic_string str1, ic_string str2)
     return (strncmp(str1.data, str2.data, str1.len) == 0);
 }
 
-bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code);
+bool ic_tokenize(ic_runtime& runtime, const char* source_code);
 ic_global produce_global(const ic_token** it, ic_runtime& runtime);
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime);
 
@@ -634,10 +640,28 @@ bool ic_runtime::run(const char* source_code)
     _stmt_deque.size = 0;
     _expr_deque.size = 0;
 
-    if (!ic_tokenize(_tokens, source_code))
+    // clear allocated strings from previous run
+    for (char* str : _string_literals)
+        ::free(str);
+
+    _string_literals.clear();
+
+    // remove source functions from previous run; it must be here and not at the end of this function because it can return early
+    {
+        auto it = _functions.begin();
+        for (; it != _functions.end(); ++it)
+        {
+            if (it->type == IC_FUN_SOURCE)
+                break;
+        }
+        _functions.erase(it, _functions.end()); // source function are always stored after host ones
+    }
+
+    if (!ic_tokenize(*this, source_code))
         return false;
 
     const ic_token* token_it = _tokens.data();
+
     while (token_it->type != IC_TOK_EOF)
     {
         ic_global global;
@@ -671,20 +695,7 @@ bool ic_runtime::run(const char* source_code)
     token.string = name;
     ic_expr* expr = allocate_expr(IC_EXPR_FUNCTION_CALL, token);
     ic_evaluate_expr(expr, *this);
-
     assert(_scopes.size() == 1); // all non global scopes are gone
-
-    // remove source functions so they don't collide with next run()
-    {
-        auto it = _functions.begin();
-        for (; it != _functions.end(); ++it)
-        {
-            if (it->type == IC_FUN_SOURCE)
-                break;
-        }
-        _functions.erase(it, _functions.end()); // source function are always stored after host ones
-    }
-
     // todo return value from main()?
     return true;
 }
@@ -876,8 +887,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         {
             // this value should never be used (type pass should terminate)
             // this is only for bug detection, e.g. failing in to_boolean()
-            output.value.type.basic_type = IC_TYPE_VOID;
-            output.value.type.indirection_level = 0;
+            output.value.type = non_pointer_type(IC_TYPE_VOID);
         }
 
         return output;
@@ -1215,7 +1225,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             {
                 // function without return statement
                 assert(fun_result.type == IC_STMT_RESULT_NOP);
-                assert(function->return_type.basic_type == IC_TYPE_VOID && !function->return_type.indirection_level);
+                assert(function->return_type == non_pointer_type(IC_TYPE_VOID));
                 // this value should never be used (type pass should terminate)
                 // this is only for bug detection, e.g. failing in to_boolean()
                 output.value.type = non_pointer_type(IC_TYPE_VOID);
@@ -1234,19 +1244,17 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         case IC_TOK_INT_NUMBER:
         {
             // todo; decide which type to use (signed or unsigned) based on the number
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
-            output.value.type = non_pointer_type(IC_TYPE_S32);
-            output.value.s32 = token.number;
-            return output;
+            ic_value value;
+            value.type = non_pointer_type(IC_TYPE_S32);
+            value.s32 = token.number;
+            return { nullptr, value };
         }
         case IC_TOK_FLOAT_NUMBER:
         {
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
-            output.value.type = non_pointer_type(IC_TYPE_F64);
-            output.value.f64 = token.number;
-            return output;
+            ic_value value;
+            value.type = non_pointer_type(IC_TYPE_F64);
+            value.f64 = token.number;
+            return { nullptr, value };
         }
         case IC_TOK_IDENTIFIER:
         {
@@ -1258,19 +1266,25 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         case IC_TOK_TRUE:
         case IC_TOK_FALSE:
         {
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
-            output.value.type = non_pointer_type(IC_TYPE_BOOL);
-            output.value.s8 = token.type == IC_TOK_TRUE ? 1 : 0;
-            return output;
+            ic_value value;
+            value.type = non_pointer_type(IC_TYPE_BOOL);
+            value.s8 = token.type == IC_TOK_TRUE ? 1 : 0;
+            return { nullptr, value };
         }
         case IC_TOK_NULLPTR:
         {
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
-            output.value.type = pointer1_type(IC_TYPE_NULLPTR);
-            output.value.pointer = nullptr;
-            return output;
+            ic_value value;
+            value.type = pointer1_type(IC_TYPE_NULLPTR);
+            value.pointer = nullptr;
+            return { nullptr, value };
+        }
+        case IC_TOK_STRING:
+        {
+            ic_value value;
+            value.type = pointer1_type(IC_TYPE_S8);
+            value.type.const_mask = 1 << 1;
+            value.pointer = (void*)token.string.data; // todo; casting const char* to void* - ub?
+            return { nullptr, value };
         }
         } // switch
 
@@ -1514,24 +1528,20 @@ struct ic_lexer
     int _token_line;
     const char* _source_it;
 
-    void add_token_impl(ic_token_type type, ic_string string = { nullptr, 0 }, double number = 0.0)
+    void add_token_impl(ic_token_type type, ic_string string, double number)
     {
         ic_token token;
         token.type = type;
         token.col = _token_col;
         token.line = _token_line;
-
-        if (string.data)
-            token.string = string;
-        else
-            token.number = number;
-
+        token.string = string;
+        token.number = number;
         _tokens.push_back(token);
     }
 
-    void add_token(ic_token_type type) { add_token_impl(type); }
-    void add_token(ic_token_type type, ic_string string) { add_token_impl(type, string); }
-    void add_token(ic_token_type type, double number) { add_token_impl(type, { nullptr, 0 }, number); }
+    void add_token(ic_token_type type) { add_token_impl(type, {}, {}); }
+    void add_token(ic_token_type type, ic_string string) { add_token_impl(type, string, {}); }
+    void add_token(ic_token_type type, double number) { add_token_impl(type, {}, number); }
     bool end() { return *_source_it == '\0'; }
     char peek() { return *_source_it; }
     char peek_second() { return *(_source_it + 1); }
@@ -1539,8 +1549,8 @@ struct ic_lexer
 
     char advance()
     {
+        const char c = *_source_it;
         ++_source_it;
-        const char c = *(_source_it - 1);
 
         if (c == '\n')
         {
@@ -1576,9 +1586,9 @@ bool is_alphanumeric(char c)
     return is_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c == '_');
 }
 
-bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
+bool ic_tokenize(ic_runtime& runtime, const char* source_code)
 {
-    ic_lexer lexer{ tokens };
+    ic_lexer lexer{ runtime._tokens };
     lexer._source_it = source_code;
     bool success = true;
 
@@ -1684,15 +1694,20 @@ bool ic_tokenize(std::vector<ic_token>& tokens, const char* source_code)
             while (!lexer.end() && lexer.advance() != '"')
                 ;
 
-            if (lexer.end() && lexer.advance() != '"')
+            if (lexer.end() && *lexer.prev_it() != '"')
             {
                 success = false;
                 ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col, "unterminated string literal");
             }
             else
             {
-                const char* data = begin_it + 1;
-                lexer.add_token(IC_TOK_STRING, { data, int(lexer.prev_it() - data) });
+                const char* string_begin = begin_it + 1; // skip first "
+                int len = lexer.prev_it() - string_begin;
+                char* data = (char*)malloc(len + 1); // one more for \0
+                memcpy(data, string_begin, len);
+                data[len] = '\0';
+                lexer.add_token(IC_TOK_STRING, { data }); // len doesn't need to be initialized, string will never be compared
+                runtime._string_literals.push_back(data);
             }
             break;
         }
@@ -1905,6 +1920,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
             if (!produce_type(it, runtime, param_type))
                 exit_parsing(it, "expected parameter type");
 
+            // constness should not be compared here and that's why == non_pointer(IC_TYPE_VOID) is not used
             if (!param_type.indirection_level && param_type.basic_type == IC_TYPE_VOID)
                 exit_parsing(it, "parameter can't be of type void");
 
@@ -2029,6 +2045,7 @@ ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
 
     if (produce_type(it, runtime, type))
     {
+        // constness should not be compared here and that's why == non_pointer(IC_TYPE_VOID) is not used
         if (type.basic_type == IC_TYPE_VOID && !type.indirection_level)
             exit_parsing(it, "variables can't be of type void");
 
