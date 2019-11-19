@@ -18,6 +18,7 @@
 // rename left, right to lhs and rhs
 // one of the next goals will be to change execution into type pass with byte code generation and then execute bytecode
 // escape sequences
+// automatic array
 
 template<typename T, int N>
 struct ic_deque
@@ -117,6 +118,8 @@ enum ic_token_type
     IC_TOK_BANG,
     IC_TOK_AMPERSAND,
     IC_TOK_PERCENT,
+    IC_TOK_LEFT_BRACKET,
+    IC_TOK_RIGHT_BRACKET,
 };
 
 enum ic_stmt_type
@@ -136,6 +139,7 @@ enum ic_expr_type
     IC_EXPR_BINARY,
     IC_EXPR_UNARY,
     IC_EXPR_CAST_OPERATOR,
+    IC_EXPR_SUBSCRIPT,
     // parentheses expr exists so if(x=3) doesn't compile
     // and if((x=3)) compiles
     IC_EXPR_PARENTHESES,
@@ -319,6 +323,12 @@ struct ic_expr
             ic_value_type type;
             ic_expr* expr;
         } _cast_operator;
+
+        struct
+        {
+            ic_expr* lhs;
+            ic_expr* rhs;
+        } _subscript;
 
         struct
         {
@@ -799,6 +809,7 @@ ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
 bool compare_equal(ic_value left, ic_value right);
 bool compare_greater(ic_value left, ic_value right);
 void assert_integer_type(ic_value_type type);
+ic_expr_result evaluate_dereference(ic_value value);
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
@@ -1065,7 +1076,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             output.type = non_pointer_type(get_numeric_expr_result_type(left, right));
             assert_integer_type(output.type);
             // int64_t can contain all supported integer types; todo; this code feels bad, too many conversions
-            // the entire code for operators feels bad
+            // the entire code for operators feels bad; I hope the situation will resolve after implementing bytecode
             int64_t number = (int64_t)get_numeric_data(left) % (int64_t)get_numeric_data(right);
             set_numeric_data(output, number);
             return { nullptr, output };
@@ -1123,38 +1134,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_STAR:
         {
-            assert(value.type.indirection_level);
-            assert(value.type.basic_type != IC_TYPE_NULLPTR);
-            ic_value output;
-            output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1 };
-
-            // the exact amount of data needs to be read to not trigger segmentation fault, without any conversion
-            if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64)
-            {
-                assert(value.pointer); // runtime error, not type error
-                // pointer to pointer or pointer to double; both pointer and double are 8 bytes
-                output.pointer = *(void**)value.pointer;
-            }
-            else
-            {
-                switch (value.type.basic_type)
-                {
-                case IC_TYPE_BOOL:
-                case IC_TYPE_S8:
-                case IC_TYPE_U8:
-                    output.s8 = *(char*)value.pointer;
-                    break;
-                case IC_TYPE_S32:
-                case IC_TYPE_U32:
-                case IC_TYPE_F32:
-                    output.s32 = *(int*)value.pointer;
-                    break;
-                default:
-                    assert(false);
-                }
-            }
-
-            return { value.pointer, output };
+            return evaluate_dereference(value);
         }
         } // switch
 
@@ -1176,6 +1156,13 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
 
         return { nullptr, produce_numeric_value(target_type.basic_type, get_numeric_data(value)) };
+    }
+    case IC_EXPR_SUBSCRIPT:
+    {
+        ic_value lhs_value = ic_evaluate_expr(expr->_subscript.lhs, runtime).value;
+        ic_value rhs_value = ic_evaluate_expr(expr->_subscript.rhs, runtime).value;
+        ic_value output = evaluate_add(lhs_value, rhs_value);
+        return evaluate_dereference(output);
     }
     case IC_EXPR_PARENTHESES:
     {
@@ -1476,7 +1463,7 @@ ic_value evaluate_add(ic_value left, ic_value right, bool subtract)
     if (left.type.indirection_level)
     {
         assert_integer_type(right.type);
-        ptrdiff_t offset = subtract ? -get_numeric_data(right) : get_numeric_data(right);
+        int64_t offset = subtract ? -get_numeric_data(right) : get_numeric_data(right);
 
         if (left.type.indirection_level > 1 || left.type.basic_type == IC_TYPE_F64) // pointer to pointer or pointer to double
             left.pointer = (void**)left.pointer + offset;
@@ -1556,6 +1543,42 @@ void assert_integer_type(ic_value_type type)
     }
 
     assert(false);
+}
+
+ic_expr_result evaluate_dereference(ic_value value)
+{
+    assert(value.type.indirection_level);
+    assert(value.type.basic_type != IC_TYPE_NULLPTR);
+    ic_value output;
+    output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1 };
+
+    // the exact amount of data needs to be read to not trigger segmentation fault, without any conversion
+    if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64)
+    {
+        assert(value.pointer); // runtime error, not type error
+        // pointer to pointer or pointer to double; both pointer and double are 8 bytes
+        output.pointer = *(void**)value.pointer;
+    }
+    else
+    {
+        switch (value.type.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+        case IC_TYPE_U8:
+            output.s8 = *(char*)value.pointer;
+            break;
+        case IC_TYPE_S32:
+        case IC_TYPE_U32:
+        case IC_TYPE_F32:
+            output.s32 = *(int*)value.pointer;
+            break;
+        default:
+            assert(false);
+        }
+    }
+
+    return { value.pointer, output };
 }
 
 struct ic_lexer
@@ -1668,6 +1691,12 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             break;
         case '%':
             lexer.add_token(IC_TOK_PERCENT);
+            break;
+        case '[':
+            lexer.add_token(IC_TOK_LEFT_BRACKET);
+            break;
+        case ']':
+            lexer.add_token(IC_TOK_RIGHT_BRACKET);
             break;
         case '!':
             lexer.add_token(lexer.consume('=') ? IC_TOK_BANG_EQUAL : IC_TOK_BANG);
@@ -1866,6 +1895,7 @@ ic_expr* produce_expr(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime);
 ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime);
+ic_expr* produce_expr_subscript(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime);
 
 void token_advance(const ic_token** it) { ++(*it); }
@@ -2290,7 +2320,24 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
     }
     } // switch
 
-    return produce_expr_primary(it, runtime);
+    return produce_expr_subscript(it, runtime);
+}
+
+ic_expr* produce_expr_subscript(const ic_token** it, ic_runtime& runtime)
+{
+    ic_expr* lhs = produce_expr_primary(it, runtime);
+
+    while((**it).type == IC_TOK_LEFT_BRACKET)
+    {
+        ic_expr* expr = runtime.allocate_expr(IC_EXPR_SUBSCRIPT, **it);
+        token_advance(it);
+        expr->_subscript.lhs = lhs;
+        expr->_subscript.rhs = produce_expr(it, runtime);
+        token_consume(it, IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator");
+        lhs = expr;
+    }
+
+    return lhs;
 }
 
 ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
