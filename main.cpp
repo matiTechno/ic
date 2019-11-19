@@ -16,6 +16,7 @@
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // rename left, right to lhs and rhs
 // one of the next goals will be to change execution into type pass with byte code generation and then execute bytecode
+// escape sequences
 
 template<typename T, int N>
 struct ic_deque
@@ -81,9 +82,10 @@ enum ic_token_type
     IC_TOK_NULLPTR,
     IC_TOK_CONST,
     // literals
-    IC_TOK_INT_NUMBER,
-    IC_TOK_FLOAT_NUMBER,
-    IC_TOK_STRING,
+    IC_TOK_INT_NUMBER_LITERAL,
+    IC_TOK_FLOAT_NUMBER_LITERAL,
+    IC_TOK_STRING_LITERAL,
+    IC_TOK_CHARACTER_LITERAL,
     // double character
     IC_TOK_PLUS_EQUAL,
     IC_TOK_MINUS_EQUAL,
@@ -1241,7 +1243,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
         switch (token.type)
         {
-        case IC_TOK_INT_NUMBER:
+        case IC_TOK_INT_NUMBER_LITERAL:
         {
             // todo; decide which type to use (signed or unsigned) based on the number
             ic_value value;
@@ -1249,7 +1251,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             value.s32 = token.number;
             return { nullptr, value };
         }
-        case IC_TOK_FLOAT_NUMBER:
+        case IC_TOK_FLOAT_NUMBER_LITERAL:
         {
             ic_value value;
             value.type = non_pointer_type(IC_TYPE_F64);
@@ -1278,13 +1280,21 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             value.pointer = nullptr;
             return { nullptr, value };
         }
-        case IC_TOK_STRING:
+        case IC_TOK_STRING_LITERAL:
         {
             ic_value value;
             value.type = pointer1_type(IC_TYPE_S8);
             value.type.const_mask = 1 << 1;
             value.pointer = (void*)token.string.data; // todo; casting const char* to void* - ub?
             return { nullptr, value };
+        }
+        case IC_TOK_CHARACTER_LITERAL:
+        {
+            ic_value value;
+            value.type = non_pointer_type(IC_TYPE_S8);
+            value.s8 = token.number;
+            return { nullptr, value };
+
         }
         } // switch
 
@@ -1545,8 +1555,8 @@ struct ic_lexer
     }
 
     void add_token(ic_token_type type) { add_token_impl(type, {nullptr}, {}); }
-    void add_token(ic_token_type type, ic_string string) { add_token_impl(type, string, {}); }
-    void add_token(ic_token_type type, double number) { add_token_impl(type, {nullptr}, number); }
+    void add_token_string(ic_token_type type, ic_string string) { add_token_impl(type, string, {}); }
+    void add_token_number(ic_token_type type, double number) { add_token_impl(type, {nullptr}, number); }
     bool end() { return *_source_it == '\0'; }
     char peek() { return *_source_it; }
     const char* pos() { return _source_it - 1; } // this function name makes sense from the interface perspective
@@ -1595,13 +1605,9 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
 {
     ic_lexer lexer{ runtime._tokens };
     lexer._source_it = source_code;
-    bool success = true;
 
     while (!lexer.end())
     {
-        if (!success)
-            return false;
-
         lexer._token_line = lexer._line;
         lexer._token_col = lexer._col;
         const char c = lexer.advance();
@@ -1661,8 +1667,8 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 lexer.add_token(IC_TOK_VBAR_VBAR);
             else // single | is not allowed in the source code
             {
-                success = false;
                 ic_print_error(IC_ERR_LEXING, lexer._line, lexer._col, "unexpected character '%c'", c);
+                return false;
             }
 
             break;
@@ -1688,19 +1694,57 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
 
             if (lexer.end() && *lexer.pos() != '"')
             {
-                success = false;
                 ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col, "unterminated string literal");
+                return false;
             }
-            else
+
+            const char* string_begin = token_begin + 1; // skip first "
+            int len = lexer.pos() - string_begin; // this doesn't count last "
+            char* data = (char*)malloc(len + 1); // one more for \0
+            memcpy(data, string_begin, len);
+            data[len] = '\0';
+            lexer.add_token_string(IC_TOK_STRING_LITERAL, { data }); // len doesn't need to be initialized, string will never be compared
+            runtime._string_literals.push_back(data);
+            break;
+        }
+        case '\'':
+        {
+            while (!lexer.end() && lexer.advance() != '\'')
+                ;
+
+            if (lexer.end() && *lexer.pos() != '\'')
             {
-                const char* string_begin = token_begin + 1; // skip first "
-                int len = lexer.pos() - string_begin; // this doesn't count last "
-                char* data = (char*)malloc(len + 1); // one more for \0
-                memcpy(data, string_begin, len);
-                data[len] = '\0';
-                lexer.add_token(IC_TOK_STRING, { data }); // len doesn't need to be initialized, string will never be compared
-                runtime._string_literals.push_back(data);
+                ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col, "unterminated character literal");
+                return false;
             }
+
+            const char* string_begin = token_begin + 1; // skip first '
+            int len = lexer.pos() - string_begin; // this doesn't count last '
+            char code = -1;
+
+            if (len && string_begin[0] == '\\') // this is to not allow '\' as a valid literal; '\\' is valid
+            {
+                if (len == 2)
+                {
+                    if (string_begin[1] == '\\')
+                        code = '\\';
+                    else if (string_begin[1] == 'n')
+                        code = '\n';
+                    else if (string_begin[1] == '0')
+                        code = '\0';
+                    }
+            }
+            else if (len == 1)
+                code = *string_begin;
+
+            if (code == -1)
+            {
+                ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col,
+                    "invalid character literal; only printable, \\n and \\0 characters are supported");
+                return false;
+            }
+
+            lexer.add_token_number(IC_TOK_CHARACTER_LITERAL, code);
             break;
         }
         default:
@@ -1710,11 +1754,11 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 while (!lexer.end() && is_digit(lexer.peek()))
                     lexer.advance();
 
-                ic_token_type token_type = IC_TOK_INT_NUMBER;
+                ic_token_type token_type = IC_TOK_INT_NUMBER_LITERAL;
 
                 if (lexer.peek() == '.')
                 {
-                    token_type = IC_TOK_FLOAT_NUMBER;
+                    token_type = IC_TOK_FLOAT_NUMBER_LITERAL;
                     lexer.advance();
                 }
 
@@ -1726,7 +1770,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 assert(len < sizeof(buf));
                 memcpy(buf, token_begin, len);
                 buf[len] = '\0';
-                lexer.add_token(token_type, atof(buf));
+                lexer.add_token_number(token_type, atof(buf));
             }
             else if (is_identifier_char(c))
             {
@@ -1748,14 +1792,14 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 }
 
                 if (!is_keyword)
-                    lexer.add_token(IC_TOK_IDENTIFIER, string);
+                    lexer.add_token_string(IC_TOK_IDENTIFIER, string);
                 else
                     lexer.add_token(token_type);
             }
             else
             {
-                success = false;
                 ic_print_error(IC_ERR_LEXING, lexer._line, lexer._col, "unexpected character '%c'", c);
+                return false;
             }
         }
         } // switch
@@ -2220,9 +2264,10 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
 {
     switch ((**it).type)
     {
-    case IC_TOK_INT_NUMBER:
-    case IC_TOK_FLOAT_NUMBER:
-    case IC_TOK_STRING:
+    case IC_TOK_INT_NUMBER_LITERAL:
+    case IC_TOK_FLOAT_NUMBER_LITERAL:
+    case IC_TOK_STRING_LITERAL:
+    case IC_TOK_CHARACTER_LITERAL:
     case IC_TOK_TRUE:
     case IC_TOK_FALSE:
     case IC_TOK_NULLPTR:

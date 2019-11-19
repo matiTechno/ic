@@ -60,11 +60,11 @@ void main()
 	print(666 != 69);
 	print( (5 + 2) * 2 );
 	s8* string = (s8*)malloc(10);
-	*(string) =  65;
-	*(string + (s32)1.1) = 66;
-	*(string + 2) = 10;
-	*(string + 3) = 0;
-	print(string); // AB
+	*(string) =  'A';
+    *(string + (s32)1.1) = 'B';
+	*(string + 2) = '\n';
+	*(string + 3) = '\0';
+	print(string);
 	f64 lik = 70;
 	print((bool)lik);
 	bool cc = 900;
