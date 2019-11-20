@@ -489,9 +489,10 @@ ic_value_type non_pointer_type(ic_basic_type type)
     return { type, 0, 0 };
 }
 
-ic_value_type pointer1_type(ic_basic_type type)
+// todo; I don't like bool arguments like this one, it is not obvious what it does from a function call
+ic_value_type pointer1_type(ic_basic_type type, bool at_const = false)
 {
-    return { type, 1, 0 };
+    return { type, 1, (unsigned)(at_const ? 2 : 0) };
 }
 
 ic_value void_value()
@@ -563,6 +564,20 @@ ic_value ic_host_malloc(int argc, ic_value* argv)
     return value;
 }
 
+ic_value ic_host_write_ppm6(int argc, ic_value* argv)
+{
+    FILE* file = fopen((char*)argv[0].pointer, "w");
+    char buf[1024];
+    int width = argv[1].s32;
+    int height = argv[2].s32;
+    snprintf(buf, sizeof(buf), "P6 %d %d 255 ", width, height);
+    int len = strlen(buf);
+    fwrite(buf, 1, len, file);
+    fwrite(argv[3].pointer, 1, width * height * 3, file);
+    fclose(file);
+    return void_value();
+}
+
 void ic_runtime::init()
 {
     push_scope(); // global scope
@@ -591,6 +606,23 @@ void ic_runtime::init()
         function.param_count = 1;
         function.params[0].type = non_pointer_type(IC_TYPE_U32);
         function.host.callback = ic_host_malloc;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = true;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "write_ppm6";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_VOID);
+        function.param_count = 4;
+        function.params[0].type = pointer1_type(IC_TYPE_S8, true);
+        function.params[1].type = non_pointer_type(IC_TYPE_S32);
+        function.params[2].type = non_pointer_type(IC_TYPE_S32);
+        function.params[3].type = pointer1_type(IC_TYPE_U8);
+        function.host.callback = ic_host_write_ppm6;
         function.host.arg_count_check = true;
         function.host.arg_type_check = true;
         _functions.push_back(function);
@@ -849,12 +881,11 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
     case IC_STMT_FOR:
     {
         runtime.push_scope();
-        int num_scopes = runtime._scopes.size();
-        int num_variables = runtime._scopes.back().prev_var_count;
 
         if (stmt->_for.header1)
             ic_execute_stmt(stmt->_for.header1, runtime);
 
+        int var_count = runtime._var_deque.size;
         ic_stmt_result output = { IC_STMT_RESULT_NOP };
 
         for (;;)
@@ -867,6 +898,8 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
                     break;
             }
 
+            // free variables from previous loop iteration
+            runtime._var_deque.size = var_count;
             ic_stmt_result body_result = ic_execute_stmt(stmt->_for.body, runtime);
 
             if (body_result.type == IC_STMT_RESULT_BREAK)
