@@ -24,6 +24,12 @@ void mod3(const s8* const * ptr)
 
 void main()
 {
+    {
+        s8 x = 10;
+        void* ptr = &x;
+        ((s8*)ptr)[0] = 20;
+        print(x);
+    }
 	{
         s8** strings = (s8**)malloc(2 * 8);
 		strings[0] = (s8*)"trele";
