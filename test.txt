@@ -22,8 +22,58 @@ void mod3(const s8* const * ptr)
 	**(s8**)ptr  = 69;
 }
 
+
+struct rt_vec3
+{
+    f64 x;
+    f64 y;
+    f64 z;
+};
+
+struct rt_ray
+{
+    rt_vec3 origin;
+    rt_vec3 direction;
+    const s8* ptr;
+};
+
+rt_ray get_default_ray()
+{
+    rt_ray d;
+    d.direction.y = 5;
+    return d;
+}
+
 void main()
 {
+    {
+        //const rt_ray cray = get_default_ray();
+       // print(cray.direction.y);
+        
+        rt_ray ray;
+        ray.origin.x = 5;
+        
+        rt_ray* ptr = &ray;
+        (*ptr).origin.x = 666;
+        ptr->origin.y = 20;
+        
+        rt_vec3 vec;
+        vec.x = 10;
+        vec.y = 1;
+        vec.z = 2;
+        
+        ray.direction = vec;
+        
+       print(ray.origin.x);
+       print(ray.direction.z);
+       
+       rt_ray ray2;
+       ray2.origin.y = 69;
+       
+       ray = ray2;
+       
+       print(ray.origin.y);
+    }
     {
         s8 x = 10;
         void* ptr = &x;

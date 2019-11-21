@@ -84,6 +84,7 @@ enum ic_token_type
     IC_TOK_VOID,
     IC_TOK_NULLPTR,
     IC_TOK_CONST,
+    IC_TOK_STRUCT,
     // literals
     IC_TOK_INT_NUMBER_LITERAL,
     IC_TOK_FLOAT_NUMBER_LITERAL,
@@ -121,6 +122,8 @@ enum ic_token_type
     IC_TOK_PERCENT,
     IC_TOK_LEFT_BRACKET,
     IC_TOK_RIGHT_BRACKET,
+    IC_TOK_DOT,
+    IC_TOK_ARROW,
 };
 
 enum ic_stmt_type
@@ -141,6 +144,7 @@ enum ic_expr_type
     IC_EXPR_UNARY,
     IC_EXPR_CAST_OPERATOR,
     IC_EXPR_SUBSCRIPT,
+    IC_EXPR_MEMBER_ACCESS,
     // parentheses expr exists so if(x=3) doesn't compile
     // and if((x=3)) compiles
     IC_EXPR_PARENTHESES,
@@ -160,6 +164,7 @@ enum ic_basic_type
     IC_TYPE_F64,
     IC_TYPE_VOID,
     IC_TYPE_NULLPTR,
+    IC_TYPE_STRUCT,
 };
 
 enum ic_error_type
@@ -179,8 +184,8 @@ enum ic_global_type
 {
     IC_GLOBAL_FUNCTION,
     IC_GLOBAL_FUNCTION_FORWARD_DECLARATION,
-    IC_GLOBAL_STRUCTURE,
-    IC_GLOBAL_STRUCTURE_FORWARD_DECLARATION,
+    IC_GLOBAL_STRUCT,
+    IC_GLOBAL_STRUCT_FORWARD_DECLARATION,
     IC_GLOBAL_VAR_DECLARATION,
     IC_GLOBAL_ENUM,
 };
@@ -219,6 +224,7 @@ static ic_keyword _keywords[] = {
     {"void", IC_TOK_VOID},
     {"nullptr", IC_TOK_NULLPTR},
     {"const", IC_TOK_CONST},
+    {"struct", IC_TOK_STRUCT},
 };
 
 struct ic_string
@@ -245,13 +251,7 @@ struct ic_value_type
     ic_basic_type basic_type;
     int indirection_level;
     unsigned int const_mask;
-
-    // without this visual c++ does not compile, I have no idea why...
-    // I should test with gcc
-    bool operator==(const ic_value_type& other) const
-    {
-        return basic_type == other.basic_type && indirection_level == other.indirection_level && const_mask == other.const_mask;
-    }
+    ic_string struct_name;
 };
 
 struct ic_expr;
@@ -333,6 +333,12 @@ struct ic_expr
 
         struct
         {
+            ic_expr* lhs;
+            ic_token rhs_token;
+        } _member_access;
+
+        struct
+        {
             ic_expr* expr;
         } _parentheses;
 
@@ -356,6 +362,7 @@ struct ic_value
         float f32;
         double f64;
         void* pointer;
+        int idx_member;
     };
 };
 
@@ -368,6 +375,7 @@ struct ic_var
 struct ic_scope
 {
     int prev_var_count;
+    int prev_member_count;
     bool new_call_frame; // so variables do not leak to lower functions
 };
 
@@ -400,6 +408,19 @@ struct ic_function
     };
 };
 
+struct ic_struct_member
+{
+    ic_value_type type;
+    ic_string name;
+};
+
+struct ic_struct
+{
+    ic_token token;
+    ic_struct_member* members;
+    int count;
+};
+
 struct ic_global
 {
     ic_global_type type;
@@ -407,6 +428,7 @@ struct ic_global
     union
     {
         ic_function function;
+        ic_struct _struct;
     };
 };
 
@@ -440,16 +462,19 @@ struct ic_runtime
     ic_deque<ic_stmt, 1000> _stmt_deque;
     ic_deque<ic_expr, 1000> _expr_deque;
     ic_deque<ic_var, 1000> _var_deque; // deque is used because variables must not be invalidated (pointers are supported)
+    ic_deque<ic_value, 1000> _member_deque;
     std::vector<char*> _string_literals;
     std::vector<ic_token> _tokens;
     std::vector<ic_scope> _scopes;
     std::vector<ic_function> _functions;
+    std::vector<ic_struct> _structs;
 
     void push_scope(bool new_call_frame = false);
     void pop_scope();
     bool add_var(ic_string name, ic_value value);
     ic_value* get_var(ic_string name);
     ic_function* get_function(ic_string name);
+    ic_struct* get_struct(ic_string name);
     ic_stmt* allocate_stmt(ic_stmt_type type);
     ic_expr* allocate_expr(ic_expr_type type, ic_token token);
 };
@@ -634,11 +659,15 @@ void ic_runtime::free()
     _stmt_deque.free();
     _expr_deque.free();
     _var_deque.free();
+    _member_deque.free();
 
     for (char* str : _string_literals)
         ::free(str);
 
     _string_literals.clear();
+
+    for (ic_struct& _struct : _structs)
+        ::free(_struct.members);
 }
 
 // todo; these functions should allocate and then free memory for host strings (which can be temporary variables)
@@ -691,6 +720,7 @@ bool ic_runtime::run(const char* source_code)
     _tokens.clear();
     _stmt_deque.size = 0;
     _expr_deque.size = 0;
+    _member_deque.size = 0;
 
     // clear allocated strings from previous run
     for (char* str : _string_literals)
@@ -708,6 +738,10 @@ bool ic_runtime::run(const char* source_code)
         }
         _functions.erase(it, _functions.end()); // source function are always stored after host ones
     }
+    for (ic_struct& _struct : _structs)
+        ::free(_struct.members);
+
+    _structs.clear();
 
     if (!ic_tokenize(*this, source_code))
         return false;
@@ -727,16 +761,32 @@ bool ic_runtime::run(const char* source_code)
             return false;
         }
 
-        assert(global.type == IC_GLOBAL_FUNCTION);
-        ic_token token = global.function.token;
-
-        if (get_function(token.string))
+        if (global.type == IC_GLOBAL_FUNCTION)
         {
-            ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
-            return false;
-        }
+            ic_token token = global.function.token;
 
-        _functions.push_back(global.function);
+            if (get_function(token.string))
+            {
+                ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
+                return false;
+            }
+
+            _functions.push_back(global.function);
+        }
+        else if (global.type == IC_GLOBAL_STRUCT)
+        {
+            ic_token token = global._struct.token;
+
+            if (get_struct(token.string))
+            {
+                ic_print_error(IC_ERR_PARSING, token.line, token.col, "struct with such name already exists");
+                return false;
+            }
+
+            _structs.push_back(global._struct);
+        }
+        else
+            assert(false);
     }
 
     // execute main funtion
@@ -756,6 +806,7 @@ void ic_runtime::push_scope(bool new_call_frame)
 {
     ic_scope scope;
     scope.prev_var_count = _var_deque.size;
+    scope.prev_member_count = _member_deque.size;
     scope.new_call_frame = new_call_frame;
     _scopes.push_back(scope);
 }
@@ -764,6 +815,7 @@ void ic_runtime::pop_scope()
 {
     assert(_scopes.size());
     _var_deque.size = _scopes.back().prev_var_count;
+    _member_deque.size = _scopes.back().prev_member_count;
     _scopes.pop_back();
 }
 
@@ -825,7 +877,17 @@ ic_function* ic_runtime::get_function(ic_string name)
     for (ic_function& function : _functions)
     {
         if (ic_string_compare(function.token.string, name))
-            return& function;
+            return &function;
+    }
+    return nullptr;
+}
+
+ic_struct* ic_runtime::get_struct(ic_string name)
+{
+    for (ic_struct& _struct : _structs)
+    {
+        if (ic_string_compare(_struct.token.string, name))
+            return &_struct;
     }
     return nullptr;
 }
@@ -842,12 +904,13 @@ ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right);
 ic_value produce_numeric_value(ic_basic_type btype, double number);
 // use before set_lvalue_data(); for only numeric expressions use set_numeric_data() instead
 ic_value implicit_convert_type(ic_value_type target_type, ic_value value);
-void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value);
+void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value, ic_runtime& runtime);
 ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
 bool compare_equal(ic_value left, ic_value right);
 bool compare_greater(ic_value left, ic_value right);
 void assert_integer_type(ic_value_type type);
 ic_expr_result evaluate_dereference(ic_value value);
+void allocate_struct(ic_value& value, ic_runtime& runtime);
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
@@ -885,7 +948,9 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         if (stmt->_for.header1)
             ic_execute_stmt(stmt->_for.header1, runtime);
 
+        // todo?
         int var_count = runtime._var_deque.size;
+        int member_count = runtime._member_deque.size;
         ic_stmt_result output = { IC_STMT_RESULT_NOP };
 
         for (;;)
@@ -898,8 +963,9 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
                     break;
             }
 
-            // free variables from previous loop iteration
+            // free variables and struct data from previous loop iteration
             runtime._var_deque.size = var_count;
+            runtime._member_deque.size = member_count;
             ic_stmt_result body_result = ic_execute_stmt(stmt->_for.body, runtime);
 
             if (body_result.type == IC_STMT_RESULT_BREAK)
@@ -960,6 +1026,9 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         ic_value value;
         value.type = stmt->_var_declaration.type;
 
+        if (value.type.basic_type == IC_TYPE_STRUCT && !value.type.indirection_level)
+            allocate_struct(value, runtime);
+
         if (stmt->_var_declaration.expr)
         {
             ic_value expr_value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
@@ -1004,35 +1073,35 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         case IC_TOK_EQUAL:
         {
             ic_value output = implicit_convert_type(left.type, right);
-            set_lvalue_data(lvalue_data, left.type.const_mask, output);
+            set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_PLUS_EQUAL:
         {
             ic_value output = evaluate_add(left, right);
             output = implicit_convert_type(left.type, output);
-            set_lvalue_data(lvalue_data, left.type.const_mask, output);
+            set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_MINUS_EQUAL:
         {
             ic_value output = evaluate_add(left, right, true);
             output = implicit_convert_type(left.type, output);
-            set_lvalue_data(lvalue_data, left.type.const_mask, output);
+            set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_STAR_EQUAL:
         {
             double number = get_numeric_data(left) * get_numeric_data(right);
             set_numeric_data(left, number);
-            set_lvalue_data(lvalue_data, left.type.const_mask, left);
+            set_lvalue_data(lvalue_data, left.type.const_mask, left, runtime);
             return { lvalue_data, left };
         }
         case IC_TOK_SLASH_EQUAL:
         {
             double number = get_numeric_data(left) * get_numeric_data(right);
             set_numeric_data(left, number);
-            set_lvalue_data(lvalue_data, left.type.const_mask, left);
+            set_lvalue_data(lvalue_data, left.type.const_mask, left, runtime);
             return { lvalue_data, left };
         }
         case IC_TOK_VBAR_VBAR:
@@ -1153,21 +1222,21 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, -1));
             output = implicit_convert_type(value.type, output);
-            set_lvalue_data(lvalue_data, value.type.const_mask, output);
+            set_lvalue_data(lvalue_data, value.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_PLUS_PLUS:
         {
             ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, 1));
             output = implicit_convert_type(value.type, output);
-            set_lvalue_data(lvalue_data, value.type.const_mask, output);
+            set_lvalue_data(lvalue_data, value.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_AMPERSAND:
         {
             assert(lvalue_data);
             ic_value output;
-            output.type = { value.type.basic_type, value.type.indirection_level + 1, value.type.const_mask << 1 };
+            output.type = { value.type.basic_type, value.type.indirection_level + 1, value.type.const_mask << 1, value.type.struct_name };
             output.pointer = lvalue_data;
             return { nullptr, output };
         }
@@ -1202,6 +1271,58 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         ic_value rhs_value = ic_evaluate_expr(expr->_subscript.rhs, runtime).value;
         ic_value output = evaluate_add(lhs_value, rhs_value);
         return evaluate_dereference(output);
+    }
+    case IC_EXPR_MEMBER_ACCESS:
+    {
+        ic_value lhs;
+        void* lvalue_data;
+        {
+            ic_expr_result result = ic_evaluate_expr(expr->_member_access.lhs, runtime);
+            lhs = result.value;
+            lvalue_data = result.lvalue_data;
+        }
+
+        assert(lhs.type.basic_type == IC_TYPE_STRUCT);
+
+        if (lhs.type.indirection_level)
+        {
+            assert(lhs.type.indirection_level == 1);
+            assert(expr->token.type == IC_TOK_ARROW);
+            lhs = evaluate_dereference(lhs).value;
+        }
+        else
+            assert(expr->token.type == IC_TOK_DOT);
+
+        ic_struct* _struct = runtime.get_struct(lhs.type.struct_name);
+        assert(_struct);
+        int offset = -1;
+
+        for (int i = 0; i < _struct->count; ++i)
+        {
+            ic_struct_member& member = _struct->members[i];
+
+            if (ic_string_compare(member.name, expr->_member_access.rhs_token.string))
+            {
+                offset = i;
+                break;
+            }
+        }
+
+        assert(offset != -1);
+        ic_value output = runtime._member_deque.get(lhs.idx_member + offset);
+        ic_value* ptr_output = &runtime._member_deque.get(lhs.idx_member + offset);
+        // propagate constness to members, it is important that output is an automatic variable here and not a reference
+        output.type.const_mask = lhs.type.const_mask;
+
+        if (!lvalue_data)
+            return { nullptr, output };
+
+        // special case for structs, same as in indentifier case
+        if (output.type.basic_type == IC_TYPE_STRUCT && !output.type.indirection_level)
+            return { ptr_output, output };
+
+        // lvalue non-struct type
+        return { &ptr_output->s8, output };
     }
     case IC_EXPR_PARENTHESES:
     {
@@ -1240,10 +1361,9 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         if (function->type == IC_FUN_HOST)
         {
             assert(function->host.callback);
-            ic_value value = function->host.callback(argc, argv);
-            assert(value.type == function->return_type);
+            ic_value return_value = function->host.callback(argc, argv);
             // function can never return an lvalue
-            return { nullptr, value };
+            return { nullptr, implicit_convert_type(function->return_type, return_value) };
         }
         else
         {
@@ -1267,7 +1387,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             {
                 // function without return statement
                 assert(fun_result.type == IC_STMT_RESULT_NOP);
-                assert(function->return_type == non_pointer_type(IC_TYPE_VOID));
+                assert(!function->return_type.indirection_level && function->return_type.basic_type == IC_TYPE_VOID);
                 // this value should never be used (type pass should terminate)
                 // this is only for bug detection, e.g. failing in to_boolean()
                 output.value.type = non_pointer_type(IC_TYPE_VOID);
@@ -1302,6 +1422,11 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_value* value = runtime.get_var(token.string);
             assert(value);
+
+            // special case for struct variables
+            if (value->type.basic_type == IC_TYPE_STRUCT && !value->type.indirection_level)
+                return { value, *value };
+
             // all union members start at the same address
             return { &value->u8, *value };
         }
@@ -1344,6 +1469,32 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
     assert(false);
     return {};
+}
+
+void allocate_struct(ic_value& value, ic_runtime& runtime)
+{
+    ic_struct* _struct = runtime.get_struct(value.type.struct_name);
+    assert(_struct);
+
+    if (!_struct->count)
+        return;
+
+    value.idx_member = runtime._member_deque.size;
+
+    // allocate members of a struct value; it is important to do this before calling recursively allocate_struct()
+    for (int i = 0; i < _struct->count; ++i)
+    {
+        ic_value* member = runtime._member_deque.allocate();
+        member->type = _struct->members[i].type;
+    }
+
+    for (int i = 0; i < _struct->count; ++i)
+    {
+        ic_value& member = runtime._member_deque.get(value.idx_member + i);
+
+        if (member.type.basic_type == IC_TYPE_STRUCT && !member.type.indirection_level)
+            allocate_struct(member, runtime);
+    }
 }
 
 bool to_boolean(ic_value value)
@@ -1434,6 +1585,9 @@ ic_value implicit_convert_type(ic_value_type target_type, ic_value value)
 {
     assert(target_type.indirection_level == value.type.indirection_level);
 
+    if (target_type.basic_type == IC_TYPE_STRUCT && value.type.basic_type == IC_TYPE_STRUCT)
+        assert(ic_string_compare(target_type.struct_name, value.type.struct_name));
+
     if (target_type.indirection_level)
     {
         // target_type must be 'more' const than value.type
@@ -1468,7 +1622,7 @@ ic_value implicit_convert_type(ic_value_type target_type, ic_value value)
 
 // the main point of this function is to write the right amount of data (to not trigger segmentation fault)
 // without any conversion
-void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value)
+void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value, ic_runtime& runtime)
 {
     assert(lvalue_data); // todo type pass - this is a type error
     // can't assign new data to a const variable
@@ -1492,7 +1646,27 @@ void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value
     case IC_TYPE_F32:
         *(int*)lvalue_data = value.s32;
         return;
+    case IC_TYPE_STRUCT:
+    {
+        ic_value& lvalue = *(ic_value*)lvalue_data;
+        assert(ic_string_compare(lvalue.type.struct_name, value.type.struct_name));
+        ic_struct* _struct = runtime.get_struct(lvalue.type.struct_name);
+        assert(_struct);
+
+        for (int i = 0; i < _struct->count; ++i)
+        {
+            ic_value& member_lhs = runtime._member_deque.get(lvalue.idx_member + i);
+            ic_value& member_rhs = runtime._member_deque.get(value.idx_member + i);
+
+            if (member_lhs.type.basic_type == IC_TYPE_STRUCT && !member_lhs.type.indirection_level)
+                set_lvalue_data(&member_lhs, member_lhs.type.const_mask, member_rhs, runtime);
+            else
+                set_lvalue_data(&member_lhs.s8, member_lhs.type.const_mask, member_rhs, runtime);
+        }
+
+        return;
     }
+    } // switch
     
     assert(false);
 }
@@ -1542,11 +1716,17 @@ bool compare_equal(ic_value left, ic_value right)
         bool is_void = left.type.basic_type == IC_TYPE_VOID || right.type.basic_type == IC_TYPE_VOID;
 
         if (!is_nullptr && !is_void) // void* and nullptr can compare with any other type
+        {
             assert(left.type.basic_type == right.type.basic_type);
+
+            if (left.type.basic_type == IC_TYPE_STRUCT)
+                assert(ic_string_compare(left.type.struct_name, right.type.struct_name));
+        }
 
         return left.pointer == right.pointer;
     }
 
+    // no compare_equal for structs
     return get_numeric_data(left) == get_numeric_data(right);
 }
 
@@ -1559,7 +1739,12 @@ bool compare_greater(ic_value left, ic_value right)
         bool is_void = left.type.basic_type == IC_TYPE_VOID || right.type.basic_type == IC_TYPE_VOID;
 
         if (!is_nullptr && !is_void) // void* and nullptr can compare with any other type
+        {
             assert(left.type.basic_type == right.type.basic_type);
+
+            if (left.type.basic_type == IC_TYPE_STRUCT)
+                assert(ic_string_compare(left.type.struct_name, right.type.struct_name));
+        }
 
         return left.pointer > right.pointer;
     }
@@ -1588,6 +1773,7 @@ ic_expr_result evaluate_dereference(ic_value value)
 {
     assert(value.type.indirection_level);
     assert(value.type.basic_type != IC_TYPE_NULLPTR);
+
     ic_value output;
     output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1 };
 
@@ -1612,6 +1798,12 @@ ic_expr_result evaluate_dereference(ic_value value)
         case IC_TYPE_F32:
             output.s32 = *(int*)value.pointer;
             break;
+        case IC_TYPE_STRUCT:
+        {
+            output.type.struct_name = value.type.struct_name;
+            output.idx_member = ((ic_value*)value.pointer)->idx_member;
+            break;
+        }
         default:
             assert(false);
         }
@@ -1737,6 +1929,9 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
         case ']':
             lexer.add_token(IC_TOK_RIGHT_BRACKET);
             break;
+        case '.':
+            lexer.add_token(IC_TOK_DOT);
+            break;
         case '!':
             lexer.add_token(lexer.consume('=') ? IC_TOK_BANG_EQUAL : IC_TOK_BANG);
             break;
@@ -1756,7 +1951,8 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             lexer.add_token(lexer.consume('=') ? IC_TOK_STAR_EQUAL : IC_TOK_STAR);
             break;
         case '-':
-            lexer.add_token(lexer.consume('=') ? IC_TOK_MINUS_EQUAL : lexer.consume('-') ? IC_TOK_MINUS_MINUS : IC_TOK_MINUS);
+            lexer.add_token(lexer.consume('=') ? IC_TOK_MINUS_EQUAL : lexer.consume('-') ? IC_TOK_MINUS_MINUS :
+                lexer.consume('>') ? IC_TOK_ARROW : IC_TOK_MINUS);
             break;
         case '+':
             lexer.add_token(lexer.consume('=') ? IC_TOK_PLUS_EQUAL : lexer.consume('+') ? IC_TOK_PLUS_PLUS : IC_TOK_PLUS);
@@ -2003,6 +2199,15 @@ bool produce_type(const ic_token** it, ic_runtime& runtime, ic_value_type& type)
     case IC_TOK_VOID:
         type.basic_type = IC_TYPE_VOID;
         break;
+    case IC_TOK_IDENTIFIER:
+        if (runtime.get_struct((**it).string))
+        {
+            type.basic_type = IC_TYPE_STRUCT;
+            type.struct_name = (**it).string;
+            break;
+        }
+        // todo; warning that a type name is possibly misspelled
+        // fall through
     default:
         if (init)
             exit_parsing(it, "expected type name after const keyword");
@@ -2026,9 +2231,44 @@ bool produce_type(const ic_token** it, ic_runtime& runtime, ic_value_type& type)
     return true;
 }
 
-// todo; struct, enum, etc.
+#define IC_MAX_MEMBERS 20
+
 ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 {
+    if (token_consume(it, IC_TOK_STRUCT))
+    {
+        ic_global global;
+        global.type = IC_GLOBAL_STRUCT;
+        ic_struct& _struct = global._struct;
+        _struct.token = **it;
+        token_consume(it, IC_TOK_IDENTIFIER, "expected struct name");
+        token_consume(it, IC_TOK_LEFT_BRACE, "expected '{'");
+        ic_struct_member members[IC_MAX_MEMBERS]; // todo; this is only temp solution
+        int count = 0;
+
+        while (produce_type(it, runtime, members[count].type))
+        {
+            // todo; support const members
+            if (members[count].type.const_mask & 1)
+                exit_parsing(it, "struct member can't be const");
+
+            assert(count < IC_MAX_MEMBERS);
+            members[count].name = (**it).string;
+            ++count;
+            token_consume(it, IC_TOK_IDENTIFIER, "expected member name");
+            token_consume(it, IC_TOK_SEMICOLON, "expected ';' after struct member name");
+        }
+
+        _struct.count = count;
+        int byte_size = sizeof(ic_struct_member) * count;
+        _struct.members = (ic_struct_member*)malloc(byte_size);
+        memcpy(_struct.members, members, byte_size);
+        token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}'");
+        token_consume(it, IC_TOK_SEMICOLON, "expected ';'");
+        return global;
+    }
+
+    // else produce function
     ic_value_type return_type;
 
     if (!produce_type(it, runtime, return_type))
@@ -2366,14 +2606,28 @@ ic_expr* produce_expr_subscript(const ic_token** it, ic_runtime& runtime)
 {
     ic_expr* lhs = produce_expr_primary(it, runtime);
 
-    while((**it).type == IC_TOK_LEFT_BRACKET)
+    for (;;)
     {
-        ic_expr* expr = runtime.allocate_expr(IC_EXPR_SUBSCRIPT, **it);
-        token_advance(it);
-        expr->_subscript.lhs = lhs;
-        expr->_subscript.rhs = produce_expr(it, runtime);
-        token_consume(it, IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator");
-        lhs = expr;
+        if ((**it).type == IC_TOK_LEFT_BRACKET)
+        {
+            ic_expr* expr = runtime.allocate_expr(IC_EXPR_SUBSCRIPT, **it);
+            token_advance(it);
+            expr->_subscript.lhs = lhs;
+            expr->_subscript.rhs = produce_expr(it, runtime);
+            token_consume(it, IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator");
+            lhs = expr;
+        }
+        else if ((**it).type == IC_TOK_DOT || (**it).type == IC_TOK_ARROW)
+        {
+            ic_expr* expr = runtime.allocate_expr(IC_EXPR_MEMBER_ACCESS, **it);
+            token_advance(it);
+            expr->_member_access.lhs = lhs;
+            expr->_member_access.rhs_token = **it;
+            token_consume(it, IC_TOK_IDENTIFIER, "expected member name after '.' operator");
+            lhs = expr;
+        }
+        else
+            break;
     }
 
     return lhs;
