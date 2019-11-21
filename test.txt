@@ -39,16 +39,19 @@ struct rt_ray
 
 rt_ray get_default_ray()
 {
+    rt_vec3 dummy;
     rt_ray d;
-    d.direction.y = 5;
+    d.origin.x = 7;
+    d.direction.y = 99;
     return d;
 }
 
 void main()
 {
     {
-        //const rt_ray cray = get_default_ray();
-       // print(cray.direction.y);
+        const rt_ray cray = get_default_ray();
+        print(cray.direction.y);
+        print(cray.origin.x);
         
         rt_ray ray;
         ray.origin.x = 5;

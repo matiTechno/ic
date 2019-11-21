@@ -911,6 +911,8 @@ bool compare_greater(ic_value left, ic_value right);
 void assert_integer_type(ic_value_type type);
 ic_expr_result evaluate_dereference(ic_value value);
 void allocate_struct(ic_value& value, ic_runtime& runtime);
+// for this function to work, order of member copying must match the order of allocation
+int copy_struct(int dst_idx, ic_value& value, ic_runtime& runtime);
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
@@ -1003,7 +1005,19 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         ic_stmt_result output = {IC_STMT_RESULT_RETURN};
 
         if (stmt->_return.expr)
-            output.value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
+        {
+            ic_value return_value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
+
+            // this is very important (copy struct member values to the parent scope)
+            if (return_value.type.basic_type == IC_TYPE_STRUCT && !return_value.type.indirection_level)
+            {
+                int num_copied = copy_struct(runtime._scopes.back().prev_member_count, return_value, runtime);
+                runtime._scopes.back().prev_member_count += num_copied;
+            }
+
+            // this must be after if, return_value might be modified
+            output.value = return_value;
+        }
         else
         {
             // this value should never be used (type pass should terminate)
@@ -1810,6 +1824,29 @@ ic_expr_result evaluate_dereference(ic_value value)
     }
 
     return { value.pointer, output };
+}
+
+// I really hope this function is bug free + it is very inefficient
+int copy_struct(int dst_idx, ic_value& value, ic_runtime& runtime)
+{
+    ic_struct* _struct = runtime.get_struct(value.type.struct_name);
+    assert(_struct);
+    int size = _struct->count;
+    // important - these two for loops can't be combined (case when indices overlap)
+
+    for (int i = 0; i < size; ++i)
+        runtime._member_deque.get(dst_idx + i) = runtime._member_deque.get(value.idx_member + i);
+
+    for (int i = 0; i < size; ++i)
+    {
+        ic_value& copied_member = runtime._member_deque.get(dst_idx + i);
+
+        if (copied_member.type.basic_type == IC_TYPE_STRUCT && !copied_member.type.indirection_level)
+            size += copy_struct(dst_idx + size, copied_member, runtime);
+    }
+
+    value.idx_member = dst_idx;
+    return size;
 }
 
 struct ic_lexer
