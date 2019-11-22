@@ -946,7 +946,7 @@ ic_value produce_numeric_value(ic_basic_type btype, double number);
 // use before set_lvalue_data(); for only numeric expressions use set_numeric_data() instead
 ic_value implicit_convert_type(ic_value_type target_type, ic_value value);
 void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value, ic_runtime& runtime);
-ic_value evaluate_add(ic_value left, ic_value right, bool subtract = false);
+ic_value evaluate_add(ic_value left, ic_value right, ic_runtime& runtime, bool subtract = false);
 bool compare_equal(ic_value left, ic_value right);
 bool compare_greater(ic_value left, ic_value right);
 void assert_integer_type(ic_value_type type);
@@ -1153,14 +1153,14 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_PLUS_EQUAL:
         {
-            ic_value output = evaluate_add(left, right);
+            ic_value output = evaluate_add(left, right, runtime);
             output = implicit_convert_type(left.type, output);
             set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_MINUS_EQUAL:
         {
-            ic_value output = evaluate_add(left, right, true);
+            ic_value output = evaluate_add(left, right, runtime, true);
             output = implicit_convert_type(left.type, output);
             set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
             return { lvalue_data, output };
@@ -1237,11 +1237,11 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_PLUS:
         {
-            return { nullptr, evaluate_add(left, right) };
+            return { nullptr, evaluate_add(left, right, runtime) };
         }
         case IC_TOK_MINUS:
         {
-            return { nullptr, evaluate_add(left, right, true) };
+            return { nullptr, evaluate_add(left, right, runtime, true) };
         }
         case IC_TOK_STAR:
         {
@@ -1282,7 +1282,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
         case IC_TOK_MINUS:
         {
-            // todo; don't pass -true expression; but it is not a big deal
+            // todo; don't allow -true expression; but it is not a big deal
             set_numeric_data(value, -get_numeric_data(value));
             return { nullptr, value };
         }
@@ -1295,14 +1295,14 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_MINUS_MINUS:
         {
-            ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, -1));
+            ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, -1), runtime);
             output = implicit_convert_type(value.type, output);
             set_lvalue_data(lvalue_data, value.type.const_mask, output, runtime);
             return { lvalue_data, output };
         }
         case IC_TOK_PLUS_PLUS:
         {
-            ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, 1));
+            ic_value output = evaluate_add(value, produce_numeric_value(IC_TYPE_S8, 1), runtime);
             output = implicit_convert_type(value.type, output);
             set_lvalue_data(lvalue_data, value.type.const_mask, output, runtime);
             return { lvalue_data, output };
@@ -1344,7 +1344,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
         ic_value lhs_value = ic_evaluate_expr(expr->_subscript.lhs, runtime).value;
         ic_value rhs_value = ic_evaluate_expr(expr->_subscript.rhs, runtime).value;
-        ic_value output = evaluate_add(lhs_value, rhs_value);
+        ic_value output = evaluate_add(lhs_value, rhs_value, runtime);
         return evaluate_dereference(output);
     }
     case IC_EXPR_MEMBER_ACCESS:
@@ -1704,7 +1704,7 @@ void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value
     assert(false);
 }
 
-ic_value evaluate_add(ic_value left, ic_value right, bool subtract)
+ic_value evaluate_add(ic_value left, ic_value right, ic_runtime& runtime, bool subtract)
 {
     if (left.type.indirection_level)
     {
@@ -1727,6 +1727,13 @@ ic_value evaluate_add(ic_value left, ic_value right, bool subtract)
             case IC_TYPE_F32:
                 left.pointer = (int*)left.pointer + offset;
                 break;
+            case IC_TYPE_STRUCT:
+            {
+                ic_struct * _struct = runtime.get_struct(left.type.struct_name);
+                assert(_struct);
+                left.pointer = (ic_struct_data*)left.pointer + offset * _struct->num_data;
+                break;
+            }
             default:
                 assert(false);
             }
