@@ -46,15 +46,29 @@ rt_ray get_default_ray()
     return d;
 }
 
+struct empty
+{
+
+};
+
 void main()
 {
     {
+        empty e;
+        empty e2;
+        e = e2; // test if non-member structs don't crash
+    
+        rt_vec3 vec;
+        rt_vec3* ptr = &vec;
+        ptr->x = 4;
+    }
+    {
         rt_ray* rays = (rt_ray*)malloc(sizeof(rt_ray) * 5);
-        //rays[0].direction.z = 55;
-        //rays[4].origin.x = 6;
+        rays[0].direction.z = 55;
+        rays[4].origin.x = 6;
         
-        //print(rays[0].direction.z);
-       // print(rays[4].origin.x);
+        print(rays[0].direction.z);
+        print(rays[4].origin.x);
     }
     {
         rt_ray ray;
@@ -67,6 +81,7 @@ void main()
     }
     {
         const rt_ray cray = get_default_ray();
+        //cray.direction.y = 1;
         print(cray.direction.y);
         print(cray.origin.x);
         

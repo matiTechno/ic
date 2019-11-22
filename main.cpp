@@ -56,6 +56,7 @@ struct ic_deque
     T* allocate_continuous(int num) // todo; change size to _size; num so it does not collide with member size
     {
         assert(num <= N);
+        num = num ? num : 1; // this is to support non-member structs - allocate for them one dummy data
 
         if (pools.empty() || size + num > pools.size() * N)
         {
@@ -1385,8 +1386,12 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 size = sizeof(int);
                 break;
             case IC_TYPE_STRUCT:
-                size = runtime.get_struct(type.struct_name)->num_members * sizeof(ic_struct_data);
+            {
+                ic_struct* _struct = runtime.get_struct(type.struct_name);
+                assert(_struct);
+                size = _struct->num_members * sizeof(ic_struct_data);
                 break;
+            }
             default:
                 assert(false);
             }
@@ -1470,12 +1475,13 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         assert(match);
         ic_value output;
         output.type = member_type;
+        output.type.const_mask |= (lhs.type.const_mask & 1); // propagate constness from struct to its member
         ic_struct_data* data = (ic_struct_data*)lhs.pointer + data_offset;
 
         if (is_non_pointer_struct(output.type))
             output.pointer = data;
         else
-            output.f64 = data->f64;
+            output.f64 = data->f64; // ub? what if f64 was never written to before?
 
         // address of a struct is the same as the adress of its first member
         return { lvalue_data ? &data->s8 : nullptr, output };
@@ -1578,7 +1584,8 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_value* value = runtime.get_var(token.string);
             assert(value);
-            return { &value->s8, *value };
+            // in short - this is to make malloc work with structs
+            return { is_non_pointer_struct(value->type) ? value->pointer : &value->s8, *value };
         }
         case IC_TOK_TRUE:
         case IC_TOK_FALSE:
@@ -1889,7 +1896,7 @@ ic_expr_result evaluate_dereference(ic_value value)
     output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1, value.type.struct_name };
 
     // the exact amount of data needs to be read to not trigger segmentation fault, without any conversion
-    if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64 || value.type.basic_type == IC_TYPE_STRUCT)
+    if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64)
     {
         assert(value.pointer); // runtime error, not type error
         // pointer to pointer or pointer to double; both pointer and double are 8 bytes
@@ -1908,6 +1915,9 @@ ic_expr_result evaluate_dereference(ic_value value)
         case IC_TYPE_U32:
         case IC_TYPE_F32:
             output.s32 = *(int*)value.pointer;
+            break;
+        case IC_TYPE_STRUCT: // see IC_TOK_IDENTIFIER for explanation
+            output.pointer = value.pointer;
             break;
         default:
             assert(false);
