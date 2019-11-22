@@ -473,6 +473,7 @@ struct ic_global
     {
         ic_function function;
         ic_struct _struct;
+        ic_stmt stmt; // var declaration
     };
 };
 
@@ -526,7 +527,7 @@ struct ic_runtime
 int main(int argc, const char** argv)
 {
     assert(argc == 2);
-    FILE* file = fopen(argv[1], "r");
+    FILE* file = fopen(argv[1], "rb"); // oh my dear Windows, you have to make life harder
     assert(file);
     int rc = fseek(file, 0, SEEK_END);
     assert(rc == 0);
@@ -537,9 +538,8 @@ int main(int argc, const char** argv)
     std::vector<char> source_code;
     source_code.resize(size + 1);
     fread(source_code.data(), 1, size, file);
-    source_code.push_back('\0');
+    source_code.back() = '\0';
     fclose(file);
-
     ic_runtime runtime;
     runtime.init();
 
@@ -761,6 +761,7 @@ bool ic_string_compare(ic_string str1, ic_string str2)
 bool ic_tokenize(ic_runtime& runtime, const char* source_code);
 ic_global produce_global(const ic_token** it, ic_runtime& runtime);
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime);
+ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime);
 
 bool ic_runtime::run(const char* source_code)
 {
@@ -810,7 +811,9 @@ bool ic_runtime::run(const char* source_code)
             return false;
         }
 
-        if (global.type == IC_GLOBAL_FUNCTION)
+        switch (global.type)
+        {
+        case IC_GLOBAL_FUNCTION:
         {
             ic_token token = global.function.token;
 
@@ -821,8 +824,9 @@ bool ic_runtime::run(const char* source_code)
             }
 
             _functions.push_back(global.function);
+            break;
         }
-        else if (global.type == IC_GLOBAL_STRUCT)
+        case IC_GLOBAL_STRUCT:
         {
             ic_token token = global._struct.token;
 
@@ -833,9 +837,35 @@ bool ic_runtime::run(const char* source_code)
             }
 
             _structs.push_back(global._struct);
+            break;
         }
-        else
+        case IC_GLOBAL_VAR_DECLARATION:
+        {
+            ic_execute_stmt(&global.stmt, *this); // todo; allow only constant initialization
+
+            // set to zero if not initialized explicitly
+            // memset 0 will work for all data types, e.g. if all bits of double are 0 its value is also 0 (at least that's what I hope for)
+            if (!global.stmt._var_declaration.expr)
+            {
+                ic_string name = global.stmt._var_declaration.token.string;
+                ic_value* value = get_var(name);
+                assert(value);
+
+                if (is_non_pointer_struct(value->type))
+                {
+                    ic_struct* _struct = get_struct(value->type.struct_name);
+                    assert(_struct);
+                    memset(value->pointer, 0, _struct->num_data * sizeof(ic_struct_data));
+                }
+                else
+                    memset(&value->f64, 0, sizeof(double));
+            }
+
+            break;
+        }
+        default:
             assert(false);
+        }
     }
 
     // execute main funtion
@@ -2017,6 +2047,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
         case ' ':
         case '\t':
         case '\n':
+        case '\r':
             break;
         case '(':
             lexer.add_token(IC_TOK_LEFT_PAREN);
@@ -2397,56 +2428,83 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         return global;
     }
 
-    // else produce function
-    ic_value_type return_type;
+    // else produce a function or a global variable declaration
+    ic_value_type type;
 
-    if (!produce_type(it, runtime, return_type))
-        exit_parsing(it, "expected return type");
+    if (!produce_type(it, runtime, type))
+        exit_parsing(it, "expected: a type of a global variable / return type of a function / 'struct' keyword");
 
-    ic_global global;
-    global.type = IC_GLOBAL_FUNCTION;
-    ic_function& function = global.function;
-    function.type = IC_FUN_SOURCE;
-    function.token = **it;
-    token_consume(it, IC_TOK_IDENTIFIER, "expected function name");
-    function.return_type = return_type;
-    function.param_count = 0;
-    token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after function name");
+    ic_token token_id = **it;
+    token_consume(it, IC_TOK_IDENTIFIER, "expected identifier");
 
-    if (!token_consume(it, IC_TOK_RIGHT_PAREN))
+    // function
+    if (token_consume(it, IC_TOK_LEFT_PAREN))
     {
-        for (;;)
+        ic_global global;
+        global.type = IC_GLOBAL_FUNCTION;
+        ic_function& function = global.function;
+        function.type = IC_FUN_SOURCE;
+        function.token = token_id;
+        function.return_type = type;
+        function.param_count = 0;
+
+        if (!token_consume(it, IC_TOK_RIGHT_PAREN))
         {
-            if (function.param_count >= IC_MAX_ARGC)
-                exit_parsing(it, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
+            for (;;)
+            {
+                if (function.param_count >= IC_MAX_ARGC)
+                    exit_parsing(it, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
 
-            ic_value_type param_type;
+                ic_value_type param_type;
 
-            if (!produce_type(it, runtime, param_type))
-                exit_parsing(it, "expected parameter type");
+                if (!produce_type(it, runtime, param_type))
+                    exit_parsing(it, "expected parameter type");
 
-            // constness should not be compared here and that's why == non_pointer(IC_TYPE_VOID) is not used
-            if (!param_type.indirection_level && param_type.basic_type == IC_TYPE_VOID)
-                exit_parsing(it, "parameter can't be of type void");
+                // constness should not be compared here and that's why == non_pointer(IC_TYPE_VOID) is not used
+                if (!param_type.indirection_level && param_type.basic_type == IC_TYPE_VOID)
+                    exit_parsing(it, "parameter can't be of type void");
 
-            function.params[function.param_count].type = param_type;
-            function.params[function.param_count].name = (**it).string;
-            token_consume(it, IC_TOK_IDENTIFIER, "expected parameter name");
-            function.param_count += 1;
+                function.params[function.param_count].type = param_type;
+                function.params[function.param_count].name = (**it).string;
+                token_consume(it, IC_TOK_IDENTIFIER, "expected parameter name");
+                function.param_count += 1;
 
-            if (token_consume(it, IC_TOK_RIGHT_PAREN))
-                break;
+                if (token_consume(it, IC_TOK_RIGHT_PAREN))
+                    break;
 
-            token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument");
+                token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument");
+            }
         }
+
+        function.body = produce_stmt(it, runtime);
+
+        if (function.body->type != IC_STMT_COMPOUND)
+            exit_parsing(it, "expected compound stmt after function parameter list");
+
+        function.body->_compound.push_scope = false; // do not allow shadowing of arguments
+        return global;
     }
 
-    function.body = produce_stmt(it, runtime);
+    // variable
+    // todo; redundant with produce_stmt_var_declaration()
+    if (type.basic_type == IC_TYPE_VOID && !type.indirection_level)
+        exit_parsing(it, "variables can't be of type void");
 
-    if (function.body->type != IC_STMT_COMPOUND)
-        exit_parsing(it, "expected compound stmt after function parameter list");
+    ic_global global;
+    global.type = IC_GLOBAL_VAR_DECLARATION;
+    ic_stmt& stmt = global.stmt;
+    stmt.type = IC_STMT_VAR_DECLARATION;
+    stmt._var_declaration.type = type;
+    stmt._var_declaration.token = token_id;
 
-    function.body->_compound.push_scope = false; // do not allow shadowing of arguments
+    if (token_consume(it, IC_TOK_EQUAL))
+    {
+        stmt._var_declaration.expr = produce_expr_stmt(it, runtime);
+        return global;
+    }
+
+    token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
+    stmt._var_declaration.expr = nullptr;
     return global;
 }
 
