@@ -1475,7 +1475,8 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         assert(match);
         ic_value output;
         output.type = member_type;
-        output.type.const_mask |= (lhs.type.const_mask & 1); // propagate constness from struct to its member
+        assert(lhs.type.const_mask == 0 || lhs.type.const_mask == 1);
+        output.type.const_mask |= lhs.type.const_mask; // propagate constness from struct to its member
         ic_struct_data* data = (ic_struct_data*)lhs.pointer + data_offset;
 
         if (is_non_pointer_struct(output.type))
