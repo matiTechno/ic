@@ -49,6 +49,14 @@ rt_ray get_default_ray()
 void main()
 {
     {
+        rt_ray* rays = (rt_ray*)malloc(sizeof(rt_ray) * 5);
+        //rays[0].direction.z = 55;
+        //rays[4].origin.x = 6;
+        
+       // print(rays[0].direction.z);
+       // print(rays[4].origin.x);
+    }
+    {
         rt_ray ray;
         rt_vec3 vec;
         vec.z = 3;

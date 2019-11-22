@@ -106,6 +106,7 @@ enum ic_token_type
     IC_TOK_NULLPTR,
     IC_TOK_CONST,
     IC_TOK_STRUCT,
+    IC_TOK_SIZEOF,
     // literals
     IC_TOK_INT_NUMBER_LITERAL,
     IC_TOK_FLOAT_NUMBER_LITERAL,
@@ -163,6 +164,7 @@ enum ic_expr_type
 {
     IC_EXPR_BINARY,
     IC_EXPR_UNARY,
+    IC_EXPR_SIZEOF,
     IC_EXPR_CAST_OPERATOR,
     IC_EXPR_SUBSCRIPT,
     IC_EXPR_MEMBER_ACCESS,
@@ -200,7 +202,7 @@ enum ic_function_type
     IC_FUN_SOURCE,
 };
 
-// todo; union?
+// todo; union, enum
 enum ic_global_type
 {
     IC_GLOBAL_FUNCTION,
@@ -208,7 +210,6 @@ enum ic_global_type
     IC_GLOBAL_STRUCT,
     IC_GLOBAL_STRUCT_FORWARD_DECLARATION,
     IC_GLOBAL_VAR_DECLARATION,
-    IC_GLOBAL_ENUM,
 };
 
 enum ic_stmt_result_type
@@ -246,6 +247,7 @@ static ic_keyword _keywords[] = {
     {"nullptr", IC_TOK_NULLPTR},
     {"const", IC_TOK_CONST},
     {"struct", IC_TOK_STRUCT},
+    {"sizeof", IC_TOK_SIZEOF},
 };
 
 struct ic_string
@@ -339,6 +341,11 @@ struct ic_expr
         {
             ic_expr* expr;
         } _unary;
+
+        struct
+        {
+            ic_value_type type;
+        } _sizeof;
 
         struct
         {
@@ -1322,6 +1329,37 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         } // switch
 
         assert(false);
+    }
+    case IC_EXPR_SIZEOF:
+    {
+        ic_value_type type = expr->_sizeof.type;
+        int size;
+
+        if (type.indirection_level || type.basic_type == IC_TYPE_F64)
+            size = sizeof(void*);
+        else
+        {
+            switch (type.basic_type)
+            {
+            case IC_TYPE_BOOL:
+            case IC_TYPE_S8:
+            case IC_TYPE_U8:
+                size = sizeof(char);
+                break;
+            case IC_TYPE_S32:
+            case IC_TYPE_U32:
+            case IC_TYPE_F32:
+                size = sizeof(int);
+                break;
+            case IC_TYPE_STRUCT:
+                size = runtime.get_struct(type.struct_name)->num_members * sizeof(ic_struct_data);
+                break;
+            default:
+                assert(false);
+            }
+        }
+
+        return { nullptr, produce_numeric_value(IC_TYPE_S32, size) };
     }
     case IC_EXPR_CAST_OPERATOR:
     {
@@ -2643,6 +2681,18 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
 
         *it -= 1; // go back by one
         break;
+    }
+    case IC_TOK_SIZEOF:
+    {
+        ic_expr* expr = runtime.allocate_expr(IC_EXPR_SIZEOF, **it);
+        token_advance(it);
+        token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after sizeof operator");
+        
+        if (!produce_type(it, runtime, expr->_sizeof.type))
+            exit_parsing(it, "expected type");
+
+        token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after type");
+        return expr;
     }
     } // switch
 
