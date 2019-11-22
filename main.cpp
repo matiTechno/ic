@@ -20,6 +20,7 @@
 // one of the next goals will be to change execution into type pass with byte code generation and then execute bytecode
 // escape sequences
 // automatic array
+// auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
 
 template<typename T, int N>
 struct ic_deque
@@ -49,6 +50,26 @@ struct ic_deque
 
         size += 1;
         return &get(size - 1);
+    }
+
+    // this is quite tricky
+    T* allocate_continuous(int num) // todo; change size to _size; num so it does not collide with member size
+    {
+        assert(num <= N);
+
+        if (pools.empty() || size + num > pools.size() * N)
+        {
+            T* new_pool = (T*)malloc(N * sizeof(T));
+            pools.push_back(new_pool);
+        }
+
+        int current_pool_size = size % N;
+
+        if (current_pool_size + num > N)
+            size += N - current_pool_size; // move to the next pool (we want continuous memory)
+
+        size += num;
+        return &get(size - num);
     }
 };
 
@@ -362,7 +383,6 @@ struct ic_value
         float f32;
         double f64;
         void* pointer;
-        int idx_member;
     };
 };
 
@@ -375,7 +395,7 @@ struct ic_var
 struct ic_scope
 {
     int prev_var_count;
-    int prev_member_count;
+    int prev_struct_data_count;
     bool new_call_frame; // so variables do not leak to lower functions
 };
 
@@ -408,6 +428,21 @@ struct ic_function
     };
 };
 
+// partially redundant with ic_value
+struct ic_struct_data
+{
+    union
+    {
+        char s8;
+        unsigned char u8;
+        int s32;
+        unsigned int u32;
+        float f32;
+        double f64;
+        void* pointer;
+    };
+};
+
 struct ic_struct_member
 {
     ic_value_type type;
@@ -418,7 +453,8 @@ struct ic_struct
 {
     ic_token token;
     ic_struct_member* members;
-    int count;
+    int num_members;
+    int num_data;
 };
 
 struct ic_global
@@ -459,10 +495,10 @@ struct ic_runtime
     void free();
 
     // implementation
-    ic_deque<ic_stmt, 1000> _stmt_deque;
-    ic_deque<ic_expr, 1000> _expr_deque;
+    ic_deque<ic_stmt, 1000> _stmt_deque; // same
+    ic_deque<ic_expr, 1000> _expr_deque; // same
     ic_deque<ic_var, 1000> _var_deque; // deque is used because variables must not be invalidated (pointers are supported)
-    ic_deque<ic_value, 1000> _member_deque;
+    ic_deque<ic_struct_data, 1000> _struct_data_deque; // same
     std::vector<char*> _string_literals;
     std::vector<ic_token> _tokens;
     std::vector<ic_scope> _scopes;
@@ -525,6 +561,11 @@ ic_value void_value()
     ic_value value;
     value.type = non_pointer_type(IC_TYPE_VOID);
     return value;
+}
+
+bool is_non_pointer_struct(ic_value_type& type)
+{
+    return !type.indirection_level && type.basic_type == IC_TYPE_STRUCT;
 }
 
 void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
@@ -659,7 +700,7 @@ void ic_runtime::free()
     _stmt_deque.free();
     _expr_deque.free();
     _var_deque.free();
-    _member_deque.free();
+    _struct_data_deque.free();
 
     for (char* str : _string_literals)
         ::free(str);
@@ -720,7 +761,7 @@ bool ic_runtime::run(const char* source_code)
     _tokens.clear();
     _stmt_deque.size = 0;
     _expr_deque.size = 0;
-    _member_deque.size = 0;
+    _struct_data_deque.size = 0;
 
     // clear allocated strings from previous run
     for (char* str : _string_literals)
@@ -806,7 +847,7 @@ void ic_runtime::push_scope(bool new_call_frame)
 {
     ic_scope scope;
     scope.prev_var_count = _var_deque.size;
-    scope.prev_member_count = _member_deque.size;
+    scope.prev_struct_data_count = _struct_data_deque.size;
     scope.new_call_frame = new_call_frame;
     _scopes.push_back(scope);
 }
@@ -815,7 +856,7 @@ void ic_runtime::pop_scope()
 {
     assert(_scopes.size());
     _var_deque.size = _scopes.back().prev_var_count;
-    _member_deque.size = _scopes.back().prev_member_count;
+    _struct_data_deque.size = _scopes.back().prev_struct_data_count;
     _scopes.pop_back();
 }
 
@@ -910,9 +951,6 @@ bool compare_equal(ic_value left, ic_value right);
 bool compare_greater(ic_value left, ic_value right);
 void assert_integer_type(ic_value_type type);
 ic_expr_result evaluate_dereference(ic_value value);
-void allocate_struct(ic_value& value, ic_runtime& runtime);
-// for this function to work, order of member copying must match the order of allocation
-int copy_struct(int dst_idx, ic_value& value, ic_runtime& runtime);
 
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 {
@@ -952,7 +990,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 
         // todo?
         int var_count = runtime._var_deque.size;
-        int member_count = runtime._member_deque.size;
+        int struct_data_count = runtime._struct_data_deque.size;
         ic_stmt_result output = { IC_STMT_RESULT_NOP };
 
         for (;;)
@@ -967,7 +1005,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 
             // free variables and struct data from previous loop iteration
             runtime._var_deque.size = var_count;
-            runtime._member_deque.size = member_count;
+            runtime._struct_data_deque.size = struct_data_count;
             ic_stmt_result body_result = ic_execute_stmt(stmt->_for.body, runtime);
 
             if (body_result.type == IC_STMT_RESULT_BREAK)
@@ -1008,11 +1046,17 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         {
             ic_value return_value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
 
-            // this is very important (copy struct member values to the parent scope)
-            if (return_value.type.basic_type == IC_TYPE_STRUCT && !return_value.type.indirection_level)
+            // this is very important (copy struct data to the parent scope)
+            if (is_non_pointer_struct(return_value.type))
             {
-                int num_copied = copy_struct(runtime._scopes.back().prev_member_count, return_value, runtime);
-                runtime._scopes.back().prev_member_count += num_copied;
+                ic_struct* _struct = runtime.get_struct(return_value.type.struct_name);
+                assert(_struct);
+                runtime._struct_data_deque.size = runtime._scopes.back().prev_struct_data_count;
+                ic_struct_data* dst = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+                // return_value.pointer is still valid even if _struct_data_deque.size has changed; memmove, not memcpy - memory might overlap
+                memmove(dst, return_value.pointer, _struct->num_data * sizeof(ic_struct_data));
+                runtime._scopes.back().prev_struct_data_count += _struct->num_data;
+                return_value.pointer = dst;
             }
 
             // this must be after if, return_value might be modified
@@ -1040,8 +1084,12 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         ic_value value;
         value.type = stmt->_var_declaration.type;
 
-        if (value.type.basic_type == IC_TYPE_STRUCT && !value.type.indirection_level)
-            allocate_struct(value, runtime);
+        if (is_non_pointer_struct(value.type))
+        {
+            ic_struct* _struct = runtime.get_struct(value.type.struct_name);
+            assert(_struct);
+            value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+        }
 
         if (stmt->_var_declaration.expr)
         {
@@ -1086,9 +1134,22 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
         case IC_TOK_EQUAL:
         {
-            ic_value output = implicit_convert_type(left.type, right);
-            set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
-            return { lvalue_data, output };
+            ic_value right2 = implicit_convert_type(left.type, right);
+
+            if (is_non_pointer_struct(left.type))
+            {
+                assert(lvalue_data);
+                assert((left.type.const_mask & 1) == 0);
+                ic_struct* _struct = runtime.get_struct(left.type.struct_name);
+                assert(_struct);
+                memcpy(left.pointer, right2.pointer, _struct->num_data * sizeof(ic_struct_data));
+                return { lvalue_data, left };
+            }
+            else
+            {
+                set_lvalue_data(lvalue_data, left.type.const_mask, right2, runtime);
+                return { lvalue_data, right2 };
+            }
         }
         case IC_TOK_PLUS_EQUAL:
         {
@@ -1302,41 +1363,51 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             assert(lhs.type.indirection_level == 1);
             assert(expr->token.type == IC_TOK_ARROW);
-            lhs = evaluate_dereference(lhs).value;
+            ic_expr_result result = evaluate_dereference(lhs);
+            lhs = result.value;
+            lvalue_data = result.lvalue_data;
         }
         else
             assert(expr->token.type == IC_TOK_DOT);
 
         ic_struct* _struct = runtime.get_struct(lhs.type.struct_name);
         assert(_struct);
-        int offset = -1;
+        bool match = false;
+        ic_value_type member_type;
+        int data_offset = 0;
 
-        for (int i = 0; i < _struct->count; ++i)
+        for (int i = 0; i < _struct->num_members; ++i)
         {
             ic_struct_member& member = _struct->members[i];
 
             if (ic_string_compare(member.name, expr->_member_access.rhs_token.string))
             {
-                offset = i;
+                match = true;
+                member_type = member.type;
                 break;
             }
+
+            if (is_non_pointer_struct(member.type))
+            {
+                ic_struct* sub_struct = runtime.get_struct(member.type.struct_name);
+                data_offset += sub_struct->num_data;
+            }
+            else
+                data_offset += 1;
         }
 
-        assert(offset != -1);
-        ic_value output = runtime._member_deque.get(lhs.idx_member + offset);
-        ic_value* ptr_output = &runtime._member_deque.get(lhs.idx_member + offset);
-        // propagate constness to members, it is important that output is an automatic variable here and not a reference
-        output.type.const_mask = lhs.type.const_mask;
+        assert(match);
+        ic_value output;
+        output.type = member_type;
+        ic_struct_data* data = (ic_struct_data*)lhs.pointer + data_offset;
 
-        if (!lvalue_data)
-            return { nullptr, output };
+        if (is_non_pointer_struct(output.type))
+            output.pointer = data;
+        else
+            output.f64 = data->f64;
 
-        // special case for structs, same as in indentifier case
-        if (output.type.basic_type == IC_TYPE_STRUCT && !output.type.indirection_level)
-            return { ptr_output, output };
-
-        // lvalue non-struct type
-        return { &ptr_output->s8, output };
+        // address of a struct is the same as the adress of its first member
+        return { lvalue_data ? &data->s8 : nullptr, output };
     }
     case IC_EXPR_PARENTHESES:
     {
@@ -1436,13 +1507,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_value* value = runtime.get_var(token.string);
             assert(value);
-
-            // special case for struct variables
-            if (value->type.basic_type == IC_TYPE_STRUCT && !value->type.indirection_level)
-                return { value, *value };
-
-            // all union members start at the same address
-            return { &value->u8, *value };
+            return { &value->s8, *value };
         }
         case IC_TOK_TRUE:
         case IC_TOK_FALSE:
@@ -1483,32 +1548,6 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
     assert(false);
     return {};
-}
-
-void allocate_struct(ic_value& value, ic_runtime& runtime)
-{
-    ic_struct* _struct = runtime.get_struct(value.type.struct_name);
-    assert(_struct);
-
-    if (!_struct->count)
-        return;
-
-    value.idx_member = runtime._member_deque.size;
-
-    // allocate members of a struct value; it is important to do this before calling recursively allocate_struct()
-    for (int i = 0; i < _struct->count; ++i)
-    {
-        ic_value* member = runtime._member_deque.allocate();
-        member->type = _struct->members[i].type;
-    }
-
-    for (int i = 0; i < _struct->count; ++i)
-    {
-        ic_value& member = runtime._member_deque.get(value.idx_member + i);
-
-        if (member.type.basic_type == IC_TYPE_STRUCT && !member.type.indirection_level)
-            allocate_struct(member, runtime);
-    }
 }
 
 bool to_boolean(ic_value value)
@@ -1660,27 +1699,7 @@ void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value
     case IC_TYPE_F32:
         *(int*)lvalue_data = value.s32;
         return;
-    case IC_TYPE_STRUCT:
-    {
-        ic_value& lvalue = *(ic_value*)lvalue_data;
-        assert(ic_string_compare(lvalue.type.struct_name, value.type.struct_name));
-        ic_struct* _struct = runtime.get_struct(lvalue.type.struct_name);
-        assert(_struct);
-
-        for (int i = 0; i < _struct->count; ++i)
-        {
-            ic_value& member_lhs = runtime._member_deque.get(lvalue.idx_member + i);
-            ic_value& member_rhs = runtime._member_deque.get(value.idx_member + i);
-
-            if (member_lhs.type.basic_type == IC_TYPE_STRUCT && !member_lhs.type.indirection_level)
-                set_lvalue_data(&member_lhs, member_lhs.type.const_mask, member_rhs, runtime);
-            else
-                set_lvalue_data(&member_lhs.s8, member_lhs.type.const_mask, member_rhs, runtime);
-        }
-
-        return;
     }
-    } // switch
     
     assert(false);
 }
@@ -1789,10 +1808,10 @@ ic_expr_result evaluate_dereference(ic_value value)
     assert(value.type.basic_type != IC_TYPE_NULLPTR);
 
     ic_value output;
-    output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1 };
+    output.type = { value.type.basic_type, value.type.indirection_level - 1, value.type.const_mask >> 1, value.type.struct_name };
 
     // the exact amount of data needs to be read to not trigger segmentation fault, without any conversion
-    if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64)
+    if (value.type.indirection_level > 1 || value.type.basic_type == IC_TYPE_F64 || value.type.basic_type == IC_TYPE_STRUCT)
     {
         assert(value.pointer); // runtime error, not type error
         // pointer to pointer or pointer to double; both pointer and double are 8 bytes
@@ -1812,41 +1831,12 @@ ic_expr_result evaluate_dereference(ic_value value)
         case IC_TYPE_F32:
             output.s32 = *(int*)value.pointer;
             break;
-        case IC_TYPE_STRUCT:
-        {
-            output.type.struct_name = value.type.struct_name;
-            output.idx_member = ((ic_value*)value.pointer)->idx_member;
-            break;
-        }
         default:
             assert(false);
         }
     }
 
     return { value.pointer, output };
-}
-
-// I really hope this function is bug free + it is very inefficient
-int copy_struct(int dst_idx, ic_value& value, ic_runtime& runtime)
-{
-    ic_struct* _struct = runtime.get_struct(value.type.struct_name);
-    assert(_struct);
-    int size = _struct->count;
-    // important - these two for loops can't be combined (case when indices overlap)
-
-    for (int i = 0; i < size; ++i)
-        runtime._member_deque.get(dst_idx + i) = runtime._member_deque.get(value.idx_member + i);
-
-    for (int i = 0; i < size; ++i)
-    {
-        ic_value& copied_member = runtime._member_deque.get(dst_idx + i);
-
-        if (copied_member.type.basic_type == IC_TYPE_STRUCT && !copied_member.type.indirection_level)
-            size += copy_struct(dst_idx + size, copied_member, runtime);
-    }
-
-    value.idx_member = dst_idx;
-    return size;
 }
 
 struct ic_lexer
@@ -2281,25 +2271,38 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         token_consume(it, IC_TOK_IDENTIFIER, "expected struct name");
         token_consume(it, IC_TOK_LEFT_BRACE, "expected '{'");
         ic_struct_member members[IC_MAX_MEMBERS]; // todo; this is only temp solution
-        int count = 0;
+        _struct.num_members = 0;
+        _struct.num_data = 0;
+        ic_value_type type;
 
-        while (produce_type(it, runtime, members[count].type))
+        while (produce_type(it, runtime, type))
         {
+            assert(_struct.num_members < IC_MAX_MEMBERS);
+
             // todo; support const members
-            if (members[count].type.const_mask & 1)
+            if (type.const_mask & 1)
                 exit_parsing(it, "struct member can't be const");
 
-            assert(count < IC_MAX_MEMBERS);
-            members[count].name = (**it).string;
-            ++count;
+            if (is_non_pointer_struct(type))
+            {
+                ic_struct* sub_struct = runtime.get_struct(type.struct_name);
+                assert(sub_struct);
+                _struct.num_data += sub_struct->num_data;
+            }
+            else
+                _struct.num_data += 1;
+
+            ic_struct_member& member = members[_struct.num_members];
+            member.type = type;
+            member.name = (**it).string;
+            _struct.num_members += 1;
             token_consume(it, IC_TOK_IDENTIFIER, "expected member name");
             token_consume(it, IC_TOK_SEMICOLON, "expected ';' after struct member name");
         }
 
-        _struct.count = count;
-        int byte_size = sizeof(ic_struct_member) * count;
-        _struct.members = (ic_struct_member*)malloc(byte_size);
-        memcpy(_struct.members, members, byte_size);
+        int bytes = sizeof(ic_struct_member) * _struct.num_members;
+        _struct.members = (ic_struct_member*)malloc(bytes);
+        memcpy(_struct.members, members, bytes);
         token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}'");
         token_consume(it, IC_TOK_SEMICOLON, "expected ';'");
         return global;

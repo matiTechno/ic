@@ -49,6 +49,15 @@ rt_ray get_default_ray()
 void main()
 {
     {
+        rt_ray ray;
+        rt_vec3 vec;
+        vec.z = 3;
+        print(vec.z);
+        ray.direction.z = 6;
+        ray.direction = vec;
+        print(ray.direction.z);
+    }
+    {
         const rt_ray cray = get_default_ray();
         print(cray.direction.y);
         print(cray.origin.x);
@@ -65,8 +74,12 @@ void main()
         vec.y = 1;
         vec.z = 2;
         
-        ray.direction = vec;
+        rt_vec3*  vec_ptr = &vec;
+        vec_ptr->x = 8;
         
+        ray.direction = vec;
+       
+       print("ray.origin.x");
        print(ray.origin.x);
        print(ray.direction.z);
        
