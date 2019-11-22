@@ -1150,13 +1150,17 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
     case IC_EXPR_BINARY:
     {
-        const ic_value right = ic_evaluate_expr(expr->_binary.right, runtime).value;
-        void* lvalue_data;
         ic_value left;
+        ic_value right;
+        void* lvalue_data;
+        void* rvalue_data; // this is needed only for struct value assignment
         {
             ic_expr_result result = ic_evaluate_expr(expr->_binary.left, runtime);
-            lvalue_data = result.lvalue_data;
             left = result.value;
+            lvalue_data = result.lvalue_data;
+            result = ic_evaluate_expr(expr->_binary.right, runtime);
+            right = result.value;
+            rvalue_data = result.lvalue_data;
         }
 
         switch (expr->token.type)
@@ -1169,9 +1173,16 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             {
                 assert(lvalue_data);
                 assert((left.type.const_mask & 1) == 0);
-                ic_struct* _struct = runtime.get_struct(left.type.struct_name);
-                assert(_struct);
-                memcpy(left.pointer, right2.pointer, _struct->num_data * sizeof(ic_struct_data));
+
+                if (!rvalue_data) // move (as in C++)
+                    left.pointer = right2.pointer;
+                else // copy
+                {
+                    ic_struct* _struct = runtime.get_struct(left.type.struct_name);
+                    assert(_struct);
+                    memcpy(left.pointer, right2.pointer, _struct->num_data * sizeof(ic_struct_data));
+                }
+
                 return { lvalue_data, left };
             }
             else

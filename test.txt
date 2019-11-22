@@ -53,7 +53,7 @@ void main()
         //rays[0].direction.z = 55;
         //rays[4].origin.x = 6;
         
-       // print(rays[0].direction.z);
+        //print(rays[0].direction.z);
        // print(rays[4].origin.x);
     }
     {
