@@ -5,6 +5,8 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <chrono>
+#include <string.h>
+#include <stdlib.h>
 
 // ic - interpreted C
 // todo
