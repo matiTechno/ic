@@ -1091,20 +1091,42 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         ic_value value;
         value.type = stmt->_var_declaration.type;
 
-        if (is_non_pointer_struct(value.type))
-        {
-            ic_struct* _struct = runtime.get_struct(value.type.struct_name);
-            assert(_struct);
-            value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-        }
-
         if (stmt->_var_declaration.expr)
         {
-            ic_value expr_value = ic_evaluate_expr(stmt->_var_declaration.expr, runtime).value;
-            value = implicit_convert_type(value.type, expr_value);
+            ic_value init_value;
+            void* lvalue_data;
+            {
+                ic_expr_result result = ic_evaluate_expr(stmt->_var_declaration.expr, runtime);
+                init_value = implicit_convert_type(value.type, result.value);
+                lvalue_data = result.lvalue_data;
+            }
+
+            if (is_non_pointer_struct(value.type))
+            {
+                if (lvalue_data) // allocate struct and copy data
+                {
+                    ic_struct* _struct = runtime.get_struct(value.type.struct_name);
+                    assert(_struct);
+                    value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+                    memcpy(value.pointer, init_value.pointer, _struct->num_data * sizeof(ic_struct_data));
+                }
+                else // move data (as in C++); rhs object can be reused
+                    value.pointer = init_value.pointer;
+            }
+            else
+                value = init_value;
         }
-        else if (value.type.const_mask & 1) // const variable must be initialized
-            assert(false);
+        else
+        {
+            assert((value.type.const_mask & 1) == 0); // const variable must be initialized
+
+            if (is_non_pointer_struct(value.type)) // allocate struct
+            {
+                ic_struct* _struct = runtime.get_struct(value.type.struct_name);
+                assert(_struct);
+                value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+            }
+        }
 
         assert(runtime.add_var(stmt->_var_declaration.token.string, value));
         return ic_stmt_result{ IC_STMT_RESULT_NOP };
