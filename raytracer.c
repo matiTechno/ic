@@ -124,8 +124,8 @@ bool collides(rt_ray ray, rt_sphere sphere)
 
 void main()
 {
-    s32 width = 300;
-    s32 height = 300;
+    s32 width = 50;
+    s32 height = 50;
     u8* image_buf = (u8*)malloc(width * height * 3);
 
     rt_camera camera;

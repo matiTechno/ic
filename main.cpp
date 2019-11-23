@@ -1484,7 +1484,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             {
                 ic_struct* _struct = runtime.get_struct(type.struct_name);
                 assert(_struct);
-                size = _struct->num_members * sizeof(ic_struct_data);
+                size = _struct->num_data * sizeof(ic_struct_data);
                 break;
             }
             default:
