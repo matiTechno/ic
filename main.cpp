@@ -7,12 +7,13 @@
 #include <chrono>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 // ic - interpreted C
 // todo
 // final goal: dump assembly that can be assembled by e.g. nasm to an object file
 // use common prefix for all declaration names
-// comma, sizeof, ternary operators
+// comma, ternary operators
 // print source code line on error
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
 // function pointers, typedefs (or better 'using = ')
@@ -654,6 +655,22 @@ ic_value ic_host_write_ppm6(int argc, ic_value* argv)
     return void_value();
 }
 
+ic_value ic_host_tan(int, ic_value* argv)
+{
+    ic_value value;
+    value.type = non_pointer_type(IC_TYPE_F64);
+    value.f64 = tan(argv[0].f64);
+    return value;
+}
+
+ic_value ic_host_sqrt(int, ic_value* argv)
+{
+    ic_value value;
+    value.type = non_pointer_type(IC_TYPE_F64);
+    value.f64 = sqrt(argv[0].f64);
+    return value;
+}
+
 void ic_runtime::init()
 {
     push_scope(); // global scope
@@ -699,6 +716,34 @@ void ic_runtime::init()
         function.params[2].type = non_pointer_type(IC_TYPE_S32);
         function.params[3].type = pointer1_type(IC_TYPE_U8);
         function.host.callback = ic_host_write_ppm6;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = true;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "tan";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_F64);
+        function.param_count = 1;
+        function.params[0].type = non_pointer_type(IC_TYPE_F64);
+        function.host.callback = ic_host_tan;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = true;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "sqrt";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_F64);
+        function.param_count = 1;
+        function.params[0].type = non_pointer_type(IC_TYPE_F64);
+        function.host.callback = ic_host_sqrt;
         function.host.arg_count_check = true;
         function.host.arg_type_check = true;
         _functions.push_back(function);
@@ -1207,9 +1252,12 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 assert(lvalue_data);
                 assert((left.type.const_mask & 1) == 0);
 
+                // todo; this is some serious bug
+                /*
                 if (!rvalue_data) // move (as in C++)
                     left.pointer = right2.pointer;
                 else // copy
+                */
                 {
                     ic_struct* _struct = runtime.get_struct(left.type.struct_name);
                     assert(_struct);
@@ -1247,7 +1295,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_SLASH_EQUAL:
         {
-            double number = get_numeric_data(left) * get_numeric_data(right);
+            double number = get_numeric_data(left) / get_numeric_data(right);
             set_numeric_data(left, number);
             set_lvalue_data(lvalue_data, left.type.const_mask, left, runtime);
             return { lvalue_data, left };
@@ -1539,6 +1587,15 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             ic_expr_result result = ic_evaluate_expr(expr_arg, runtime);
             expr_arg = expr_arg->next;
             argv[argc] = result.value;
+
+            if (result.lvalue_data && is_non_pointer_struct(result.value.type))
+            {
+                ic_struct* _struct = runtime.get_struct(result.value.type.struct_name);
+                assert(_struct);
+                argv[argc].pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+                memcpy(argv[argc].pointer, result.value.pointer, _struct->num_data * sizeof(ic_struct_data));
+            }
+
             argc += 1;
         }
 
