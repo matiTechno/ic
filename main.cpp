@@ -504,7 +504,7 @@ struct ic_runtime
     ic_value* get_global_var(const char* name);
     void clear_global_vars(); // use this before next run()
     void clear_host_functions(); // useful when e.g. running different script
-    void free();
+    void free(); // todo; after free() next init() will not put runtime into correct state (not all vectors are cleared, etc.)
 
     // implementation
     ic_deque<ic_stmt, 1000> _stmt_deque; // same
@@ -673,6 +673,7 @@ ic_value ic_host_sqrt(int, ic_value* argv)
 
 void ic_runtime::init()
 {
+    assert(_scopes.size() == 0);
     push_scope(); // global scope
 
     // todo; use add_host_function()
@@ -1131,17 +1132,30 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
         {
             ic_value return_value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
 
-            // this is very important (copy struct data to the parent scope)
+            // this is very important (copy struct data to the function call scope)
+            // todo; this is not a robust code...
             if (is_non_pointer_struct(return_value.type))
             {
                 ic_struct* _struct = runtime.get_struct(return_value.type.struct_name);
                 assert(_struct);
-                runtime._struct_data_deque.size = runtime._scopes.back().prev_struct_data_count;
+
+                ic_scope* function_scope = nullptr;
+                for (int i = runtime._scopes.size() - 1; i >= 0; --i)
+                {
+                    if (runtime._scopes[i].new_call_frame)
+                    {
+                        function_scope = &runtime._scopes[i];
+                        break;
+                    }
+                }
+
+                assert(function_scope);
+                runtime._struct_data_deque.size = function_scope->prev_struct_data_count;
                 ic_struct_data* dst = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
                 // return_value.pointer is still valid even if _struct_data_deque.size has changed; memmove, not memcpy - memory might overlap
                 memmove(dst, return_value.pointer, _struct->num_data * sizeof(ic_struct_data));
-                runtime._scopes.back().prev_struct_data_count += _struct->num_data;
                 return_value.pointer = dst;
+                function_scope->prev_struct_data_count = runtime._struct_data_deque.size;
             }
 
             // this must be after if, return_value might be modified
@@ -1171,28 +1185,28 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 
         if (stmt->_var_declaration.expr)
         {
-            ic_value init_value;
-            void* lvalue_data;
+            ic_value rvalue;
+            bool is_rvalue_temp;
             {
                 ic_expr_result result = ic_evaluate_expr(stmt->_var_declaration.expr, runtime);
-                init_value = implicit_convert_type(value.type, result.value);
-                lvalue_data = result.lvalue_data;
+                rvalue = implicit_convert_type(value.type, result.value);
+                is_rvalue_temp = !result.lvalue_data;
             }
 
             if (is_non_pointer_struct(value.type))
             {
-                if (lvalue_data) // allocate struct and copy data
+                if (!is_rvalue_temp) // allocate struct and copy data
                 {
                     ic_struct* _struct = runtime.get_struct(value.type.struct_name);
                     assert(_struct);
                     value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-                    memcpy(value.pointer, init_value.pointer, _struct->num_data * sizeof(ic_struct_data));
+                    memcpy(value.pointer, rvalue.pointer, _struct->num_data * sizeof(ic_struct_data));
                 }
                 else // move data (as in C++); rhs object can be reused
-                    value.pointer = init_value.pointer;
+                    value.pointer = rvalue.pointer;
             }
             else
-                value = init_value;
+                value = rvalue;
         }
         else
         {
@@ -1231,14 +1245,14 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         ic_value left;
         ic_value right;
         void* lvalue_data;
-        void* rvalue_data; // this is needed only for struct value assignment
+        bool is_rvalue_temp; // this is needed only for struct value assignment
         {
             ic_expr_result result = ic_evaluate_expr(expr->_binary.left, runtime);
             left = result.value;
             lvalue_data = result.lvalue_data;
             result = ic_evaluate_expr(expr->_binary.right, runtime);
             right = result.value;
-            rvalue_data = result.lvalue_data;
+            is_rvalue_temp = !result.lvalue_data;
         }
 
         switch (expr->token.type)
@@ -1252,19 +1266,20 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 assert(lvalue_data);
                 assert((left.type.const_mask & 1) == 0);
 
-                // todo; this is some serious bug
-                /*
-                if (!rvalue_data) // move (as in C++)
-                    left.pointer = right2.pointer;
+                // todo; left.pointer is leaked (in a move case); space in _struct_data_deque will be regained on exit from current scope
+                // this is not that bad
+                /* // for this code to work we need pointer to left.pointer and make it point to right2.pointer, I will fix this soon
+                // I will do some larger redesign soon
+                if (is_rvalue_temp) // move (as in C++, right2 is an 'xvalue' here)
+                    return { right2.pointer, right2 };
                 else // copy
                 */
                 {
                     ic_struct* _struct = runtime.get_struct(left.type.struct_name);
                     assert(_struct);
                     memcpy(left.pointer, right2.pointer, _struct->num_data * sizeof(ic_struct_data));
+                    return { lvalue_data, left };
                 }
-
-                return { lvalue_data, left };
             }
             else
             {
@@ -1579,23 +1594,20 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
         int argc = 0;
         ic_value argv[IC_MAX_ARGC];
+        bool is_arg_temp[IC_MAX_ARGC];
         ic_expr* expr_arg = expr->_function_call.arg;
 
         while (expr_arg)
         {
             assert(argc < IC_MAX_ARGC);
             ic_expr_result result = ic_evaluate_expr(expr_arg, runtime);
+
+            if (is_non_pointer_struct(result.value.type) && function->type == IC_FUN_HOST)
+                assert(false); // struct arguments are not supported for host functions
+
             expr_arg = expr_arg->next;
             argv[argc] = result.value;
-
-            if (result.lvalue_data && is_non_pointer_struct(result.value.type))
-            {
-                ic_struct* _struct = runtime.get_struct(result.value.type.struct_name);
-                assert(_struct);
-                argv[argc].pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-                memcpy(argv[argc].pointer, result.value.pointer, _struct->num_data * sizeof(ic_struct_data));
-            }
-
+            is_arg_temp[argc] = !result.lvalue_data;
             argc += 1;
         }
 
@@ -1622,19 +1634,29 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             assert(function->type == IC_FUN_SOURCE);
             // all arguments must be retrieved before upper scopes are hidden
             runtime.push_scope(true);
+            // only now, when new scope is pushed, allocate data for struct arguments and add variables
 
-            for(int i = 0; i < argc; ++i)
+            for (int i = 0; i < argc; ++i)
+            {
+                // if struct arg is a temporary value its data can be reused and there is no need for allocation
+                if (!is_arg_temp[i] && is_non_pointer_struct(argv[i].type))
+                {
+                    ic_struct* _struct = runtime.get_struct(argv[i].type.struct_name);
+                    assert(_struct);
+                    void* new_data = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+                    memcpy(new_data, argv[i].pointer, _struct->num_data * sizeof(ic_struct_data));
+                    argv[i].pointer = new_data;
+                }
+
                 runtime.add_var(function->params[i].name, argv[i]);
+            }
 
             ic_expr_result output;
             output.lvalue_data = nullptr;
             ic_stmt_result fun_result = ic_execute_stmt(function->body, runtime);
 
             if (fun_result.type == IC_STMT_RESULT_RETURN)
-            {
-                output.lvalue_data = nullptr;
                 output.value = implicit_convert_type(function->return_type, fun_result.value);
-            }
             else
             {
                 // function without return statement
@@ -1831,7 +1853,7 @@ ic_value implicit_convert_type(ic_value_type target_type, ic_value value)
 
     if (target_type.basic_type == value.type.basic_type)
     {
-        value.type.const_mask = target_type.const_mask; // preserve const, it matters for variable initialization
+        value.type.const_mask = target_type.const_mask; // this is important for var declarations and assignments
         return value;
     }
 

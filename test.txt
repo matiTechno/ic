@@ -51,13 +51,19 @@ struct empty
 
 };
 
-s8 global_flag = 1;
-s8 global_flag2;
-const rt_ray global_ray = get_default_ray();
-rt_ray globalray2;
+//s8 global_flag = 1;
+//s8 global_flag2;
+//const rt_ray global_ray = get_default_ray();
+//rt_ray globalray2;
 
 void main()
 {
+    {
+        rt_ray ray;
+        ray = get_default_ray();
+        print(ray.origin.x);
+        return;
+    }
     print(global_flag);
     print(global_flag2);
     print(global_ray.direction.y);
