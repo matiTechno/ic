@@ -19,17 +19,17 @@
 // function pointers, typedefs (or better 'using = ')
 // host structures registering ?
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
-// rename left, right to lhs and rhs
 // one of the next goals will be to change execution into type pass with byte code generation and then execute bytecode
 // escape sequences
 // automatic array
 // auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
+// data of returned struct value is leaked until function call scope is popped (except when value is used to initialize a variable); this is not a huge deal
 
 template<typename T, int N>
 struct ic_deque
 {
     std::vector<T*> pools;
-    int size = 0;
+    int size = 0; // todo; after replacing vector initialize externally
 
     void free()
     {
@@ -337,8 +337,8 @@ struct ic_expr
     {
         struct
         {
-            ic_expr* left;
-            ic_expr* right;
+            ic_expr* lhs;
+            ic_expr* rhs;
         } _binary;
 
         struct
@@ -1027,14 +1027,14 @@ ic_struct* ic_runtime::get_struct(ic_string name)
 bool to_boolean(ic_value value);
 double get_numeric_data(ic_value value);
 void set_numeric_data(ic_value& value, double number);
-ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right);
+ic_basic_type get_numeric_expr_result_type(ic_value lhs, ic_value rhs);
 ic_value produce_numeric_value(ic_basic_type btype, double number);
 // use before set_lvalue_data(); for only numeric expressions use set_numeric_data() instead
 ic_value implicit_convert_type(ic_value_type target_type, ic_value value);
-void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value, ic_runtime& runtime);
-ic_value evaluate_add(ic_value left, ic_value right, ic_runtime& runtime, bool subtract = false);
-bool compare_equal(ic_value left, ic_value right);
-bool compare_greater(ic_value left, ic_value right);
+void set_lvalue_data(void* lvalue_data, unsigned int const_mask, ic_value value, ic_runtime& runtime);
+ic_value evaluate_add(ic_value lhs, ic_value rhs, ic_runtime& runtime, bool subtract = false);
+bool compare_equal(ic_value lhs, ic_value rhs);
+bool compare_greater(ic_value lhs, ic_value rhs);
 void assert_integer_type(ic_value_type type);
 ic_expr_result evaluate_dereference(ic_value value);
 
@@ -1133,7 +1133,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
             ic_value return_value = ic_evaluate_expr(stmt->_return.expr, runtime).value;
 
             // this is very important (copy struct data to the function call scope)
-            // todo; this is not a robust code...
+            // todo; this is not a very robust code...
             if (is_non_pointer_struct(return_value.type))
             {
                 ic_struct* _struct = runtime.get_struct(return_value.type.struct_name);
@@ -1185,28 +1185,28 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 
         if (stmt->_var_declaration.expr)
         {
-            ic_value rvalue;
-            bool is_rvalue_temp;
+            ic_value rhs;
+            bool rhs_lvalue;
             {
                 ic_expr_result result = ic_evaluate_expr(stmt->_var_declaration.expr, runtime);
-                rvalue = implicit_convert_type(value.type, result.value);
-                is_rvalue_temp = !result.lvalue_data;
+                rhs = implicit_convert_type(value.type, result.value);
+                rhs_lvalue = result.lvalue_data;
             }
 
             if (is_non_pointer_struct(value.type))
             {
-                if (!is_rvalue_temp) // allocate struct and copy data
+                if (rhs_lvalue) // allocate struct and copy data
                 {
                     ic_struct* _struct = runtime.get_struct(value.type.struct_name);
                     assert(_struct);
                     value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-                    memcpy(value.pointer, rvalue.pointer, _struct->num_data * sizeof(ic_struct_data));
+                    memcpy(value.pointer, rhs.pointer, _struct->num_data * sizeof(ic_struct_data));
                 }
-                else // move data (as in C++); rhs object can be reused
-                    value.pointer = rvalue.pointer;
+                else // move data (as in C++); rhs can be reused
+                    value.pointer = rhs.pointer;
             }
             else
-                value = rvalue;
+                value = rhs;
         }
         else
         {
@@ -1242,29 +1242,29 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     {
     case IC_EXPR_BINARY:
     {
-        ic_value left;
-        ic_value right;
-        void* lvalue_data;
-        bool is_rvalue_temp; // this is needed only for struct value assignment
+        ic_value lhs;
+        ic_value rhs;
+        void* lhs_lvalue_data;
+        bool rhs_lvalue;
         {
-            ic_expr_result result = ic_evaluate_expr(expr->_binary.left, runtime);
-            left = result.value;
-            lvalue_data = result.lvalue_data;
-            result = ic_evaluate_expr(expr->_binary.right, runtime);
-            right = result.value;
-            is_rvalue_temp = !result.lvalue_data;
+            ic_expr_result result = ic_evaluate_expr(expr->_binary.lhs, runtime);
+            lhs = result.value;
+            lhs_lvalue_data = result.lvalue_data;
+            result = ic_evaluate_expr(expr->_binary.rhs, runtime);
+            rhs = result.value;
+            rhs_lvalue = !result.lvalue_data;
         }
 
         switch (expr->token.type)
         {
         case IC_TOK_EQUAL:
         {
-            ic_value right2 = implicit_convert_type(left.type, right);
+            rhs = implicit_convert_type(lhs.type, rhs);
 
-            if (is_non_pointer_struct(left.type))
+            if (is_non_pointer_struct(lhs.type))
             {
-                assert(lvalue_data);
-                assert((left.type.const_mask & 1) == 0);
+                assert(lhs_lvalue_data);
+                assert((lhs.type.const_mask & 1) == 0);
 
                 // todo; left.pointer is leaked (in a move case); space in _struct_data_deque will be regained on exit from current scope
                 // this is not that bad
@@ -1275,128 +1275,128 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 else // copy
                 */
                 {
-                    ic_struct* _struct = runtime.get_struct(left.type.struct_name);
+                    ic_struct* _struct = runtime.get_struct(lhs.type.struct_name);
                     assert(_struct);
-                    memcpy(left.pointer, right2.pointer, _struct->num_data * sizeof(ic_struct_data));
-                    return { lvalue_data, left };
+                    memcpy(lhs.pointer, rhs.pointer, _struct->num_data * sizeof(ic_struct_data));
+                    return { lhs_lvalue_data, lhs };
                 }
             }
             else
             {
-                set_lvalue_data(lvalue_data, left.type.const_mask, right2, runtime);
-                return { lvalue_data, right2 };
+                set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, rhs, runtime);
+                return { lhs_lvalue_data, rhs };
             }
         }
         case IC_TOK_PLUS_EQUAL:
         {
-            ic_value output = evaluate_add(left, right, runtime);
-            output = implicit_convert_type(left.type, output);
-            set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
-            return { lvalue_data, output };
+            ic_value output = evaluate_add(lhs, rhs, runtime);
+            output = implicit_convert_type(lhs.type, output);
+            set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, output, runtime);
+            return { lhs_lvalue_data, output };
         }
         case IC_TOK_MINUS_EQUAL:
         {
-            ic_value output = evaluate_add(left, right, runtime, true);
-            output = implicit_convert_type(left.type, output);
-            set_lvalue_data(lvalue_data, left.type.const_mask, output, runtime);
-            return { lvalue_data, output };
+            ic_value output = evaluate_add(lhs, rhs, runtime, true);
+            output = implicit_convert_type(lhs.type, output);
+            set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, output, runtime);
+            return { lhs_lvalue_data, output };
         }
         case IC_TOK_STAR_EQUAL:
         {
-            double number = get_numeric_data(left) * get_numeric_data(right);
-            set_numeric_data(left, number);
-            set_lvalue_data(lvalue_data, left.type.const_mask, left, runtime);
-            return { lvalue_data, left };
+            double number = get_numeric_data(lhs) * get_numeric_data(rhs);
+            set_numeric_data(lhs, number);
+            set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, lhs, runtime);
+            return { lhs_lvalue_data, lhs };
         }
         case IC_TOK_SLASH_EQUAL:
         {
-            double number = get_numeric_data(left) / get_numeric_data(right);
-            set_numeric_data(left, number);
-            set_lvalue_data(lvalue_data, left.type.const_mask, left, runtime);
-            return { lvalue_data, left };
+            double number = get_numeric_data(lhs) / get_numeric_data(rhs);
+            set_numeric_data(lhs, number);
+            set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, lhs, runtime);
+            return { lhs_lvalue_data, lhs };
         }
         case IC_TOK_VBAR_VBAR:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = to_boolean(left) || to_boolean(right);
+            output.s8 = to_boolean(lhs) || to_boolean(rhs);
             return { nullptr, output };
         }
         case IC_TOK_AMPERSAND_AMPERSAND:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = to_boolean(left) && to_boolean(right);
+            output.s8 = to_boolean(lhs) && to_boolean(rhs);
             return { nullptr, output };
         }
         case IC_TOK_EQUAL_EQUAL:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = compare_equal(left, right);
+            output.s8 = compare_equal(lhs, rhs);
             return { nullptr, output};
         }
         case IC_TOK_BANG_EQUAL:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = !compare_equal(left, right);
+            output.s8 = !compare_equal(lhs, rhs);
             return { nullptr, output};
         }
         case IC_TOK_GREATER:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = compare_greater(left, right);
+            output.s8 = compare_greater(lhs, rhs);
             return { nullptr, output};
         }
         case IC_TOK_GREATER_EQUAL:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = compare_greater(left, right) || compare_equal(left, right);
+            output.s8 = compare_greater(lhs, rhs) || compare_equal(lhs, rhs);
             return { nullptr, output};
         }
         case IC_TOK_LESS:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = !compare_greater(left, right) && !compare_equal(left, right);
+            output.s8 = !compare_greater(lhs, rhs) && !compare_equal(lhs, rhs);
             return { nullptr, output};
         }
         case IC_TOK_LESS_EQUAL:
         {
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
-            output.s8 = !compare_greater(left, right) || compare_equal(left, right);
+            output.s8 = !compare_greater(lhs, rhs) || compare_equal(lhs, rhs);
             return { nullptr, output};
         }
         case IC_TOK_PLUS:
         {
-            return { nullptr, evaluate_add(left, right, runtime) };
+            return { nullptr, evaluate_add(lhs, rhs, runtime) };
         }
         case IC_TOK_MINUS:
         {
-            return { nullptr, evaluate_add(left, right, runtime, true) };
+            return { nullptr, evaluate_add(lhs, rhs, runtime, true) };
         }
         case IC_TOK_STAR:
         {
-            double number = get_numeric_data(left) * get_numeric_data(right);
-            return { nullptr, produce_numeric_value(get_numeric_expr_result_type(left, right), number) };
+            double number = get_numeric_data(lhs) * get_numeric_data(rhs);
+            return { nullptr, produce_numeric_value(get_numeric_expr_result_type(lhs, rhs), number) };
         }
         case IC_TOK_SLASH:
         {
-            double number = get_numeric_data(left) / get_numeric_data(right);
-            return { nullptr, produce_numeric_value(get_numeric_expr_result_type(left, right), number) };
+            double number = get_numeric_data(lhs) / get_numeric_data(rhs);
+            return { nullptr, produce_numeric_value(get_numeric_expr_result_type(lhs, rhs), number) };
         }
         case IC_TOK_PERCENT:
         {
             ic_value output;
-            output.type = non_pointer_type(get_numeric_expr_result_type(left, right));
+            output.type = non_pointer_type(get_numeric_expr_result_type(lhs, rhs));
             assert_integer_type(output.type);
             // int64_t can contain all supported integer types; todo; this code feels bad, too many conversions
             // the entire code for operators feels bad; I hope the situation will resolve after implementing bytecode
-            int64_t number = (int64_t)get_numeric_data(left) % (int64_t)get_numeric_data(right);
+            int64_t number = (int64_t)get_numeric_data(lhs) % (int64_t)get_numeric_data(rhs);
             set_numeric_data(output, number);
             return { nullptr, output };
         }
@@ -1513,9 +1513,9 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     }
     case IC_EXPR_SUBSCRIPT:
     {
-        ic_value lhs_value = ic_evaluate_expr(expr->_subscript.lhs, runtime).value;
-        ic_value rhs_value = ic_evaluate_expr(expr->_subscript.rhs, runtime).value;
-        ic_value output = evaluate_add(lhs_value, rhs_value, runtime);
+        ic_value lhs = ic_evaluate_expr(expr->_subscript.lhs, runtime).value;
+        ic_value rhs = ic_evaluate_expr(expr->_subscript.rhs, runtime).value;
+        ic_value output = evaluate_add(lhs, rhs, runtime);
         return evaluate_dereference(output);
     }
     case IC_EXPR_MEMBER_ACCESS:
@@ -1571,7 +1571,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         ic_value output;
         output.type = member_type;
         assert(lhs.type.const_mask == 0 || lhs.type.const_mask == 1);
-        output.type.const_mask |= lhs.type.const_mask; // propagate constness from struct to its member
+        output.type.const_mask |= lhs.type.const_mask; // propagate constness to a member
         ic_struct_data* data = (ic_struct_data*)lhs.pointer + data_offset;
 
         if (is_non_pointer_struct(output.type))
@@ -1594,7 +1594,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
         int argc = 0;
         ic_value argv[IC_MAX_ARGC];
-        bool is_arg_temp[IC_MAX_ARGC];
+        bool lvalue_arg[IC_MAX_ARGC];
         ic_expr* expr_arg = expr->_function_call.arg;
 
         while (expr_arg)
@@ -1607,7 +1607,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
 
             expr_arg = expr_arg->next;
             argv[argc] = result.value;
-            is_arg_temp[argc] = !result.lvalue_data;
+            lvalue_arg[argc] = result.lvalue_data;
             argc += 1;
         }
 
@@ -1629,47 +1629,45 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             // function can never return an lvalue
             return { nullptr, implicit_convert_type(function->return_type, return_value) };
         }
+        // else
+        assert(function->type == IC_FUN_SOURCE);
+        // all arguments must be retrieved before upper scopes are hidden
+        runtime.push_scope(true);
+        // only now, when new scope is pushed, allocate data for struct arguments and add variables
+
+        for (int i = 0; i < argc; ++i)
+        {
+            // only data of the rvalue struct args can be reused
+            if (lvalue_arg[i] && is_non_pointer_struct(argv[i].type))
+            {
+                ic_struct* _struct = runtime.get_struct(argv[i].type.struct_name);
+                assert(_struct);
+                void* new_data = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+                memcpy(new_data, argv[i].pointer, _struct->num_data * sizeof(ic_struct_data));
+                argv[i].pointer = new_data;
+            }
+
+            runtime.add_var(function->params[i].name, argv[i]);
+        }
+
+        ic_expr_result output;
+        output.lvalue_data = nullptr;
+        ic_stmt_result fun_result = ic_execute_stmt(function->body, runtime);
+
+        if (fun_result.type == IC_STMT_RESULT_RETURN)
+            output.value = implicit_convert_type(function->return_type, fun_result.value);
         else
         {
-            assert(function->type == IC_FUN_SOURCE);
-            // all arguments must be retrieved before upper scopes are hidden
-            runtime.push_scope(true);
-            // only now, when new scope is pushed, allocate data for struct arguments and add variables
-
-            for (int i = 0; i < argc; ++i)
-            {
-                // if struct arg is a temporary value its data can be reused and there is no need for allocation
-                if (!is_arg_temp[i] && is_non_pointer_struct(argv[i].type))
-                {
-                    ic_struct* _struct = runtime.get_struct(argv[i].type.struct_name);
-                    assert(_struct);
-                    void* new_data = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-                    memcpy(new_data, argv[i].pointer, _struct->num_data * sizeof(ic_struct_data));
-                    argv[i].pointer = new_data;
-                }
-
-                runtime.add_var(function->params[i].name, argv[i]);
-            }
-
-            ic_expr_result output;
-            output.lvalue_data = nullptr;
-            ic_stmt_result fun_result = ic_execute_stmt(function->body, runtime);
-
-            if (fun_result.type == IC_STMT_RESULT_RETURN)
-                output.value = implicit_convert_type(function->return_type, fun_result.value);
-            else
-            {
-                // function without return statement
-                assert(fun_result.type == IC_STMT_RESULT_NOP);
-                assert(!function->return_type.indirection_level && function->return_type.basic_type == IC_TYPE_VOID);
-                // this value should never be used (type pass should terminate)
-                // this is only for bug detection, e.g. failing in to_boolean()
-                output.value.type = non_pointer_type(IC_TYPE_VOID);
-            }
-
-            runtime.pop_scope();
-            return output;
+            // function without return statement
+            assert(fun_result.type == IC_STMT_RESULT_NOP);
+            assert(!function->return_type.indirection_level && function->return_type.basic_type == IC_TYPE_VOID);
+            // this value should never be used (type pass should terminate)
+            // this is only for bug detection, e.g. failing in to_boolean()
+            output.value.type = non_pointer_type(IC_TYPE_VOID);
         }
+
+        runtime.pop_scope();
+        return output;
     }
     case IC_EXPR_PRIMARY:
     {
@@ -1806,12 +1804,12 @@ void set_numeric_data(ic_value& value, double number)
     assert(false);
 }
 
-ic_basic_type get_numeric_expr_result_type(ic_value left, ic_value right)
+ic_basic_type get_numeric_expr_result_type(ic_value lhs, ic_value rhs)
 {
-    assert(!left.type.indirection_level);
-    assert(!right.type.indirection_level);
-    ic_basic_type lbtype = left.type.basic_type;
-    ic_basic_type rbtype = right.type.basic_type;
+    assert(!lhs.type.indirection_level);
+    assert(!rhs.type.indirection_level);
+    ic_basic_type lbtype = lhs.type.basic_type;
+    ic_basic_type rbtype = rhs.type.basic_type;
     ic_basic_type output = lbtype > rbtype ? lbtype : rbtype;
     return output > IC_TYPE_BOOL ? output : IC_TYPE_S8; // true + true should return 2 not 1, this is a fix
 }
@@ -1865,11 +1863,11 @@ ic_value implicit_convert_type(ic_value_type target_type, ic_value value)
 
 // the main point of this function is to write the right amount of data (to not trigger segmentation fault)
 // without any conversion
-void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value value, ic_runtime& runtime)
+void set_lvalue_data(void* lvalue_data, unsigned int const_mask, ic_value value, ic_runtime& runtime)
 {
     assert(lvalue_data); // todo type pass - this is a type error
     // can't assign new data to a const variable
-    assert((lvalue_const_mask & 1) == 0); // watch out for operator precendence
+    assert((const_mask & 1) == 0); // watch out for operator precendence
 
     if (value.type.indirection_level || value.type.basic_type == IC_TYPE_F64) // pointer and double are both 8 bytes
     {
@@ -1894,34 +1892,34 @@ void set_lvalue_data(void* lvalue_data, unsigned int lvalue_const_mask, ic_value
     assert(false);
 }
 
-ic_value evaluate_add(ic_value left, ic_value right, ic_runtime& runtime, bool subtract)
+ic_value evaluate_add(ic_value lhs, ic_value rhs, ic_runtime& runtime, bool subtract)
 {
-    if (left.type.indirection_level)
+    if (lhs.type.indirection_level)
     {
-        assert_integer_type(right.type);
-        int64_t offset = subtract ? -get_numeric_data(right) : get_numeric_data(right);
+        assert_integer_type(rhs.type);
+        int64_t offset = subtract ? -get_numeric_data(rhs) : get_numeric_data(rhs);
 
-        if (left.type.indirection_level > 1 || left.type.basic_type == IC_TYPE_F64) // pointer to pointer or pointer to double
-            left.pointer = (void**)left.pointer + offset;
+        if (lhs.type.indirection_level > 1 || lhs.type.basic_type == IC_TYPE_F64) // pointer to pointer or pointer to double
+            lhs.pointer = (void**)lhs.pointer + offset;
         else
         {
-            switch (left.type.basic_type)
+            switch (lhs.type.basic_type)
             {
             case IC_TYPE_BOOL:
             case IC_TYPE_S8:
             case IC_TYPE_U8:
-                left.pointer = (char*)left.pointer + offset;
+                lhs.pointer = (char*)lhs.pointer + offset;
                 break;
             case IC_TYPE_S32:
             case IC_TYPE_U32:
             case IC_TYPE_F32:
-                left.pointer = (int*)left.pointer + offset;
+                lhs.pointer = (int*)lhs.pointer + offset;
                 break;
             case IC_TYPE_STRUCT:
             {
-                ic_struct * _struct = runtime.get_struct(left.type.struct_name);
+                ic_struct * _struct = runtime.get_struct(lhs.type.struct_name);
                 assert(_struct);
-                left.pointer = (ic_struct_data*)left.pointer + offset * _struct->num_data;
+                lhs.pointer = (ic_struct_data*)lhs.pointer + offset * _struct->num_data;
                 break;
             }
             default:
@@ -1929,57 +1927,57 @@ ic_value evaluate_add(ic_value left, ic_value right, ic_runtime& runtime, bool s
             }
         }
 
-        return left;
+        return lhs;
     }
 
-    double lhs_number = get_numeric_data(left);
-    double rhs_number = subtract ? -get_numeric_data(right) : get_numeric_data(right);
-    return produce_numeric_value(get_numeric_expr_result_type(left, right), lhs_number + rhs_number);
+    double lhs_number = get_numeric_data(lhs);
+    double rhs_number = subtract ? -get_numeric_data(rhs) : get_numeric_data(rhs);
+    return produce_numeric_value(get_numeric_expr_result_type(lhs, rhs), lhs_number + rhs_number);
 }
 
-bool compare_equal(ic_value left, ic_value right)
+bool compare_equal(ic_value lhs, ic_value rhs)
 {
-    if (left.type.indirection_level)
+    if (lhs.type.indirection_level)
     {
-        assert(right.type.indirection_level);
-        bool is_nullptr = left.type.basic_type == IC_TYPE_NULLPTR || right.type.basic_type == IC_TYPE_NULLPTR;
-        bool is_void = left.type.basic_type == IC_TYPE_VOID || right.type.basic_type == IC_TYPE_VOID;
+        assert(rhs.type.indirection_level);
+        bool is_nullptr = lhs.type.basic_type == IC_TYPE_NULLPTR || rhs.type.basic_type == IC_TYPE_NULLPTR;
+        bool is_void = lhs.type.basic_type == IC_TYPE_VOID || rhs.type.basic_type == IC_TYPE_VOID;
 
         if (!is_nullptr && !is_void) // void* and nullptr can compare with any other type
         {
-            assert(left.type.basic_type == right.type.basic_type);
+            assert(lhs.type.basic_type == rhs.type.basic_type);
 
-            if (left.type.basic_type == IC_TYPE_STRUCT)
-                assert(ic_string_compare(left.type.struct_name, right.type.struct_name));
+            if (lhs.type.basic_type == IC_TYPE_STRUCT)
+                assert(ic_string_compare(lhs.type.struct_name, rhs.type.struct_name));
         }
 
-        return left.pointer == right.pointer;
+        return lhs.pointer == rhs.pointer;
     }
 
     // no compare_equal for structs
-    return get_numeric_data(left) == get_numeric_data(right);
+    return get_numeric_data(lhs) == get_numeric_data(rhs);
 }
 
-bool compare_greater(ic_value left, ic_value right)
+bool compare_greater(ic_value lhs, ic_value rhs)
 {
-    if (left.type.indirection_level)
+    if (lhs.type.indirection_level)
     {
-        assert(right.type.indirection_level);
-        bool is_nullptr = left.type.basic_type == IC_TYPE_NULLPTR || right.type.basic_type == IC_TYPE_NULLPTR;
-        bool is_void = left.type.basic_type == IC_TYPE_VOID || right.type.basic_type == IC_TYPE_VOID;
+        assert(rhs.type.indirection_level);
+        bool is_nullptr = lhs.type.basic_type == IC_TYPE_NULLPTR || rhs.type.basic_type == IC_TYPE_NULLPTR;
+        bool is_void = lhs.type.basic_type == IC_TYPE_VOID || rhs.type.basic_type == IC_TYPE_VOID;
 
         if (!is_nullptr && !is_void) // void* and nullptr can compare with any other type
         {
-            assert(left.type.basic_type == right.type.basic_type);
+            assert(lhs.type.basic_type == rhs.type.basic_type);
 
-            if (left.type.basic_type == IC_TYPE_STRUCT)
-                assert(ic_string_compare(left.type.struct_name, right.type.struct_name));
+            if (lhs.type.basic_type == IC_TYPE_STRUCT)
+                assert(ic_string_compare(lhs.type.struct_name, rhs.type.struct_name));
         }
 
-        return left.pointer > right.pointer;
+        return lhs.pointer > rhs.pointer;
     }
 
-    return get_numeric_data(left) > get_numeric_data(right);
+    return get_numeric_data(lhs) > get_numeric_data(rhs);
 }
 
 void assert_integer_type(ic_value_type type)
@@ -2735,7 +2733,7 @@ ic_expr* produce_expr(const ic_token** it, ic_runtime& runtime)
 
 ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
 {
-    ic_expr* expr_left = produce_expr_binary(it, IC_PRECEDENCE_LOGICAL_OR, runtime);
+    ic_expr* expr_lhs = produce_expr_binary(it, IC_PRECEDENCE_LOGICAL_OR, runtime);
 
     switch ((**it).type)
     {
@@ -2746,12 +2744,12 @@ ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_SLASH_EQUAL:
         ic_expr* expr = runtime.allocate_expr(IC_EXPR_BINARY, **it);
         token_advance(it);
-        expr->_binary.right = produce_expr(it, runtime);
-        expr->_binary.left = expr_left;
+        expr->_binary.rhs = produce_expr(it, runtime);
+        expr->_binary.lhs = expr_lhs;
         return expr;
     }
 
-    return expr_left;
+    return expr_lhs;
 }
 
 ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime)
@@ -2824,8 +2822,8 @@ ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, i
         // operator matches given precedence
         ic_expr* expr_parent = runtime.allocate_expr(IC_EXPR_BINARY, **it);
         token_advance(it);
-        expr_parent->_binary.right = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), runtime);
-        expr_parent->_binary.left = expr;
+        expr_parent->_binary.rhs = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), runtime);
+        expr_parent->_binary.lhs = expr;
         expr = expr_parent;
     }
 
