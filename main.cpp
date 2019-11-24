@@ -1243,16 +1243,12 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
     case IC_EXPR_BINARY:
     {
         ic_value lhs;
-        ic_value rhs;
         void* lhs_lvalue_data;
-        bool rhs_lvalue;
+        ic_value rhs = ic_evaluate_expr(expr->_binary.rhs, runtime).value;
         {
             ic_expr_result result = ic_evaluate_expr(expr->_binary.lhs, runtime);
             lhs = result.value;
             lhs_lvalue_data = result.lvalue_data;
-            result = ic_evaluate_expr(expr->_binary.rhs, runtime);
-            rhs = result.value;
-            rhs_lvalue = !result.lvalue_data;
         }
 
         switch (expr->token.type)
@@ -1261,31 +1257,18 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             rhs = implicit_convert_type(lhs.type, rhs);
 
-            if (is_non_pointer_struct(lhs.type))
+            if (is_non_pointer_struct(lhs.type)) // special case for structs
             {
                 assert(lhs_lvalue_data);
-                assert((lhs.type.const_mask & 1) == 0);
+                assert(!lhs.type.const_mask);
+                ic_struct* _struct = runtime.get_struct(lhs.type.struct_name);
+                assert(_struct);
+                memcpy(lhs.pointer, rhs.pointer, _struct->num_data * sizeof(ic_struct_data));
+                return { lhs_lvalue_data, lhs };
+            }
 
-                // todo; left.pointer is leaked (in a move case); space in _struct_data_deque will be regained on exit from current scope
-                // this is not that bad
-                /* // for this code to work we need pointer to left.pointer and make it point to right2.pointer, I will fix this soon
-                // I will do some larger redesign soon
-                if (is_rvalue_temp) // move (as in C++, right2 is an 'xvalue' here)
-                    return { right2.pointer, right2 };
-                else // copy
-                */
-                {
-                    ic_struct* _struct = runtime.get_struct(lhs.type.struct_name);
-                    assert(_struct);
-                    memcpy(lhs.pointer, rhs.pointer, _struct->num_data * sizeof(ic_struct_data));
-                    return { lhs_lvalue_data, lhs };
-                }
-            }
-            else
-            {
-                set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, rhs, runtime);
-                return { lhs_lvalue_data, rhs };
-            }
+            set_lvalue_data(lhs_lvalue_data, lhs.type.const_mask, rhs, runtime);
+            return { lhs_lvalue_data, rhs };
         }
         case IC_TOK_PLUS_EQUAL:
         {
@@ -1570,17 +1553,19 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         assert(match);
         ic_value output;
         output.type = member_type;
-        assert(lhs.type.const_mask == 0 || lhs.type.const_mask == 1);
+        assert(lhs.type.const_mask == 0 || lhs.type.const_mask == 1); // non-pointer value should use only one bit of a const mask
         output.type.const_mask |= lhs.type.const_mask; // propagate constness to a member
         ic_struct_data* data = (ic_struct_data*)lhs.pointer + data_offset;
 
         if (is_non_pointer_struct(output.type))
             output.pointer = data;
         else
-            output.f64 = data->f64; // ub? what if f64 was never written to before?
+            output.f64 = data->f64; // ub? what if f64 is non-active union member?
 
-        // address of a struct is the same as the adress of its first member
-        return { lvalue_data ? &data->s8 : nullptr, output };
+        // each member of a union has the same address + a union itself has the same address as its members,
+        // i.e. lvalue_data is set correctly here for both struct and non-struct values
+        // for more information see IC_TOK_IDENTIFIER code
+        return { lvalue_data ? data : nullptr, output };
     }
     case IC_EXPR_PARENTHESES:
     {
@@ -1694,7 +1679,8 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         {
             ic_value* value = runtime.get_var(token.string);
             assert(value);
-            // in short - this is to make malloc work with structs
+            // the only reason to set lvalue_data for struct is to mark if it is an lvalue or an rvalue
+            // (from a language perspective), in both cases data can be read and set through value->pointer
             return { is_non_pointer_struct(value->type) ? value->pointer : &value->s8, *value };
         }
         case IC_TOK_TRUE:
@@ -2026,7 +2012,9 @@ ic_expr_result evaluate_dereference(ic_value value)
         case IC_TYPE_F32:
             output.s32 = *(int*)value.pointer;
             break;
-        case IC_TYPE_STRUCT: // see IC_TOK_IDENTIFIER for explanation
+        case IC_TYPE_STRUCT:
+            // this is somehow a special case, both struct values and pointers point to struct data
+            // for more information see IC_TOK_IDENTIFIER code
             output.pointer = value.pointer;
             break;
         default:
