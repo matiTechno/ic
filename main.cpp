@@ -623,8 +623,10 @@ ic_value ic_host_print(int argc, ic_value* argv)
 {
     if (argv[0].type.indirection_level)
     {
-        assert(argv[0].type.basic_type == IC_TYPE_S8);
-        printf("print: %s\n", (const char*)argv[0].pointer);
+        if(argv[0].type.basic_type == IC_TYPE_S8)
+            printf("print: %s\n", (const char*)argv[0].pointer);
+        else
+            printf("print: %p\n", argv[0].pointer);
     }
     else
         printf("print: %f\n", get_numeric_data(argv[0]));
@@ -643,7 +645,7 @@ ic_value ic_host_malloc(int argc, ic_value* argv)
 
 ic_value ic_host_write_ppm6(int argc, ic_value* argv)
 {
-    FILE* file = fopen((char*)argv[0].pointer, "w");
+    FILE* file = fopen((char*)argv[0].pointer, "wb");
     char buf[1024];
     int width = argv[1].s32;
     int height = argv[2].s32;
@@ -668,6 +670,14 @@ ic_value ic_host_sqrt(int, ic_value* argv)
     ic_value value;
     value.type = non_pointer_type(IC_TYPE_F64);
     value.f64 = sqrt(argv[0].f64);
+    return value;
+}
+
+ic_value ic_host_random01(int, ic_value*)
+{
+    ic_value value;
+    value.type = non_pointer_type(IC_TYPE_F64);
+    value.f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
     return value;
 }
 
@@ -745,6 +755,19 @@ void ic_runtime::init()
         function.param_count = 1;
         function.params[0].type = non_pointer_type(IC_TYPE_F64);
         function.host.callback = ic_host_sqrt;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = true;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "random01";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_F64);
+        function.param_count = 0;
+        function.host.callback = ic_host_random01;
         function.host.arg_count_check = true;
         function.host.arg_type_check = true;
         _functions.push_back(function);
