@@ -1,4 +1,3 @@
-// tan, sqrt, random01 are supplied by the host
 // todo; if possible pass structures by pointers to functions
 
 struct rt_vec3
@@ -21,12 +20,6 @@ struct rt_ray
     rt_vec3 dir;
 };
 
-struct rt_sphere
-{
-    rt_vec3 pos;
-    f64 radius;
-};
-
 struct rt_camera
 {
     rt_vec3 pos;
@@ -35,12 +28,27 @@ struct rt_camera
     f64 half_fov_y_deg;
 };
 
-// I miss unions and function pointers here...
+// I miss unions and function pointers here
 struct rt_material
 {
     s32 type; // 0 - lambertian, 1 - metal
     rt_vec3 albedo;
     f64 fuzziness;
+};
+
+struct rt_sphere
+{
+    rt_vec3 pos;
+    f64 radius;
+    rt_material* material;
+};
+
+struct rt_collision
+{
+    rt_ray* ray;
+    rt_vec3 point;
+    rt_vec3 surface_normal;
+    rt_material* material;
 };
 
 f64 to_radians(f64 degrees)
@@ -130,14 +138,55 @@ rt_vec3 normalize(rt_vec3 vec)
     return div_vec3_scalar(vec, len);
 }
 
-bool scatter_lambertian()
+rt_vec3 reflect(rt_vec3 vec, rt_vec3 normal)
 {
-
+    return add_vec3( vec, mul_vec3_scalar(normal, -2.0 * dot(vec, normal)) );
 }
 
-bool scatter_metal()
+rt_vec3 unit_sphere_sample()
 {
+    rt_vec3 sample;
+    sample.x = sample.y = sample.z = 1;
 
+    while (length(sample) > 1.0)
+    {
+        sample.x = random01();
+        sample.y = random01();
+        sample.z = random01();
+
+        sample = mul_vec3_scalar(sample, 2.0);
+        sample = add_vec3_scalar(sample, -1.0);
+    }
+
+    return sample;
+}
+
+// scatter functions return color attenuation, {0, 0, 0} if a ray is absorbed
+
+rt_vec3 scatter_lambertian(rt_collision* collision, rt_ray* output_ray)
+{
+    rt_vec3 new_target = add_vec3(collision->point, collision->surface_normal);
+    new_target = add_vec3(new_target, unit_sphere_sample());
+    output_ray->dir = normalize(sub_vec3(new_target, collision->point));
+    output_ray->origin = collision->point;
+    return collision->material->albedo;
+}
+
+rt_vec3 scatter_metal(rt_collision* collision, rt_ray* output_ray)
+{
+    rt_vec3 displacement = mul_vec3_scalar(unit_sphere_sample(), collision->material->fuzziness);
+    output_ray->dir = reflect(collision->ray->dir, collision->surface_normal);
+    output_ray->dir = normalize(add_vec3(output_ray->dir, displacement));
+    output_ray->origin = collision->point;
+
+    if (dot(output_ray->dir, collision->surface_normal) < 0.0)
+    {
+        rt_vec3 vec;
+        vec.x = vec.y = vec.z = 0.0;
+        return vec;
+    }
+
+    return collision->material->albedo;
 }
 
 // returns 0 if there is no collision
@@ -167,6 +216,13 @@ f64 get_collision_distance(rt_ray ray, rt_sphere sphere, f64 min_distance, f64 m
 
 rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 depth)
 {
+    if (depth > 9)
+    {
+        rt_vec3 vec;
+        vec.x = vec.y = vec.z = 0.0;
+        return vec;
+    }
+
     f64 max_distance = 1000000.0; // todo; F64_MAX would be useful
     s32 sphere_idx = -1;
 
@@ -183,11 +239,26 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 depth)
 
     if (sphere_idx != -1)
     {
-        rt_vec3 color;
-        color.x = 1.0;
-        color.y = 0.0;
-        color.z = 0.0;
-        return color;
+        rt_sphere* sphere = &spheres[sphere_idx];
+
+        rt_collision collision;
+        collision.ray = &ray;
+        collision.point = add_vec3(ray.origin, mul_vec3_scalar(ray.dir, max_distance));
+        collision.surface_normal = normalize(sub_vec3(collision.point, sphere->pos));
+        collision.material = sphere->material;
+
+        rt_ray scattered_ray;
+        rt_vec3 attenuation;
+
+        if (sphere->material->type == 0)
+            attenuation = scatter_lambertian(&collision, &scattered_ray);
+        else
+            attenuation = scatter_metal(&collision, &scattered_ray);
+
+        if (attenuation.x == 0.0 && attenuation.y == 0.0 && attenuation.z == 0.0)
+            return attenuation;
+        
+        return mul_vec3(attenuation, get_ray_color(scattered_ray, spheres, depth + 1));
     }
 
     // miss, render sky color (gradient)
@@ -208,9 +279,9 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 depth)
 
 void main()
 {
-    s32 width = 300;
-    s32 height = 300;
-    s32 samples_per_pixel = 1;
+    s32 width = 400;
+    s32 height = 400;
+    s32 samples_per_pixel = 5;
     u8* image_buf = (u8*)malloc(width * height * 3);
 
     rt_camera camera;
@@ -231,23 +302,46 @@ void main()
 
     camera.half_fov_y_deg = 45;
 
+    rt_material material_1;
+    material_1.type = 0;
+    material_1.albedo.x = 0.8;
+    material_1.albedo.y = 0.3;
+    material_1.albedo.z = 0.3;
+
+    rt_material material_2;
+    material_2.type = 1;
+    material_2.fuzziness = 0.0;
+    material_2.albedo.x = 1.0;
+    material_2.albedo.y = 1.0;
+    material_2.albedo.z = 1.0;
+
+    rt_material material_3;
+    material_3.fuzziness = 0.3;
+    material_3.type = 1;
+    material_3.albedo.x = 0.2;
+    material_3.albedo.y = 1.0;
+    material_3.albedo.z = 0.5;
+
     s32 num_spheres = 3;
     rt_sphere* spheres = (rt_sphere*)malloc(sizeof(rt_sphere) * num_spheres);
 
+    spheres[0].material = &material_1;
     spheres[0].radius = 1.5;
     spheres[0].pos.x = 0;
     spheres[0].pos.y = 1;
     spheres[0].pos.z = -3;
 
+    spheres[1].material = &material_2;
     spheres[1].radius = 1;
     spheres[1].pos.x = -4;
     spheres[1].pos.y = 1.1;
     spheres[1].pos.z = -2;
 
+    spheres[2].material = &material_3;
     spheres[2].radius = 1;
     spheres[2].pos.x = 3.5;
     spheres[2].pos.y = 1.1;
-    spheres[2].pos.z = -2;
+    spheres[2].pos.z = -1;
 
     f64 aspect_ratio = (f64)width / height;
 
@@ -284,6 +378,10 @@ void main()
             }
 
             color = div_vec3_scalar(color, samples_per_pixel); // average
+            // gamma encode (compress, convert to sRGB color space)
+            color.x = pow(color.x, 1.0 / 2.2);
+            color.y = pow(color.y, 1.0 / 2.2);
+            color.z = pow(color.z, 1.0 / 2.2);
             // convert to u8 representation
             color = mul_vec3_scalar(color, 255.0);
             color = add_vec3_scalar(color, 0.5);

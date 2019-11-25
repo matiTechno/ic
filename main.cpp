@@ -24,6 +24,8 @@
 // automatic array
 // auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
 // data of returned struct value is leaked until function call scope is popped (except when value is used to initialize a variable); this is not a huge deal
+// tail call optimization
+// initializer-list
 
 template<typename T, int N>
 struct ic_deque
@@ -673,6 +675,14 @@ ic_value ic_host_sqrt(int, ic_value* argv)
     return value;
 }
 
+ic_value ic_host_pow(int, ic_value* argv)
+{
+    ic_value value;
+    value.type = non_pointer_type(IC_TYPE_F64);
+    value.f64 = pow(argv[0].f64, argv[1].f64);
+    return value;
+}
+
 ic_value ic_host_random01(int, ic_value*)
 {
     ic_value value;
@@ -755,6 +765,21 @@ void ic_runtime::init()
         function.param_count = 1;
         function.params[0].type = non_pointer_type(IC_TYPE_F64);
         function.host.callback = ic_host_sqrt;
+        function.host.arg_count_check = true;
+        function.host.arg_type_check = true;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "pow";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_F64);
+        function.param_count = 2;
+        function.params[0].type = non_pointer_type(IC_TYPE_F64);
+        function.params[1].type = non_pointer_type(IC_TYPE_F64);
+        function.host.callback = ic_host_pow;
         function.host.arg_count_check = true;
         function.host.arg_type_check = true;
         _functions.push_back(function);
