@@ -11,7 +11,7 @@
 
 // ic - interpreted C
 // todo
-// final goal: dump assembly that can be assembled by e.g. nasm to an object file
+// final goal: dump assembly that can be assembled by e.g. nasm to an object file (or dump LLVM IR, or JIT execute)
 // use common prefix for all declaration names
 // comma, ternary operators
 // print source code line on error
@@ -26,6 +26,8 @@
 // data of returned struct value is leaked until function call scope is popped (except when value is used to initialize a variable); this is not a huge deal
 // tail call optimization
 // initializer-list
+// bitwise operators
+// imgui debugger
 
 template<typename T, int N>
 struct ic_deque
@@ -409,7 +411,7 @@ struct ic_scope
 {
     int prev_var_count;
     int prev_struct_data_count;
-    bool new_call_frame; // so variables do not leak to lower functions
+    bool new_stack_frame; // so variables do not leak to lower functions
 };
 
 struct ic_param
@@ -519,7 +521,7 @@ struct ic_runtime
     std::vector<ic_function> _functions;
     std::vector<ic_struct> _structs;
 
-    void push_scope(bool new_call_frame = false);
+    void push_scope(bool new_stack_frame = false);
     void pop_scope();
     bool add_var(ic_string name, ic_value value);
     ic_value* get_var(ic_string name);
@@ -977,12 +979,12 @@ bool ic_runtime::run(const char* source_code)
     return true;
 }
 
-void ic_runtime::push_scope(bool new_call_frame)
+void ic_runtime::push_scope(bool new_stack_frame)
 {
     ic_scope scope;
     scope.prev_var_count = _var_deque.size;
     scope.prev_struct_data_count = _struct_data_deque.size;
-    scope.new_call_frame = new_call_frame;
+    scope.new_stack_frame = new_stack_frame;
     _scopes.push_back(scope);
 }
 
@@ -1037,9 +1039,9 @@ ic_value* ic_runtime::get_var(ic_string name)
         }
 
         // go to the global scope
-        if (scope.new_call_frame)
+        if (scope.new_stack_frame)
         {
-            assert(!_scopes[0].new_call_frame); // avoid infinite loop
+            assert(!_scopes[0].new_stack_frame); // avoid infinite loop
             idx_scope = 1;
         }
     }
@@ -1190,7 +1192,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
                 ic_scope* function_scope = nullptr;
                 for (int i = runtime._scopes.size() - 1; i >= 0; --i)
                 {
-                    if (runtime._scopes[i].new_call_frame)
+                    if (runtime._scopes[i].new_stack_frame)
                     {
                         function_scope = &runtime._scopes[i];
                         break;
@@ -1348,6 +1350,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_VBAR_VBAR:
         {
+            // todo; bug, don't evaluate rhs if not necessary
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = to_boolean(lhs) || to_boolean(rhs);
@@ -1355,6 +1358,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         }
         case IC_TOK_AMPERSAND_AMPERSAND:
         {
+            // todo; bug, don't evaluate rhs if not necessary
             ic_value output;
             output.type = non_pointer_type(IC_TYPE_BOOL);
             output.s8 = to_boolean(lhs) && to_boolean(rhs);
@@ -2651,6 +2655,11 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         stmt->_for.header2 = produce_expr(it, runtime);
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition");
         stmt->_for.body = produce_stmt(it, runtime);
+
+        // be consistent with IC_TOK_FOR
+        if (stmt->_for.body->type == IC_STMT_COMPOUND)
+            stmt->_for.body->_compound.push_scope = false;
+
         return stmt;
     }
     case IC_TOK_FOR:

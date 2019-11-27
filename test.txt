@@ -51,18 +51,33 @@ struct empty
 
 };
 
-//s8 global_flag = 1;
-//s8 global_flag2;
-//const rt_ray global_ray = get_default_ray();
-//rt_ray globalray2;
+s8 global_flag = 1;
+s8 global_flag2;
+const rt_ray global_ray = get_default_ray();
+rt_ray globalray2;
+
+bool get_true()
+{
+    print("get_true");
+    return true;
+}
+
+bool get_false()
+{
+    print("get_false");
+    return false;
+}
 
 void main()
 {
     {
+        bool b = get_true() || get_false(); // should print only get_true // TODO BUG
+        bool b2 = get_false() && get_true(); // should print only get_false // TODO_BUG
+    }
+    {
         rt_ray ray;
         ray = get_default_ray();
         print(ray.origin.x);
-        return;
     }
     print(global_flag);
     print(global_flag2);
