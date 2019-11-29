@@ -1,535 +1,4 @@
-#define _CRT_SECURE_NO_WARNINGS
-#include <assert.h>
-#include <stdio.h>
-#include <vector>
-#include <stdarg.h>
-#include <stdint.h>
-#include <chrono>
-#include <string.h>
-#include <stdlib.h>
-#include <math.h>
-
-// ic - interpreted C
-// todo
-// final goal: dump assembly that can be assembled by e.g. nasm to an object file (or dump LLVM IR, or JIT execute)
-// use common prefix for all declaration names
-// comma, ternary operators
-// print source code line on error
-// somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// function pointers, typedefs (or better 'using = ')
-// host structures registering ?
-// ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
-// one of the next goals will be to change execution into type pass with byte code generation and then execute bytecode
-// escape sequences
-// automatic array
-// auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
-// data of returned struct value is leaked until function call scope is popped (except when value is used to initialize a variable); this is not a huge deal
-// tail call optimization
-// initializer-list
-// bitwise operators
-// imgui debugger
-
-template<typename T, int N>
-struct ic_deque
-{
-    std::vector<T*> pools;
-    int size = 0; // todo; after replacing vector initialize externally
-
-    void free()
-    {
-        for (T* pool : pools)
-            ::free(pool);
-    }
-
-    T& get(int idx)
-    {
-        assert(idx < size);
-        return pools[idx / N][idx % N];
-    }
-
-    T* allocate()
-    {
-        if (pools.empty() || size == pools.size() * N)
-        {
-            T* new_pool = (T*)malloc(N * sizeof(T));
-            pools.push_back(new_pool);
-        }
-
-        size += 1;
-        return &get(size - 1);
-    }
-
-    // this is quite tricky
-    T* allocate_continuous(int num) // todo; change size to _size; num so it does not collide with member size
-    {
-        assert(num <= N);
-        num = num ? num : 1; // this is to support non-member structs - allocate for them one dummy data
-
-        if (pools.empty() || size + num > pools.size() * N)
-        {
-            T* new_pool = (T*)malloc(N * sizeof(T));
-            pools.push_back(new_pool);
-        }
-
-        int current_pool_size = size % N;
-
-        if (current_pool_size + num > N)
-            size += N - current_pool_size; // move to the next pool (we want continuous memory)
-
-        size += num;
-        return &get(size - num);
-    }
-};
-
-static_assert(sizeof(int) == 4, "sizeof(int) == 4");
-static_assert(sizeof(float) == 4, "sizeof(float) == 4");
-static_assert(sizeof(double) == 8, "sizeof(double) == 8");
-// it is asserted that a write at ic_value.double will cover ic_value.pointer and vice versa (union)
-static_assert(sizeof(double) == sizeof(void*), "sizeof(double) == sizeof(void*)");
-
-#define IC_MAX_ARGC 10
-
-enum ic_token_type
-{
-    IC_TOK_EOF,
-    IC_TOK_IDENTIFIER,
-    // keywords
-    IC_TOK_FOR,
-    IC_TOK_WHILE,
-    IC_TOK_IF,
-    IC_TOK_ELSE,
-    IC_TOK_RETURN,
-    IC_TOK_BREAK,
-    IC_TOK_CONTINUE,
-    IC_TOK_TRUE,
-    IC_TOK_FALSE,
-    IC_TOK_BOOL,
-    IC_TOK_S8,
-    IC_TOK_U8,
-    IC_TOK_S32,
-    IC_TOK_U32,
-    IC_TOK_F32,
-    IC_TOK_F64,
-    IC_TOK_VOID,
-    IC_TOK_NULLPTR,
-    IC_TOK_CONST,
-    IC_TOK_STRUCT,
-    IC_TOK_SIZEOF,
-    // literals
-    IC_TOK_INT_NUMBER_LITERAL,
-    IC_TOK_FLOAT_NUMBER_LITERAL,
-    IC_TOK_STRING_LITERAL,
-    IC_TOK_CHARACTER_LITERAL,
-    // double character
-    IC_TOK_PLUS_EQUAL,
-    IC_TOK_MINUS_EQUAL,
-    IC_TOK_STAR_EQUAL,
-    IC_TOK_SLASH_EQUAL,
-    IC_TOK_VBAR_VBAR,
-    IC_TOK_AMPERSAND_AMPERSAND,
-    IC_TOK_EQUAL_EQUAL,
-    IC_TOK_BANG_EQUAL,
-    IC_TOK_GREATER_EQUAL,
-    IC_TOK_LESS_EQUAL,
-    IC_TOK_PLUS_PLUS,
-    IC_TOK_MINUS_MINUS,
-    // single character
-    IC_TOK_LEFT_PAREN,
-    IC_TOK_RIGHT_PAREN,
-    IC_TOK_LEFT_BRACE,
-    IC_TOK_RIGHT_BRACE,
-    IC_TOK_SEMICOLON,
-    IC_TOK_COMMA,
-    IC_TOK_EQUAL,
-    IC_TOK_GREATER,
-    IC_TOK_LESS,
-    IC_TOK_PLUS,
-    IC_TOK_MINUS,
-    IC_TOK_STAR,
-    IC_TOK_SLASH,
-    IC_TOK_BANG,
-    IC_TOK_AMPERSAND,
-    IC_TOK_PERCENT,
-    IC_TOK_LEFT_BRACKET,
-    IC_TOK_RIGHT_BRACKET,
-    IC_TOK_DOT,
-    IC_TOK_ARROW,
-};
-
-enum ic_stmt_type
-{
-    IC_STMT_COMPOUND,
-    IC_STMT_FOR,
-    IC_STMT_IF,
-    IC_STMT_VAR_DECLARATION,
-    IC_STMT_RETURN,
-    IC_STMT_BREAK,
-    IC_STMT_CONTINUE,
-    IC_STMT_EXPR,
-};
-
-enum ic_expr_type
-{
-    IC_EXPR_BINARY,
-    IC_EXPR_UNARY,
-    IC_EXPR_SIZEOF,
-    IC_EXPR_CAST_OPERATOR,
-    IC_EXPR_SUBSCRIPT,
-    IC_EXPR_MEMBER_ACCESS,
-    // parentheses expr exists so if(x=3) doesn't compile
-    // and if((x=3)) compiles
-    IC_EXPR_PARENTHESES,
-    IC_EXPR_FUNCTION_CALL,
-    IC_EXPR_PRIMARY,
-};
-
-// order is important here
-enum ic_basic_type
-{
-    IC_TYPE_BOOL, // stores only 0 or 1; 1 byte at .s8
-    IC_TYPE_S8,
-    IC_TYPE_U8,
-    IC_TYPE_S32,
-    IC_TYPE_U32,
-    IC_TYPE_F32,
-    IC_TYPE_F64,
-    IC_TYPE_VOID,
-    IC_TYPE_NULLPTR,
-    IC_TYPE_STRUCT,
-};
-
-enum ic_error_type
-{
-    IC_ERR_LEXING,
-    IC_ERR_PARSING,
-};
-
-enum ic_function_type
-{
-    IC_FUN_HOST,
-    IC_FUN_SOURCE,
-};
-
-// todo; union, enum
-enum ic_global_type
-{
-    IC_GLOBAL_FUNCTION,
-    IC_GLOBAL_FUNCTION_FORWARD_DECLARATION,
-    IC_GLOBAL_STRUCT,
-    IC_GLOBAL_STRUCT_FORWARD_DECLARATION,
-    IC_GLOBAL_VAR_DECLARATION,
-};
-
-enum ic_stmt_result_type
-{
-    IC_STMT_RESULT_BREAK,
-    IC_STMT_RESULT_CONTINUE,
-    IC_STMT_RESULT_RETURN,
-    IC_STMT_RESULT_NOP,
-};
-
-struct ic_keyword
-{
-    const char* str;
-    ic_token_type token_type;
-};
-
-static ic_keyword _keywords[] = {
-    {"for", IC_TOK_FOR},
-    {"while", IC_TOK_WHILE},
-    {"if", IC_TOK_IF},
-    {"else", IC_TOK_ELSE},
-    {"return", IC_TOK_RETURN},
-    {"break", IC_TOK_BREAK},
-    {"continue", IC_TOK_CONTINUE},
-    {"true", IC_TOK_TRUE},
-    {"false", IC_TOK_FALSE},
-    {"bool", IC_TOK_BOOL},
-    {"s8", IC_TOK_S8},
-    {"u8", IC_TOK_U8},
-    {"s32", IC_TOK_S32},
-    {"u32", IC_TOK_U32},
-    {"f32", IC_TOK_F32},
-    {"f64", IC_TOK_F64},
-    {"void", IC_TOK_VOID},
-    {"nullptr", IC_TOK_NULLPTR},
-    {"const", IC_TOK_CONST},
-    {"struct", IC_TOK_STRUCT},
-    {"sizeof", IC_TOK_SIZEOF},
-};
-
-struct ic_string
-{
-    const char* data;
-    int len;
-};
-
-struct ic_token
-{
-    ic_token_type type;
-    int line;
-    int col;
-
-    union
-    {
-        double number;
-        ic_string string;
-    };
-};
-
-struct ic_value_type
-{
-    ic_basic_type basic_type;
-    int indirection_level;
-    unsigned int const_mask;
-    ic_string struct_name;
-};
-
-struct ic_expr;
-
-struct ic_stmt
-{
-    ic_stmt_type type;
-    ic_stmt* next;
-
-    union
-    {
-        struct
-        {
-            bool push_scope;
-            ic_stmt* body;
-        } _compound;
-
-        struct
-        {
-            ic_stmt* header1;
-            ic_expr* header2;
-            ic_expr* header3;
-            ic_stmt* body;
-        } _for;
-
-        struct
-        {
-            ic_expr* header;
-            ic_stmt* body_if;
-            ic_stmt* body_else;
-        } _if;
-
-        struct
-        {
-            ic_value_type type;
-            ic_token token;
-            ic_expr* expr;
-        } _var_declaration;
-
-        struct
-        {
-            ic_expr* expr;
-        } _return;
-        
-        ic_expr* _expr;
-    };
-};
-
-struct ic_expr
-{
-    ic_expr_type type;
-    ic_token token;
-    ic_expr* next;
-
-    union
-    {
-        struct
-        {
-            ic_expr* lhs;
-            ic_expr* rhs;
-        } _binary;
-
-        struct
-        {
-            ic_expr* expr;
-        } _unary;
-
-        struct
-        {
-            ic_value_type type;
-        } _sizeof;
-
-        struct
-        {
-            ic_value_type type;
-            ic_expr* expr;
-        } _cast_operator;
-
-        struct
-        {
-            ic_expr* lhs;
-            ic_expr* rhs;
-        } _subscript;
-
-        struct
-        {
-            ic_expr* lhs;
-            ic_token rhs_token;
-        } _member_access;
-
-        struct
-        {
-            ic_expr* expr;
-        } _parentheses;
-
-        struct
-        {
-            ic_expr* arg;
-        } _function_call;
-    };
-};
-
-struct ic_value
-{
-    ic_value_type type;
-
-    union
-    {
-        char s8;
-        unsigned char u8;
-        int s32;
-        unsigned int u32;
-        float f32;
-        double f64;
-        void* pointer;
-    };
-};
-
-struct ic_var
-{
-    ic_string name;
-    ic_value value;
-};
-
-struct ic_scope
-{
-    int prev_var_count;
-    int prev_struct_data_count;
-    bool new_stack_frame; // so variables do not leak to lower functions
-};
-
-struct ic_param
-{
-    ic_value_type type;
-    ic_string name;
-};
-
-using ic_host_function = ic_value(*)(int argc, ic_value* argv);
-
-struct ic_function
-{
-    ic_function_type type;
-    ic_value_type return_type;
-    ic_token token;
-    int param_count;
-    ic_param params[IC_MAX_ARGC];
-
-    union
-    {
-        struct
-        {
-            ic_host_function callback;
-            bool arg_type_check;
-            bool arg_count_check;
-        } host;
-
-        ic_stmt* body;
-    };
-};
-
-// partially redundant with ic_value
-struct ic_struct_data
-{
-    union
-    {
-        char s8;
-        unsigned char u8;
-        int s32;
-        unsigned int u32;
-        float f32;
-        double f64;
-        void* pointer;
-    };
-};
-
-struct ic_struct_member
-{
-    ic_value_type type;
-    ic_string name;
-};
-
-struct ic_struct
-{
-    ic_token token;
-    ic_struct_member* members;
-    int num_members;
-    int num_data;
-};
-
-struct ic_global
-{
-    ic_global_type type;
-
-    union
-    {
-        ic_function function;
-        ic_struct _struct;
-        ic_stmt stmt; // var declaration
-    };
-};
-
-struct ic_stmt_result
-{
-    ic_stmt_result_type type;
-    ic_value value;
-};
-
-struct ic_expr_result
-{
-    void* lvalue_data;
-    ic_value value;
-};
-
-struct ic_exception_parsing {};
-
-struct ic_runtime
-{
-    void init();
-    bool add_global_var(const char* name, ic_value value);
-    // if a function with the same name exists it is replaced
-    void add_host_function(const char* name, ic_host_function function);
-    bool run(const char* source); // after run() variables can be extracted
-    ic_value* get_global_var(const char* name);
-    void clear_global_vars(); // use this before next run()
-    void clear_host_functions(); // useful when e.g. running different script
-    void free(); // todo; after free() next init() will not put runtime into correct state (not all vectors are cleared, etc.)
-
-    // implementation
-    ic_deque<ic_stmt, 1000> _stmt_deque; // same
-    ic_deque<ic_expr, 1000> _expr_deque; // same
-    ic_deque<ic_var, 1000> _var_deque; // deque is used because variables must not be invalidated (pointers are supported)
-    ic_deque<ic_struct_data, 1000> _struct_data_deque; // same
-    std::vector<char*> _string_literals;
-    std::vector<ic_token> _tokens;
-    std::vector<ic_scope> _scopes;
-    std::vector<ic_function> _functions;
-    std::vector<ic_struct> _structs;
-
-    void push_scope(bool new_stack_frame = false);
-    void pop_scope();
-    bool add_var(ic_string name, ic_value value);
-    ic_value* get_var(ic_string name);
-    ic_function* get_function(ic_string name);
-    ic_struct* get_struct(ic_string name);
-    ic_stmt* allocate_stmt(ic_stmt_type type);
-    ic_expr* allocate_expr(ic_expr_type type, ic_token token);
-};
+#include "ic.h"
 
 int main(int argc, const char** argv)
 {
@@ -621,33 +90,27 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
 
 double get_numeric_data(ic_value value);
 
-// todo: support format string and arguments, but how to do it? parse the format and
-// call printf by printf?
-ic_value ic_host_print(int argc, ic_value* argv)
+ic_data ic_host_print_s(ic_data* argv)
 {
-    if (argv[0].type.indirection_level)
-    {
-        if(argv[0].type.basic_type == IC_TYPE_S8)
-            printf("print: %s\n", (const char*)argv[0].pointer);
-        else
-            printf("print: %p\n", argv[0].pointer);
-    }
-    else
-        printf("print: %f\n", get_numeric_data(argv[0]));
-
-    return void_value();
+    printf("print: %s\n", (const char*)argv->pointer);
+    return {};
 }
 
-ic_value ic_host_malloc(int argc, ic_value* argv)
+ic_data ic_host_print_f(ic_data* argv)
 {
-    void* ptr = malloc(argv[0].u32);
-    ic_value value;
-    value.type = pointer1_type(IC_TYPE_VOID);
-    value.pointer = ptr;
-    return value;
+    printf("print: %f\n", argv->f64);
+    return {};
 }
 
-ic_value ic_host_write_ppm6(int argc, ic_value* argv)
+ic_data ic_host_malloc(ic_data* argv)
+{
+    void* ptr = malloc(argv->s32);
+    ic_data data;
+    data.pointer = ptr;
+    return data;
+}
+
+ic_data ic_host_write_ppm6(ic_data* argv)
 {
     FILE* file = fopen((char*)argv[0].pointer, "wb");
     char buf[1024];
@@ -658,39 +121,35 @@ ic_value ic_host_write_ppm6(int argc, ic_value* argv)
     fwrite(buf, 1, len, file);
     fwrite(argv[3].pointer, 1, width * height * 3, file);
     fclose(file);
-    return void_value();
+    return {};
 }
 
-ic_value ic_host_tan(int, ic_value* argv)
+ic_data ic_host_tan(ic_data* argv)
 {
-    ic_value value;
-    value.type = non_pointer_type(IC_TYPE_F64);
-    value.f64 = tan(argv[0].f64);
-    return value;
+    ic_data data;
+    data.f64 = tan(argv->f64);
+    return data;
 }
 
-ic_value ic_host_sqrt(int, ic_value* argv)
+ic_data ic_host_sqrt(ic_data* argv)
 {
-    ic_value value;
-    value.type = non_pointer_type(IC_TYPE_F64);
-    value.f64 = sqrt(argv[0].f64);
-    return value;
+    ic_data data;
+    data.f64 = sqrt(argv->f64);
+    return data;
 }
 
-ic_value ic_host_pow(int, ic_value* argv)
+ic_data ic_host_pow(ic_data* argv)
 {
-    ic_value value;
-    value.type = non_pointer_type(IC_TYPE_F64);
-    value.f64 = pow(argv[0].f64, argv[1].f64);
-    return value;
+    ic_data data;
+    data.f64 = pow(argv[0].f64, argv[1].f64);
+    return data;
 }
 
-ic_value ic_host_random01(int, ic_value*)
+ic_data ic_host_random01(ic_data*)
 {
-    ic_value value;
-    value.type = non_pointer_type(IC_TYPE_F64);
-    value.f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
-    return value;
+    ic_data data;
+    data.f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
+    return data;
 }
 
 void ic_runtime::init()
@@ -700,16 +159,27 @@ void ic_runtime::init()
 
     // todo; use add_host_function()
     {
-        const char* str = "print";
+        const char* str = "print_s";
         ic_string name = { str, strlen(str) };
         ic_function function;
         function.type = IC_FUN_HOST;
         function.token.string = name;
         function.return_type = non_pointer_type(IC_TYPE_VOID);
         function.param_count = 1;
-        function.host.callback = ic_host_print;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = false;
+        function.params[0].type = pointer1_type(IC_TYPE_S8, true);
+        function.callback = ic_host_print_s;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "print_f";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_VOID);
+        function.param_count = 1;
+        function.params[0].type = pointer1_type(IC_TYPE_F64);
+        function.callback = ic_host_print_f;
         _functions.push_back(function);
     }
     {
@@ -720,10 +190,8 @@ void ic_runtime::init()
         function.token.string = name;
         function.return_type = pointer1_type(IC_TYPE_VOID);
         function.param_count = 1;
-        function.params[0].type = non_pointer_type(IC_TYPE_U32);
-        function.host.callback = ic_host_malloc;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = true;
+        function.params[0].type = non_pointer_type(IC_TYPE_S32);
+        function.callback = ic_host_malloc;
         _functions.push_back(function);
     }
     {
@@ -738,9 +206,7 @@ void ic_runtime::init()
         function.params[1].type = non_pointer_type(IC_TYPE_S32);
         function.params[2].type = non_pointer_type(IC_TYPE_S32);
         function.params[3].type = pointer1_type(IC_TYPE_U8);
-        function.host.callback = ic_host_write_ppm6;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = true;
+        function.callback = ic_host_write_ppm6;
         _functions.push_back(function);
     }
     {
@@ -752,9 +218,7 @@ void ic_runtime::init()
         function.return_type = non_pointer_type(IC_TYPE_F64);
         function.param_count = 1;
         function.params[0].type = non_pointer_type(IC_TYPE_F64);
-        function.host.callback = ic_host_tan;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = true;
+        function.callback = ic_host_tan;
         _functions.push_back(function);
     }
     {
@@ -766,9 +230,7 @@ void ic_runtime::init()
         function.return_type = non_pointer_type(IC_TYPE_F64);
         function.param_count = 1;
         function.params[0].type = non_pointer_type(IC_TYPE_F64);
-        function.host.callback = ic_host_sqrt;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = true;
+        function.callback = ic_host_sqrt;
         _functions.push_back(function);
     }
     {
@@ -781,9 +243,7 @@ void ic_runtime::init()
         function.param_count = 2;
         function.params[0].type = non_pointer_type(IC_TYPE_F64);
         function.params[1].type = non_pointer_type(IC_TYPE_F64);
-        function.host.callback = ic_host_pow;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = true;
+        function.callback = ic_host_pow;
         _functions.push_back(function);
     }
     {
@@ -794,9 +254,7 @@ void ic_runtime::init()
         function.token.string = name;
         function.return_type = non_pointer_type(IC_TYPE_F64);
         function.param_count = 0;
-        function.host.callback = ic_host_random01;
-        function.host.arg_count_check = true;
-        function.host.arg_type_check = true;
+        function.callback = ic_host_random01;
         _functions.push_back(function);
     }
 }
@@ -860,10 +318,12 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code);
 ic_global produce_global(const ic_token** it, ic_runtime& runtime);
 ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime);
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime);
+void run_bytecode(ic_runtime& runtime);
+
 
 bool ic_runtime::run(const char* source_code)
 {
-    assert(_scopes.size() == 1); // assert ic_runtime initialized
+    assert(_scopes.size() == 1); // assert ic_runtime isnitialized
     assert(source_code);
     _tokens.clear();
     _stmt_deque.size = 0;
@@ -890,6 +350,9 @@ bool ic_runtime::run(const char* source_code)
         ::free(_struct.members);
 
     _structs.clear();
+
+    _global_vars.clear();
+    _global_size = 0;
 
     if (!ic_tokenize(*this, source_code))
         return false;
@@ -939,24 +402,39 @@ bool ic_runtime::run(const char* source_code)
         }
         case IC_GLOBAL_VAR_DECLARATION:
         {
-            ic_execute_stmt(&global.stmt, *this); // todo; allow only constant initialization
+            ic_execute_stmt(&global.stmt, *this);
 
-            // set to zero if not initialized explicitly
+            // set to 0
             // memset 0 will work for all data types, e.g. if all bits of double are 0 its value is also 0 (at least that's what I hope for)
-            if (!global.stmt._var_declaration.expr)
+            ic_string name = global.stmt._var_declaration.token.string;
+            ic_value* value = get_var(name);
+            assert(value);
+
+            if (is_non_pointer_struct(value->type))
             {
-                ic_string name = global.stmt._var_declaration.token.string;
-                ic_value* value = get_var(name);
-                assert(value);
+                ic_struct* _struct = get_struct(value->type.struct_name);
+                assert(_struct);
+                memset(value->pointer, 0, _struct->num_data * sizeof(ic_data));
+            }
+            else
+                memset(&value->f64, 0, sizeof(double));
+
+            // code for bytecode
+            {
+                ic_vm_global_var gv;
+                gv.idx = _global_size;
+                gv.type = value->type;
+                gv.name = name;
+                _global_vars.push_back(gv);
 
                 if (is_non_pointer_struct(value->type))
                 {
                     ic_struct* _struct = get_struct(value->type.struct_name);
                     assert(_struct);
-                    memset(value->pointer, 0, _struct->num_data * sizeof(ic_struct_data));
+                    _global_size += _struct->num_data;
                 }
                 else
-                    memset(&value->f64, 0, sizeof(double));
+                    _global_size += 1;
             }
 
             break;
@@ -966,16 +444,94 @@ bool ic_runtime::run(const char* source_code)
         }
     }
 
-    // execute main funtion
-    const char* str = "main";
-    ic_string name = { str, strlen(str) };
-    ic_token token;
-    token.type = IC_TOK_IDENTIFIER;
-    token.string = name;
-    ic_expr* expr = allocate_expr(IC_EXPR_FUNCTION_CALL, token);
-    ic_evaluate_expr(expr, *this);
-    assert(_scopes.size() == 1); // all non global scopes are gone
-    // todo return value from main()?
+    if (true)
+    {
+        // execute main funtion
+        const char* str = "main";
+        ic_string name = { str, strlen(str) };
+        ic_token token;
+        token.type = IC_TOK_IDENTIFIER;
+        token.string = name;
+        ic_expr* expr = allocate_expr(IC_EXPR_FUNCTION_CALL, token);
+        ic_evaluate_expr(expr, *this);
+        assert(_scopes.size() == 1); // all non global scopes are gone
+        // todo return value from main()?
+    }
+    else
+    {
+        for (ic_function& function : _functions)
+            compile(function, *this);
+
+        ic_vm vm; // todo, vm cleanup
+
+        {
+            int bytes = _global_size * sizeof(ic_data);
+            vm.global_data = (ic_data*)malloc(bytes);
+            memset(vm.global_data, 0, bytes);
+        }
+        vm.functions = (ic_vm_function*)malloc(_functions.size() * sizeof(ic_vm_function));
+        vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
+        vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
+        vm.call_stack_size = 0;
+        vm.operand_stack_size = 0;
+
+        // map parser functions to vm functions
+        for (int i = 0; i < _functions.size(); ++i)
+        {
+            ic_function& fun = _functions[i];
+            ic_vm_function vm_fun = vm.functions[i];
+
+            vm_fun.is_host = fun.type == IC_FUN_HOST;
+            vm_fun.param_size = 0;
+
+            for (int j = 0; j < fun.param_count; ++j)
+            {
+                if (is_non_pointer_struct(fun.params[j].type))
+                {
+                    ic_struct* _struct = get_struct(fun.params[j].type.struct_name);
+                    assert(_struct);
+                    vm_fun.param_size += _struct->num_data;
+                }
+                else
+                    vm_fun.param_size += 1;
+            }
+
+            if (is_non_pointer_struct(fun.return_type))
+            {
+                ic_struct* _struct = get_struct(fun.return_type.struct_name);
+                assert(_struct);
+                vm_fun.return_size = _struct->num_data;
+            }
+            else if (fun.return_type.indirection_level || fun.return_type.basic_type != IC_TYPE_VOID)
+                vm_fun.return_size = 1;
+            else
+                vm_fun.return_size = 0;
+
+            if (vm_fun.is_host)
+                vm_fun.host_callback = fun.callback;
+            else
+            {
+                vm_fun.source.bytecode = fun.bytecode;
+                vm_fun.source.stack_size = fun.stack_size;
+            }
+        }
+
+        for (ic_function& function : _functions)
+        {
+            if (ic_string_compare(function.token.string, { "main", 4 }))
+            {
+                assert(function.type == IC_FUN_SOURCE);
+                assert(function.param_count == 0);
+                assert(function.return_type.basic_type == IC_TYPE_VOID && !function.return_type.indirection_level);
+                vm.push_stack_frame(function.bytecode, function.stack_size, 0);
+                break;
+            }
+        }
+
+        assert(vm.stack_frames.size() == 1);
+        run_bytecode(vm);
+    }
+
     return true;
 }
 
@@ -1201,9 +757,9 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
 
                 assert(function_scope);
                 runtime._struct_data_deque.size = function_scope->prev_struct_data_count;
-                ic_struct_data* dst = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
+                ic_data* dst = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
                 // return_value.pointer is still valid even if _struct_data_deque.size has changed; memmove, not memcpy - memory might overlap
-                memmove(dst, return_value.pointer, _struct->num_data * sizeof(ic_struct_data));
+                memmove(dst, return_value.pointer, _struct->num_data * sizeof(ic_data));
                 return_value.pointer = dst;
                 function_scope->prev_struct_data_count = runtime._struct_data_deque.size;
             }
@@ -1250,7 +806,7 @@ ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime)
                     ic_struct* _struct = runtime.get_struct(value.type.struct_name);
                     assert(_struct);
                     value.pointer = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-                    memcpy(value.pointer, rhs.pointer, _struct->num_data * sizeof(ic_struct_data));
+                    memcpy(value.pointer, rhs.pointer, _struct->num_data * sizeof(ic_data));
                 }
                 else // move data (as in C++); rhs can be reused
                     value.pointer = rhs.pointer;
@@ -1313,7 +869,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 assert(!lhs.type.const_mask);
                 ic_struct* _struct = runtime.get_struct(lhs.type.struct_name);
                 assert(_struct);
-                memcpy(lhs.pointer, rhs.pointer, _struct->num_data * sizeof(ic_struct_data));
+                memcpy(lhs.pointer, rhs.pointer, _struct->num_data * sizeof(ic_data));
                 return { lhs_lvalue_data, lhs };
             }
 
@@ -1519,7 +1075,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             {
                 ic_struct* _struct = runtime.get_struct(type.struct_name);
                 assert(_struct);
-                size = _struct->num_data * sizeof(ic_struct_data);
+                size = _struct->num_data * sizeof(ic_data);
                 break;
             }
             default:
@@ -1607,7 +1163,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
         output.type = member_type;
         assert(lhs.type.const_mask == 0 || lhs.type.const_mask == 1); // non-pointer value should use only one bit of a const mask
         output.type.const_mask |= lhs.type.const_mask; // propagate constness to a member
-        ic_struct_data* data = (ic_struct_data*)lhs.pointer + data_offset;
+        ic_data* data = (ic_data*)lhs.pointer + data_offset;
 
         if (is_non_pointer_struct(output.type))
             output.pointer = data;
@@ -1648,23 +1204,26 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
             argc += 1;
         }
 
-        // argc  check
-        if (function->type == IC_FUN_SOURCE || function->host.arg_count_check)
-            assert(argc == function->param_count);
+        assert(argc == function->param_count);
 
-        // type conversion of arguments to match parameters
-        if (function->type == IC_FUN_SOURCE || function->host.arg_type_check)
-        {
-            for (int i = 0; i < argc; ++i)
-                argv[i] = implicit_convert_type(function->params[i].type, argv[i]);
-        }
+        for (int i = 0; i < argc; ++i)
+            argv[i] = implicit_convert_type(function->params[i].type, argv[i]);
 
         if (function->type == IC_FUN_HOST)
         {
-            assert(function->host.callback);
-            ic_value return_value = function->host.callback(argc, argv);
+            assert(function->callback);
+
+            // todo, hack
+            ic_data dargv[IC_MAX_ARGC];
+
+            for (int i = 0; i < argc; ++i)
+                dargv[i].f64 = argv[i].f64;
+
+            ic_value return_value;
+            return_value.type = function->return_type;
+            return_value.f64 = function->callback(dargv).f64;
             // function can never return an lvalue
-            return { nullptr, implicit_convert_type(function->return_type, return_value) };
+            return { nullptr, return_value };
         }
         // else
         assert(function->type == IC_FUN_SOURCE);
@@ -1680,7 +1239,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime)
                 ic_struct* _struct = runtime.get_struct(argv[i].type.struct_name);
                 assert(_struct);
                 void* new_data = runtime._struct_data_deque.allocate_continuous(_struct->num_data);
-                memcpy(new_data, argv[i].pointer, _struct->num_data * sizeof(ic_struct_data));
+                memcpy(new_data, argv[i].pointer, _struct->num_data * sizeof(ic_data));
                 argv[i].pointer = new_data;
             }
 
@@ -1957,7 +1516,7 @@ ic_value evaluate_add(ic_value lhs, ic_value rhs, ic_runtime& runtime, bool subt
             {
                 ic_struct * _struct = runtime.get_struct(lhs.type.struct_name);
                 assert(_struct);
-                lhs.pointer = (ic_struct_data*)lhs.pointer + offset * _struct->num_data;
+                lhs.pointer = (ic_data*)lhs.pointer + offset * _struct->num_data;
                 break;
             }
             default:
@@ -2616,11 +2175,8 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
     stmt._var_declaration.type = type;
     stmt._var_declaration.token = token_id;
 
-    if (token_consume(it, IC_TOK_EQUAL))
-    {
-        stmt._var_declaration.expr = produce_expr_stmt(it, runtime);
-        return global;
-    }
+    if ((**it).type == IC_TOK_EQUAL)
+        exit_parsing(it, "global variables can't be initialized by an expression, they are set to 0 by default");
 
     token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
     stmt._var_declaration.expr = nullptr;
