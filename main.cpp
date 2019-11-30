@@ -421,7 +421,7 @@ bool ic_runtime::run(const char* source_code)
 
             // code for bytecode
             {
-                ic_vm_global_var gv;
+                ic_vm_var gv;
                 gv.idx = _global_size;
                 gv.type = value->type;
                 gv.name = name;
