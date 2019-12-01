@@ -5,10 +5,19 @@ struct ic_vm_scope
     int prev_var_count;
 };
 
+enum ic_lvalue_type
+{
+    IC_LVALUE_NON,
+    IC_LVALUE_ADDRESS,
+    IC_LVALUE_LOCAL,
+    IC_LVALUE_GLOBAL,
+};
+
 struct ic_vm_expr
 {
-    bool lvalue;
     ic_value_type type;
+    ic_lvalue_type lvalue_type;
+    int var_idx;
 };
 
 struct ic_compiler // this name is wrong, maybe compile_state is better or something
@@ -21,6 +30,7 @@ struct ic_compiler // this name is wrong, maybe compile_state is better or somet
     int current_stack_size;
     int stack_size; // e.g. max of if and else branches
     int loop_level;
+    bool disable_bytecode_emition;
 
     void push_scope();
     void pop_scope();
@@ -48,7 +58,8 @@ void ic_compiler::pop_scope()
 
 void ic_compiler::add_inst(ic_inst inst)
 {
-    bytecode.push_back(inst);
+    if(!disable_bytecode_emition)
+        bytecode.push_back(inst);
 }
 
 int ic_compiler::declare_var(ic_value_type type, ic_string name)
@@ -133,7 +144,7 @@ ic_struct* ic_compiler::get_struct(ic_string name)
 }
 
 bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
-ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler);
+ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue = true);
 void compile_implicit_conversion(ic_value_type to, ic_value_type from, ic_compiler& compiler);
 
 void compile(ic_function& function, ic_runtime& runtime)
@@ -144,6 +155,10 @@ void compile(ic_function& function, ic_runtime& runtime)
     compiler.stack_size = 0;
     compiler.current_stack_size = 0;
     compiler.loop_level = 0;
+    compiler.disable_bytecode_emition = false;
+
+    for (int i = 0; i < function.param_count; ++i)
+        compiler.declare_var(function.params[i].type, function.params[i].name);
 
     bool returned = compile_stmt(function.body, compiler);
 
@@ -353,7 +368,29 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     return returned;
 }
 
-ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler)
+// these expressions must respet substitute_lvalue parameter
+// following expressions are lvalue: variable / parameter identifiers, string literals, parenthesized expression if
+// inner expression is lvalue, . operator if lhs operand is lvalue, -> operator, dereference operator *, subscription operator []
+
+// lvalue can be used in: address_of operator, increment, decrement, lhs operand of assignment
+// cppreference mentioned also lhs operand of member access . operator but I don't see why - this expression may return lvalue
+// but is not really using it.
+
+ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_compiler& compiler);
+
+ic_value_type get_expr_type(ic_expr* expr, ic_compiler& compiler)
+{
+    compiler.disable_bytecode_emition = true;
+    ic_value_type t = compile_expr(expr, compiler).type;
+    compiler.disable_bytecode_emition = false;
+    return t;
+}
+
+ic_value_type get_numeric_expression_type(ic_value_type lhs, ic_value_type rhs);
+
+ic_value_type get_comparison_expression_type(ic_value_type lhs, ic_value_type rhs);
+
+ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue)
 {
     assert(expr);
 
@@ -361,11 +398,492 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler)
     {
     case IC_EXPR_BINARY:
     {
-        break;
+        switch (expr->token.type)
+        {
+        case IC_TOK_EQUAL: // order of lhs rhs is reversed on the operand stack for assignment
+        {
+            ic_vm_expr rhs = compile_expr(expr->_binary.rhs, compiler);
+            return compile_lhs_assignment(expr->_binary.lhs, rhs.type, compiler);
+        }
+        case IC_TOK_PLUS_EQUAL:
+        {
+            // todo redundancy in compile_lhs_assignment - we don't
+            // need to perform non emitive compile to discover lhs type - we have it here
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            if (expr_type.basic_type == IC_TYPE_S32)
+                compiler.add_inst({ IC_OPC_ADD_S32 });
+            else if (expr_type.basic_type == IC_TYPE_F32)
+                compiler.add_inst({ IC_OPC_ADD_F32 });
+            else if (expr_type.basic_type == IC_TYPE_F64)
+                compiler.add_inst({ IC_OPC_ADD_F64 });
+            else
+                assert(false);
+
+            return compile_lhs_assignment(expr->_binary.lhs, expr_type, compiler); // there is some big redundancy here,
+            // after getting function it needs to be fixed, todo
+        }
+        case IC_TOK_MINUS_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            if (expr_type.basic_type == IC_TYPE_S32)
+                compiler.add_inst({ IC_OPC_SUB_S32 });
+            else if (expr_type.basic_type == IC_TYPE_F32)
+                compiler.add_inst({ IC_OPC_SUB_F32 });
+            else if (expr_type.basic_type == IC_TYPE_F64)
+                compiler.add_inst({ IC_OPC_SUB_F64 });
+            else
+                assert(false);
+
+            return compile_lhs_assignment(expr->_binary.lhs, expr_type, compiler);
+        }
+        case IC_TOK_STAR_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            if (expr_type.basic_type == IC_TYPE_S32)
+                compiler.add_inst({ IC_OPC_MUL_S32 });
+            else if (expr_type.basic_type == IC_TYPE_F32)
+                compiler.add_inst({ IC_OPC_MUL_F32 });
+            else if (expr_type.basic_type == IC_TYPE_F64)
+                compiler.add_inst({ IC_OPC_MUL_F64 });
+            else
+                assert(false);
+
+            return compile_lhs_assignment(expr->_binary.lhs, expr_type, compiler);
+        }
+        case IC_TOK_SLASH_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            if (expr_type.basic_type == IC_TYPE_S32)
+                compiler.add_inst({ IC_OPC_DIV_S32 });
+            else if (expr_type.basic_type == IC_TYPE_F32)
+                compiler.add_inst({ IC_OPC_DIV_F32 });
+            else if (expr_type.basic_type == IC_TYPE_F64)
+                compiler.add_inst({ IC_OPC_DIV_F64 });
+            else
+                assert(false);
+
+            return compile_lhs_assignment(expr->_binary.lhs, expr_type, compiler);
+        }
+        case IC_TOK_VBAR_VBAR:
+        {
+            ic_value_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), lhs_type, compiler);
+            int jump_idx = compiler.bytecode.size();
+            compiler.add_inst({ IC_OPC_JUMP_TRUE });
+            compiler.add_inst({ IC_OPC_POP });
+            ic_value_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), rhs_type, compiler);
+            compiler.bytecode[jump_idx].operand.idx = compiler.bytecode.size();
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_AMPERSAND_AMPERSAND:
+        {
+            ic_value_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), lhs_type, compiler);
+            int jump_idx = compiler.bytecode.size();
+            compiler.add_inst({ IC_OPC_JUMP_FALSE });
+            compiler.add_inst({ IC_OPC_POP });
+            ic_value_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), rhs_type, compiler);
+            compiler.bytecode[jump_idx].operand.idx = compiler.bytecode.size();
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_EQUAL_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_comparison_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            int opcode;
+
+            if (expr_type.indirection_level)
+                opcode = IC_OPC_COMPARE_E_PTR;
+            else
+            {
+                switch (expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    opcode = IC_OPC_COMPARE_E_S32;
+                    break;
+                case IC_TYPE_F32:
+                    opcode = IC_OPC_COMPARE_E_F32;
+                    break;
+                case IC_TYPE_F64:
+                    opcode = IC_OPC_COMPARE_E_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+
+            compiler.add_inst({ opcode });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_BANG_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_comparison_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            int opcode;
+
+            if (expr_type.indirection_level)
+                opcode = IC_OPC_COMPARE_NE_PTR;
+            else
+            {
+                switch (expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    opcode = IC_OPC_COMPARE_NE_S32;
+                    break;
+                case IC_TYPE_F32:
+                    opcode = IC_OPC_COMPARE_NE_F32;
+                    break;
+                case IC_TYPE_F64:
+                    opcode = IC_OPC_COMPARE_NE_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+
+            compiler.add_inst({ opcode });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_GREATER:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_comparison_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            int opcode;
+
+            if (expr_type.indirection_level)
+                opcode = IC_OPC_COMPARE_G_PTR;
+            else
+            {
+                switch (expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    opcode = IC_OPC_COMPARE_G_S32;
+                    break;
+                case IC_TYPE_F32:
+                    opcode = IC_OPC_COMPARE_G_F32;
+                    break;
+                case IC_TYPE_F64:
+                    opcode = IC_OPC_COMPARE_G_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+
+            compiler.add_inst({ opcode });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_GREATER_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_comparison_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            int opcode;
+
+            if (expr_type.indirection_level)
+                opcode = IC_OPC_COMPARE_GE_PTR;
+            else
+            {
+                switch (expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    opcode = IC_OPC_COMPARE_GE_S32;
+                    break;
+                case IC_TYPE_F32:
+                    opcode = IC_OPC_COMPARE_GE_F32;
+                    break;
+                case IC_TYPE_F64:
+                    opcode = IC_OPC_COMPARE_GE_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+
+            compiler.add_inst({ opcode });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_LESS:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_comparison_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            int opcode;
+
+            if (expr_type.indirection_level)
+                opcode = IC_OPC_COMPARE_L_PTR;
+            else
+            {
+                switch (expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    opcode = IC_OPC_COMPARE_L_S32;
+                    break;
+                case IC_TYPE_F32:
+                    opcode = IC_OPC_COMPARE_L_F32;
+                    break;
+                case IC_TYPE_F64:
+                    opcode = IC_OPC_COMPARE_L_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+
+            compiler.add_inst({ opcode });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_LESS_EQUAL:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_comparison_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            int opcode;
+
+            if (expr_type.indirection_level)
+                opcode = IC_OPC_COMPARE_LE_PTR;
+            else
+            {
+                switch (expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    opcode = IC_OPC_COMPARE_LE_S32;
+                    break;
+                case IC_TYPE_F32:
+                    opcode = IC_OPC_COMPARE_LE_F32;
+                    break;
+                case IC_TYPE_F64:
+                    opcode = IC_OPC_COMPARE_LE_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+            }
+
+            compiler.add_inst({ opcode });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_PLUS:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            int opcode;
+
+            switch (expr_type.basic_type)
+            {
+            case IC_TYPE_S32:
+                opcode = IC_OPC_ADD_S32;
+                break;
+            case IC_TYPE_F32:
+                opcode = IC_OPC_ADD_F32;
+                break;
+            case IC_TYPE_F64:
+                opcode = IC_OPC_ADD_F64;
+                break;
+            default:
+                assert(false);
+            }
+
+            compiler.add_inst({ opcode });
+            return { expr_type, IC_LVALUE_NON };
+
+        }
+        case IC_TOK_MINUS:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            int opcode;
+
+            switch (expr_type.basic_type)
+            {
+            case IC_TYPE_S32:
+                opcode = IC_OPC_SUB_S32;
+                break;
+            case IC_TYPE_F32:
+                opcode = IC_OPC_SUB_F32;
+                break;
+            case IC_TYPE_F64:
+                opcode = IC_OPC_SUB_F64;
+                break;
+            default:
+                assert(false);
+            }
+
+            compiler.add_inst({ opcode });
+            return { expr_type, IC_LVALUE_NON };
+
+        }
+        case IC_TOK_STAR:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            int opcode;
+
+            switch (expr_type.basic_type)
+            {
+            case IC_TYPE_S32:
+                opcode = IC_OPC_MUL_S32;
+                break;
+            case IC_TYPE_F32:
+                opcode = IC_OPC_MUL_F32;
+                break;
+            case IC_TYPE_F64:
+                opcode = IC_OPC_MUL_F64;
+                break;
+            default:
+                assert(false);
+            }
+
+            compiler.add_inst({ opcode });
+            return { expr_type, IC_LVALUE_NON };
+
+        }
+        case IC_TOK_SLASH:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+
+            int opcode;
+
+            switch (expr_type.basic_type)
+            {
+            case IC_TYPE_S32:
+                opcode = IC_OPC_DIV_S32;
+                break;
+            case IC_TYPE_F32:
+                opcode = IC_OPC_DIV_F32;
+                break;
+            case IC_TYPE_F64:
+                opcode = IC_OPC_DIV_F64;
+                break;
+            default:
+                assert(false);
+            }
+
+            compiler.add_inst({ opcode });
+            return { expr_type, IC_LVALUE_NON };
+
+        }
+        case IC_TOK_PERCENT:
+        {
+            ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
+            ic_value_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(lhs_type, rhs_type);
+            assert(expr_type.basic_type = IC_TYPE_S32); // only integer types + the only integer type returned by get_numeric_expr is s32
+            compile_expr(expr->_binary.lhs, compiler);
+            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_expr(expr->_binary.rhs, compiler);
+            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compiler.add_inst({ IC_OPC_MODULO_S32 });
+            return { expr_type, IC_LVALUE_NON };
+        }
+        default:
+            assert(false);
+        }
     }
     case IC_EXPR_UNARY:
     {
-        break;
+        switch (expr->token.type)
+        {
+        case IC_TOK_MINUS:
+            break;
+        case IC_TOK_BANG:
+            break;
+        case IC_TOK_MINUS_MINUS:
+            // for operand substitute_lvalue = false;
+            // operand does not need to be lvalue
+            break;
+        case IC_TOK_PLUS_PLUS:
+            // for operand substitute_lvalue = false;
+            // operand does not need to be lvalue
+            break;
+        case IC_TOK_AMPERSAND:
+            // for operand substitute_lvalue = false;
+            // operand must be lvalue
+            break;
+        case IC_TOK_STAR:
+            break;
+        }
     }
     case IC_EXPR_SIZEOF:
     {
@@ -404,4 +922,92 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler)
 void compile_implicit_conversion(ic_value_type to, ic_value_type from, ic_compiler& compiler)
 {
 
+}
+
+ic_value_type get_numeric_expression_type(ic_value_type lhs, ic_value_type rhs)
+{
+
+}
+
+ic_value_type get_comparison_expression_type(ic_value_type lhs, ic_value_type rhs)
+{
+
+}
+
+ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_compiler& compiler)
+{
+    ic_value_type lhs_type = get_expr_type(lhs_expr, compiler);
+    compile_implicit_conversion(lhs_type, rhs_type, compiler);
+    ic_vm_expr lhs = compile_expr(lhs_expr, compiler, false); // only now compile, after rhs and conversions are emitted
+    ic_inst inst;
+
+    switch (lhs.lvalue_type)
+    {
+    case IC_LVALUE_ADDRESS:
+    {
+        if (lhs.type.indirection_level)
+        {
+            inst.opcode = IC_OPC_STORE_8_AT;
+            break;
+        }
+
+        switch (lhs.type.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+        case IC_TYPE_U8:
+            inst.opcode = IC_OPC_STORE_1_AT;
+            break;
+        case IC_TYPE_S32:
+        case IC_TYPE_F32:
+            inst.opcode = IC_OPC_STORE_4_AT;
+            break;
+        case IC_TYPE_F64:
+            inst.opcode = IC_OPC_STORE_8_AT;
+            break;
+        case IC_TYPE_STRUCT:
+        {
+            ic_struct* _struct = compiler.get_struct(lhs.type.struct_name);
+            inst.opcode = IC_OPC_STORE_STRUCT_AT;
+            inst.operand.size = _struct->num_data;
+            break;
+        }
+        default:
+            assert(false);
+        }
+    }
+    case IC_LVALUE_LOCAL:
+    {
+        inst.operand.store.idx = lhs.var_idx;
+
+        if (is_non_pointer_struct(lhs.type))
+        {
+            inst.opcode = IC_OPC_STORE_STRUCT;
+            ic_struct* _struct = compiler.get_struct(lhs.type.struct_name);
+            inst.operand.size = _struct->num_data;
+        }
+        else
+            inst.opcode = IC_OPC_STORE;
+        break;
+    }
+    case IC_LVALUE_GLOBAL:
+    {
+        inst.operand.store.idx = lhs.var_idx;
+
+        if (is_non_pointer_struct(lhs.type))
+        {
+            inst.opcode = IC_OPC_STORE_STRUCT_GLOBAL;
+            ic_struct* _struct = compiler.get_struct(lhs.type.struct_name);
+            inst.operand.size = _struct->num_data;
+        }
+        else
+            inst.opcode = IC_OPC_STORE_GLOBAL;
+        break;
+    }
+    default:
+        assert(false);
+    }
+
+    compiler.add_inst(inst);
+    return lhs;
 }

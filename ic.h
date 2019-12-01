@@ -33,6 +33,9 @@
 // change type keywords? (char, uchar, int, float, double)
 // struct allignment (currently each member consumes 8 bytes)
 // struct in value_type should be a pointer to a struct and not string
+// text editor with colors and error reporting using our very own ast technology
+// after implementing bytecode fix all the leftovers and naming conventions
+// option to dump readable bytecode
 
 template<typename T, int N>
 struct ic_deque
@@ -509,6 +512,7 @@ struct ic_exception_parsing {};
 enum ic_opcode
 {
     IC_OPC_PUSH,
+    IC_OPC_POP,
     IC_OPC_CALL, // last function argument is at the top of a operand stack (order is not reversed)
     IC_OPC_RETURN,
     IC_OPC_LOGICAL_NOT,
@@ -553,6 +557,7 @@ enum ic_opcode
     IC_OPC_SUB_S32,
     IC_OPC_MUL_S32,
     IC_OPC_DIV_S32,
+    IC_OPC_MODULO_S32,
 
     IC_OPC_COPMARE_E_F32,
     IC_OPC_COPMARE_NE_F32,
@@ -576,11 +581,16 @@ enum ic_opcode
     IC_OPC_ADD_F64,
     IC_OPC_SUB_F64,
     IC_OPC_MUL_F64,
-    IC_OPC_DIV_f64,
+    IC_OPC_DIV_F64,
 
+    IC_OPC_COPMARE_E_PTR,
+    IC_OPC_COPMARE_NE_PTR,
+    IC_OPC_COPMARE_G_PTR,
+    IC_OPC_COPMARE_GE_PTR,
+    IC_OPC_COPMARE_L_PTR,
+    IC_OPC_COPMARE_LE_PTR,
     IC_OPC_ADD_PTR_S32,
     IC_OPC_SUB_PTR_S32,
-    IC_OPC_MODULO_S32,
 
     // convert to from
 
