@@ -35,7 +35,7 @@ ic_value_type non_pointer_type(ic_basic_type type)
 }
 
 // todo; I don't like bool arguments like this one, it is not obvious what it does from a function call
-ic_value_type pointer1_type(ic_basic_type type, bool at_const = false)
+ic_value_type pointer1_type(ic_basic_type type, bool at_const)
 {
     return { type, 1, (unsigned)(at_const ? 2 : 0) };
 }
@@ -320,6 +320,7 @@ ic_expr_result ic_evaluate_expr(const ic_expr* expr, ic_runtime& runtime);
 ic_stmt_result ic_execute_stmt(const ic_stmt* stmt, ic_runtime& runtime);
 void run_bytecode(ic_runtime& runtime);
 
+void dump_bytecode(ic_inst* bytecode, int  count);
 
 bool ic_runtime::run(const char* source_code)
 {
@@ -444,7 +445,7 @@ bool ic_runtime::run(const char* source_code)
         }
     }
 
-    if (true)
+    if (false)
     {
         // execute main funtion
         const char* str = "main";
@@ -459,11 +460,18 @@ bool ic_runtime::run(const char* source_code)
     }
     else
     {
+        // todo, free resources
+
         for (ic_function& function : _functions)
-            compile(function, *this);
+        {
+            if (function.type == IC_FUN_SOURCE)
+            {
+                compile(function, *this);
+                dump_bytecode(function.bytecode, function.by_size);
+            }
+        }
 
-        ic_vm vm; // todo, vm cleanup
-
+        ic_vm vm;
         {
             int bytes = _global_size * sizeof(ic_data);
             vm.global_data = (ic_data*)malloc(bytes);

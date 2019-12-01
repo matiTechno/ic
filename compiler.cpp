@@ -58,6 +58,7 @@ void ic_compiler::pop_scope()
 
 void ic_compiler::add_inst(ic_inst inst)
 {
+    assert(inst.opcode <= IC_OPC_JUMP_END && inst.opcode >= 0);
     if(!disable_bytecode_emition)
         bytecode.push_back(inst);
 }
@@ -92,6 +93,11 @@ int ic_compiler::declare_var(ic_value_type type, ic_string name)
         current_stack_size += 1;
 
     stack_size = current_stack_size > stack_size ? current_stack_size : stack_size;
+    ic_vm_var v;
+    v.name = name;
+    v.type = type;
+    v.idx = idx;
+    vars.push_back(v);
     return idx;
 }
 
@@ -157,6 +163,8 @@ void compile(ic_function& function, ic_runtime& runtime)
     compiler.loop_level = 0;
     compiler.disable_bytecode_emition = false;
 
+    compiler.push_scope();
+
     for (int i = 0; i < function.param_count; ++i)
         compiler.declare_var(function.params[i].type, function.params[i].name);
 
@@ -164,11 +172,12 @@ void compile(ic_function& function, ic_runtime& runtime)
 
     if (function.return_type.indirection_level || function.return_type.basic_type != IC_TYPE_VOID)
         assert(returned);
-    else
+    else if(compiler.bytecode.back().opcode != IC_OPC_RETURN)
         compiler.add_inst({ .opcode = IC_OPC_RETURN });
 
     function.bytecode = (ic_inst*)malloc(compiler.bytecode.size() * sizeof(ic_inst));
     memcpy(function.bytecode, compiler.bytecode.data(), compiler.bytecode.size() * sizeof(ic_inst));
+    function.by_size = compiler.bytecode.size();
 }
 
 // returns true if return statement occured
@@ -261,8 +270,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         int returned_else = false;
         ic_vm_expr expr = compile_expr(stmt->_if.header, compiler);
         compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), expr.type, compiler);
-        compiler.add_inst({ .opcode = IC_OPC_JUMP_CONDITION_FAIL });
         int idx_start = compiler.bytecode.size();
+        compiler.add_inst({ .opcode = IC_OPC_JUMP_CONDITION_FAIL });
         compiler.push_scope();
         returned_if = compile_stmt(stmt->_if.body_if, compiler);
         compiler.pop_scope();
@@ -376,7 +385,97 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 // cppreference mentioned also lhs operand of member access . operator but I don't see why - this expression may return lvalue
 // but is not really using it.
 
+void compile_dereference(ic_value_type type, ic_compiler& compiler)
+{
+    assert(type.indirection_level);
+    ic_inst inst;
+
+    if (type.indirection_level > 1 || type.basic_type == IC_TYPE_F64)
+        inst.opcode = IC_OPC_DEREFERENCE_8;
+    else
+    {
+        switch (type.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+            inst.opcode = IC_OPC_DEREFERENCE_1;
+            break;
+        case IC_TYPE_S32:
+        case IC_TYPE_F32:
+            inst.opcode = IC_OPC_DEREFERENCE_4;
+            break;
+        case IC_TYPE_STRUCT:
+        {
+            ic_struct* s = compiler.get_struct(type.struct_name);
+            inst.opcode = IC_OPC_DEREFERENCE_STRUCT;
+            inst.operand.size = s->num_data;
+            break;
+        }
+        default:
+            assert(false);
+        }
+    }
+
+    compiler.add_inst(inst);
+}
+
+void assert_numeric_type(ic_value_type type)
+{
+    assert(type.indirection_level == 0);
+    switch (type.basic_type)
+    {
+    case IC_TYPE_BOOL:
+    case IC_TYPE_S8:
+    case IC_TYPE_U8:
+    case IC_TYPE_S32:
+    case IC_TYPE_F32:
+    case IC_TYPE_F64:
+        return;
+    }
+    assert(false);
+}
+
+void compile_store_at(ic_value_type type, ic_compiler& compiler)
+{
+    ic_inst inst;
+    if (type.indirection_level)
+    {
+        inst.opcode = IC_OPC_STORE_8_AT;
+    }
+    else
+    {
+        switch (type.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+        case IC_TYPE_U8:
+            inst.opcode = IC_OPC_STORE_1_AT;
+            break;
+        case IC_TYPE_S32:
+        case IC_TYPE_F32:
+            inst.opcode = IC_OPC_STORE_4_AT;
+            break;
+        case IC_TYPE_F64:
+            inst.opcode = IC_OPC_STORE_8_AT;
+            break;
+        case IC_TYPE_STRUCT:
+        {
+            ic_struct* _struct = compiler.get_struct(type.struct_name);
+            inst.opcode = IC_OPC_STORE_STRUCT_AT;
+            inst.operand.size = _struct->num_data;
+            break;
+        }
+        default:
+            assert(false);
+        }
+    }
+
+    compiler.add_inst(inst);
+}
+
 ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_compiler& compiler);
+ic_value_type get_numeric_expression_type(ic_value_type lhs, ic_value_type rhs);
+ic_value_type get_comparison_expression_type(ic_value_type lhs, ic_value_type rhs);
 
 ic_value_type get_expr_type(ic_expr* expr, ic_compiler& compiler)
 {
@@ -385,10 +484,6 @@ ic_value_type get_expr_type(ic_expr* expr, ic_compiler& compiler)
     compiler.disable_bytecode_emition = false;
     return t;
 }
-
-ic_value_type get_numeric_expression_type(ic_value_type lhs, ic_value_type rhs);
-
-ic_value_type get_comparison_expression_type(ic_value_type lhs, ic_value_type rhs);
 
 ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue)
 {
@@ -498,7 +593,6 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
             compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), lhs_type, compiler);
             int jump_idx = compiler.bytecode.size();
             compiler.add_inst({ IC_OPC_JUMP_TRUE });
-            compiler.add_inst({ IC_OPC_POP });
             ic_value_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
             compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), rhs_type, compiler);
             compiler.bytecode[jump_idx].operand.idx = compiler.bytecode.size();
@@ -510,7 +604,6 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
             compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), lhs_type, compiler);
             int jump_idx = compiler.bytecode.size();
             compiler.add_inst({ IC_OPC_JUMP_FALSE });
-            compiler.add_inst({ IC_OPC_POP });
             ic_value_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
             compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), rhs_type, compiler);
             compiler.bytecode[jump_idx].operand.idx = compiler.bytecode.size();
@@ -720,6 +813,7 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
             compiler.add_inst({ opcode });
             return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
         }
+        // todo pointer arithmetic
         case IC_TOK_PLUS:
         {
             ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
@@ -751,6 +845,7 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
             return { expr_type, IC_LVALUE_NON };
 
         }
+        // todo pointer arithmetic
         case IC_TOK_MINUS:
         {
             ic_value_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
@@ -866,23 +961,219 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
         switch (expr->token.type)
         {
         case IC_TOK_MINUS:
-            break;
+        {
+            ic_value_type operand_type = get_expr_type(expr->_unary.expr, compiler);
+            ic_value_type expr_type = get_numeric_expression_type(operand_type, non_pointer_type(IC_TYPE_BOOL));
+            compile_expr(expr->_unary.expr, compiler);
+            compile_implicit_conversion(expr_type, operand_type, compiler);
+
+            switch (expr_type.basic_type)
+            {
+            case IC_TYPE_S32:
+                compiler.add_inst({ IC_OPC_NEGATE_S32 });
+                break;
+            case IC_TYPE_F32:
+                compiler.add_inst({ IC_OPC_NEGATE_F32 });
+                break;
+            case IC_TYPE_F64:
+                compiler.add_inst({ IC_OPC_NEGATE_F64 });
+                break;
+            default:
+                assert(false);
+            }
+            return { expr_type, IC_LVALUE_NON };
+        }
         case IC_TOK_BANG:
-            break;
+        {
+            ic_value_type operand_type = get_expr_type(expr->_unary.expr, compiler);
+            compile_expr(expr->_unary.expr, compiler);
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), operand_type, compiler);
+            compiler.add_inst({ IC_OPC_LOGICAL_NOT });
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        // for operand substitute_lvalue = false;
+        // operand does not need to be lvalue
         case IC_TOK_MINUS_MINUS:
-            // for operand substitute_lvalue = false;
-            // operand does not need to be lvalue
-            break;
         case IC_TOK_PLUS_PLUS:
-            // for operand substitute_lvalue = false;
-            // operand does not need to be lvalue
-            break;
+        {
+            ic_vm_expr vm_expr = compile_expr(expr->_unary.expr, compiler, false);
+            ic_value_type num_expr_type = get_numeric_expression_type(vm_expr.type, non_pointer_type(IC_TYPE_BOOL));
+
+            switch (vm_expr.lvalue_type)
+            {
+            case IC_LVALUE_ADDRESS:
+            {
+                compiler.add_inst({ IC_OPC_CLONE });
+                compile_dereference(vm_expr.type, compiler);
+                compile_implicit_conversion(num_expr_type, vm_expr.type, compiler);
+                ic_inst inst;
+                ic_inst inst2;
+                inst.opcode = IC_OPC_PUSH;
+
+                switch (num_expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    inst.operand.push_data.s32 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_S32;
+                    break;
+                case IC_TYPE_F32:
+                    inst.operand.push_data.f32 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_F32;
+                    break;
+                case IC_TYPE_F64:
+                    inst.operand.push_data.f64 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+                compiler.add_inst(inst);
+                compiler.add_inst(inst2);
+                compile_implicit_conversion(vm_expr.type, num_expr_type, compiler);
+                compiler.add_inst({ IC_OPC_SWAP });
+                compile_store_at(vm_expr.type, compiler);
+
+                if (substitute_lvalue)
+                    compiler.add_inst({ IC_OPC_POP }); // pop address
+                else
+                {
+                    compiler.add_inst({ IC_OPC_SWAP });
+                    compiler.add_inst({ IC_OPC_POP }); // pop data, leave address
+                }
+
+                break;
+            }
+            case IC_LVALUE_LOCAL:
+            case IC_LVALUE_GLOBAL:
+            {
+                {
+                    ic_inst inst;
+                    inst.opcode = vm_expr.lvalue_type == IC_LVALUE_LOCAL ? IC_OPC_LOAD : IC_OPC_LOAD_GLOBAL;
+                    inst.operand.load.idx = vm_expr.var_idx;
+                    compiler.add_inst(inst);
+                }
+                ic_value_type num_expr_type = get_numeric_expression_type(vm_expr.type, non_pointer_type(IC_TYPE_BOOL));
+                compile_implicit_conversion(num_expr_type, vm_expr.type, compiler);
+                ic_inst inst;
+                ic_inst inst2;
+                inst.opcode = IC_OPC_PUSH;
+
+                switch (num_expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    inst.operand.push_data.s32 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_S32;
+                    break;
+                case IC_TYPE_F32:
+                    inst.operand.push_data.f32 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_F32;
+                    break;
+                case IC_TYPE_F64:
+                    inst.operand.push_data.f64 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+                compiler.add_inst(inst);
+                compiler.add_inst(inst2);
+                compile_implicit_conversion(vm_expr.type, num_expr_type, compiler);
+                {
+                    ic_inst inst;
+                    inst.opcode = vm_expr.lvalue_type == IC_LVALUE_LOCAL ? IC_OPC_STORE : IC_OPC_STORE_GLOBAL;
+                    inst.operand.store.idx = vm_expr.var_idx;
+                    compiler.add_inst(inst);
+                }
+                if (!substitute_lvalue)
+                    compiler.add_inst({ IC_OPC_POP });
+                break;
+            }
+            case IC_LVALUE_NON:
+            {
+                ic_value_type num_expr_type = get_numeric_expression_type(vm_expr.type, non_pointer_type(IC_TYPE_BOOL));
+                compile_implicit_conversion(num_expr_type, vm_expr.type, compiler);
+                ic_inst inst;
+                ic_inst inst2;
+                inst.opcode = IC_OPC_PUSH;
+
+                switch (num_expr_type.basic_type)
+                {
+                case IC_TYPE_S32:
+                    inst.operand.push_data.s32 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_S32;
+                    break;
+                case IC_TYPE_F32:
+                    inst.operand.push_data.f32 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_F32;
+                    break;
+                case IC_TYPE_F64:
+                    inst.operand.push_data.f64 = expr->token.type == IC_TOK_MINUS_MINUS ? -1 : 1;
+                    inst2.opcode = IC_OPC_ADD_F64;
+                    break;
+                default:
+                    assert(false);
+                }
+                compiler.add_inst(inst);
+                compiler.add_inst(inst2);
+                break;
+            }
+            default:
+                assert(false);
+            }
+            return vm_expr;
+        }
         case IC_TOK_AMPERSAND:
-            // for operand substitute_lvalue = false;
-            // operand must be lvalue
-            break;
+        {
+            ic_vm_expr vm_expr = compile_expr(expr->_unary.expr, compiler, false);
+
+            switch (vm_expr.lvalue_type)
+            {
+            case IC_LVALUE_ADDRESS:
+                break;
+            case IC_LVALUE_LOCAL:
+            {
+                ic_inst inst;
+                inst.opcode = IC_OPC_ADDRESS_OF;
+                inst.operand.idx = vm_expr.var_idx;
+                compiler.add_inst(inst);
+                break;
+            }
+            case IC_LVALUE_GLOBAL:
+            {
+                ic_inst inst;
+                inst.opcode = IC_OPC_ADDRESS_OF_GLOBAL;
+                inst.operand.idx = vm_expr.var_idx;
+                compiler.add_inst(inst);
+                break;
+            }
+            default:
+                assert(false);
+            }
+
+            ic_value_type new_type = vm_expr.type;
+            new_type.indirection_level += 1;
+            new_type.const_mask = new_type.const_mask << 1;
+            return { new_type, IC_LVALUE_NON };
+        }
         case IC_TOK_STAR:
-            break;
+        {
+            ic_vm_expr vm_expr = compile_expr(expr->_unary.expr, compiler);
+            assert(vm_expr.type.indirection_level);
+
+            if (substitute_lvalue)
+            {
+                compile_dereference(vm_expr.type, compiler);
+                ic_value_type new_type = vm_expr.type;
+                new_type.const_mask = new_type.const_mask >> 1;
+                new_type.indirection_level -= 1;
+                vm_expr.type = new_type;
+            }
+
+            return { vm_expr.type, IC_LVALUE_ADDRESS };
+        }
+        default:
+            assert(false);
+
         }
     }
     case IC_EXPR_SIZEOF:
@@ -911,7 +1202,88 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
     }
     case IC_EXPR_PRIMARY:
     {
-        break;
+        ic_token token = expr->token;
+
+        switch (token.type)
+        {
+        case IC_TOK_INT_NUMBER_LITERAL:
+        {
+            ic_inst inst;
+            inst.opcode = IC_OPC_PUSH;
+            inst.operand.push_data.s32 = token.number;
+            compiler.add_inst(inst);
+            return { non_pointer_type(IC_TYPE_S32), IC_LVALUE_NON };
+        }
+        case IC_TOK_FLOAT_NUMBER_LITERAL:
+        {
+            ic_inst inst;
+            inst.opcode = IC_OPC_PUSH;
+            inst.operand.push_data.f32 = token.number;
+            compiler.add_inst(inst);
+            return { non_pointer_type(IC_TYPE_F32), IC_LVALUE_NON };
+        }
+        case IC_TOK_IDENTIFIER:
+        {
+            ic_vm_var var;
+            bool local = compiler.get_var(token.string, var);
+            ic_vm_expr e;
+            e.lvalue_type = local ? IC_LVALUE_LOCAL : IC_LVALUE_GLOBAL;
+            e.type = var.type;
+            e.var_idx = var.idx;
+
+            if (substitute_lvalue)
+            {
+                if (is_non_pointer_struct(var.type))
+                {
+                    ic_struct* s = compiler.get_struct(var.type.struct_name);
+                    ic_inst inst;
+                    inst.opcode = local ? IC_OPC_LOAD_STRUCT : IC_OPC_LOAD_STRUCT_GLOBAL;
+                    inst.operand.load.idx = var.idx;
+                    inst.operand.load.size = s->num_data;
+                    compiler.add_inst(inst);
+
+                }
+                else
+                {
+                    ic_inst inst;
+                    inst.opcode = local ? IC_OPC_LOAD : IC_OPC_LOAD_GLOBAL;
+                    inst.operand.load.idx = var.idx;
+                    compiler.add_inst(inst);
+                }
+            }
+
+            return e;
+        }
+        case IC_TOK_TRUE:
+        case IC_TOK_FALSE:
+        {
+            ic_inst inst;
+            inst.opcode = IC_OPC_PUSH;
+            inst.operand.push_data.s8 = token.type == IC_TOK_TRUE ? 1 : 0;
+            compiler.add_inst(inst);
+            return { non_pointer_type(IC_TYPE_BOOL), IC_LVALUE_NON };
+        }
+        case IC_TOK_NULLPTR:
+        {
+            ic_inst inst;
+            inst.opcode = IC_OPC_PUSH;
+            inst.operand.push_data.pointer = nullptr;
+            compiler.add_inst(inst);
+            return { pointer1_type(IC_TYPE_NULLPTR), IC_LVALUE_NON };
+        }
+        case IC_TOK_STRING_LITERAL:
+        {
+            assert(false); // todo
+        }
+        case IC_TOK_CHARACTER_LITERAL:
+        {
+            assert(false); // todo
+        }
+        default:
+            assert(false);
+        }
+    default:
+        assert(false);
     }
     } // switch
     
@@ -921,17 +1293,167 @@ ic_vm_expr compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lv
 
 void compile_implicit_conversion(ic_value_type to, ic_value_type from, ic_compiler& compiler)
 {
+    assert(to.indirection_level == from.indirection_level);
 
+    if (to.indirection_level)
+    {
+        assert(to.basic_type == from.basic_type);
+        return;
+    }
+
+    if (to.basic_type == from.basic_type)
+        return;
+
+    switch (to.basic_type)
+    {
+    case IC_TYPE_BOOL:
+        switch (from.basic_type)
+        {
+        case IC_TYPE_S8:
+            compiler.add_inst({ IC_OPC_B_S8 });
+            return;
+        case IC_TYPE_U8:
+            compiler.add_inst({ IC_OPC_B_U8 });
+            return;
+        case IC_TYPE_S32:
+            compiler.add_inst({ IC_OPC_B_S32 });
+            return;
+        case IC_TYPE_F32:
+            compiler.add_inst({ IC_OPC_B_F32 });
+            return;
+        case IC_TYPE_F64:
+            compiler.add_inst({ IC_OPC_B_F64 });
+            return;
+        }
+        break;
+    case IC_TYPE_S8:
+        switch (from.basic_type)
+        {
+        case IC_TYPE_BOOL:
+            return;
+        case IC_TYPE_U8:
+            compiler.add_inst({ IC_OPC_S8_U8 });
+            return;
+        case IC_TYPE_S32:
+            compiler.add_inst({ IC_OPC_S8_S32 });
+            return;
+        case IC_TYPE_F32:
+            compiler.add_inst({ IC_OPC_S8_F32 });
+            return;
+        case IC_TYPE_F64:
+            compiler.add_inst({ IC_OPC_S8_F64 });
+            return;
+        }
+        break;
+    case IC_TYPE_U8:
+        switch (from.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+            compiler.add_inst({ IC_OPC_U8_S8 });
+            return;
+        case IC_TYPE_S32:
+            compiler.add_inst({ IC_OPC_U8_S32 });
+            return;
+        case IC_TYPE_F32:
+            compiler.add_inst({ IC_OPC_U8_F32 });
+            return;
+        case IC_TYPE_F64:
+            compiler.add_inst({ IC_OPC_U8_F64 });
+            return;
+        }
+        break;
+    case IC_TYPE_S32:
+        switch (from.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+            compiler.add_inst({ IC_OPC_S32_S8 });
+            return;
+        case IC_TYPE_U8:
+            compiler.add_inst({ IC_OPC_S32_U8 });
+            return;
+        case IC_TYPE_F32:
+            compiler.add_inst({ IC_OPC_S32_F32 });
+            return;
+        case IC_TYPE_F64:
+            compiler.add_inst({ IC_OPC_S32_F64 });
+            return;
+        }
+        break;
+    case IC_TYPE_F32:
+        switch (from.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+            compiler.add_inst({ IC_OPC_F32_S8 });
+            return;
+        case IC_TYPE_U8:
+            compiler.add_inst({ IC_OPC_F32_U8 });
+            return;
+        case IC_TYPE_S32:
+            compiler.add_inst({ IC_OPC_F32_S32 });
+            return;
+        case IC_TYPE_F64:
+            compiler.add_inst({ IC_OPC_F32_F64 });
+            return;
+        }
+        break;
+    case IC_TYPE_F64:
+        switch (from.basic_type)
+        {
+        case IC_TYPE_BOOL:
+        case IC_TYPE_S8:
+            compiler.add_inst({ IC_OPC_F64_S8 });
+            return;
+        case IC_TYPE_U8:
+            compiler.add_inst({ IC_OPC_F64_U8 });
+            return;
+        case IC_TYPE_S32:
+            compiler.add_inst({ IC_OPC_F64_S32 });
+            return;
+        case IC_TYPE_F32:
+            compiler.add_inst({ IC_OPC_F64_F32 });
+            return;
+        }
+        break;
+    }
+
+    assert(false);
 }
 
 ic_value_type get_numeric_expression_type(ic_value_type lhs, ic_value_type rhs)
 {
+    assert(!lhs.indirection_level && !rhs.indirection_level);
+    switch (lhs.basic_type)
+    {
+    case IC_TYPE_BOOL:
+    case IC_TYPE_S8:
+    case IC_TYPE_U8:
+    case IC_TYPE_S32:
+    case IC_TYPE_F32:
+    case IC_TYPE_F64:
+        break;
+    default:
+        assert(false);
+    }
 
+    if (lhs.basic_type < IC_TYPE_S32 && rhs.basic_type < IC_TYPE_S32)
+        return non_pointer_type(IC_TYPE_S32);
+
+    return lhs.basic_type > rhs.basic_type ? lhs : rhs;
 }
 
+// TODO
 ic_value_type get_comparison_expression_type(ic_value_type lhs, ic_value_type rhs)
 {
+    assert(lhs.indirection_level == rhs.indirection_level);
+    if (lhs.indirection_level)
+    {
+        return lhs;
+    }
 
+    return get_numeric_expression_type(lhs, rhs);
 }
 
 ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_compiler& compiler)
@@ -975,6 +1497,9 @@ ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_
         default:
             assert(false);
         }
+
+        compiler.add_inst(inst);
+        compiler.add_inst({ IC_OPC_POP });
     }
     case IC_LVALUE_LOCAL:
     {
@@ -988,6 +1513,8 @@ ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_
         }
         else
             inst.opcode = IC_OPC_STORE;
+
+        compiler.add_inst(inst);
         break;
     }
     case IC_LVALUE_GLOBAL:
@@ -1002,12 +1529,13 @@ ic_vm_expr compile_lhs_assignment(ic_expr* lhs_expr, ic_value_type rhs_type, ic_
         }
         else
             inst.opcode = IC_OPC_STORE_GLOBAL;
+
+        compiler.add_inst(inst);
         break;
     }
     default:
         assert(false);
     }
 
-    compiler.add_inst(inst);
     return lhs;
 }

@@ -451,6 +451,7 @@ struct ic_function
     ic_param params[IC_MAX_ARGC];
     ic_inst* bytecode; // todo move to a union
     int stack_size; // same
+    int by_size; // todo; used for dumping bytecode
 
     union
     {
@@ -485,13 +486,6 @@ struct ic_global
     };
 };
 
-struct ic_vm_var
-{
-    ic_value_type type;
-    ic_string name;
-    int idx;
-};
-
 struct ic_stmt_result
 {
     ic_stmt_result_type type;
@@ -513,6 +507,8 @@ enum ic_opcode
 {
     IC_OPC_PUSH,
     IC_OPC_POP,
+    IC_OPC_SWAP,
+    IC_OPC_CLONE,
     IC_OPC_CALL, // last function argument is at the top of a operand stack (order is not reversed)
     IC_OPC_RETURN,
     IC_OPC_LOGICAL_NOT,
@@ -534,7 +530,7 @@ enum ic_opcode
     IC_OPC_STORE_STRUCT_GLOBAL,
 
     // order of operands is reversed (data before address)
-    // address is popped, data is not popped
+    // no operands are popped
     IC_OPC_STORE_1_AT,
     IC_OPC_STORE_4_AT,
     IC_OPC_STORE_8_AT,
@@ -546,12 +542,12 @@ enum ic_opcode
     IC_OPC_DEREFERENCE_8,
     IC_OPC_DEREFERENCE_STRUCT,
 
-    IC_OPC_COPMARE_E_S32,
-    IC_OPC_COPMARE_NE_S32,
-    IC_OPC_COPMARE_G_S32,
-    IC_OPC_COPMARE_GE_S32,
-    IC_OPC_COPMARE_L_S32,
-    IC_OPC_COPMARE_LE_S32,
+    IC_OPC_COMPARE_E_S32,
+    IC_OPC_COMPARE_NE_S32,
+    IC_OPC_COMPARE_G_S32,
+    IC_OPC_COMPARE_GE_S32,
+    IC_OPC_COMPARE_L_S32,
+    IC_OPC_COMPARE_LE_S32,
     IC_OPC_NEGATE_S32,
     IC_OPC_ADD_S32,
     IC_OPC_SUB_S32,
@@ -559,36 +555,36 @@ enum ic_opcode
     IC_OPC_DIV_S32,
     IC_OPC_MODULO_S32,
 
-    IC_OPC_COPMARE_E_F32,
-    IC_OPC_COPMARE_NE_F32,
-    IC_OPC_COPMARE_G_F32,
-    IC_OPC_COPMARE_GE_F32,
-    IC_OPC_COPMARE_L_F32,
-    IC_OPC_COPMARE_LE_F32,
+    IC_OPC_COMPARE_E_F32,
+    IC_OPC_COMPARE_NE_F32,
+    IC_OPC_COMPARE_G_F32,
+    IC_OPC_COMPARE_GE_F32,
+    IC_OPC_COMPARE_L_F32,
+    IC_OPC_COMPARE_LE_F32,
     IC_OPC_NEGATE_F32,
     IC_OPC_ADD_F32,
     IC_OPC_SUB_F32,
     IC_OPC_MUL_F32,
     IC_OPC_DIV_F32,
 
-    IC_OPC_COPMARE_E_F64,
-    IC_OPC_COPMARE_NE_F64,
-    IC_OPC_COPMARE_G_F64,
-    IC_OPC_COPMARE_GE_F64,
-    IC_OPC_COPMARE_L_F64,
-    IC_OPC_COPMARE_LE_F64,
+    IC_OPC_COMPARE_E_F64,
+    IC_OPC_COMPARE_NE_F64,
+    IC_OPC_COMPARE_G_F64,
+    IC_OPC_COMPARE_GE_F64,
+    IC_OPC_COMPARE_L_F64,
+    IC_OPC_COMPARE_LE_F64,
     IC_OPC_NEGATE_F64,
     IC_OPC_ADD_F64,
     IC_OPC_SUB_F64,
     IC_OPC_MUL_F64,
     IC_OPC_DIV_F64,
 
-    IC_OPC_COPMARE_E_PTR,
-    IC_OPC_COPMARE_NE_PTR,
-    IC_OPC_COPMARE_G_PTR,
-    IC_OPC_COPMARE_GE_PTR,
-    IC_OPC_COPMARE_L_PTR,
-    IC_OPC_COPMARE_LE_PTR,
+    IC_OPC_COMPARE_E_PTR,
+    IC_OPC_COMPARE_NE_PTR,
+    IC_OPC_COMPARE_G_PTR,
+    IC_OPC_COMPARE_GE_PTR,
+    IC_OPC_COMPARE_L_PTR,
+    IC_OPC_COMPARE_LE_PTR,
     IC_OPC_ADD_PTR_S32,
     IC_OPC_SUB_PTR_S32,
 
@@ -652,7 +648,9 @@ union ic_inst_operand
 
 struct ic_inst
 {
-    unsigned char opcode;
+    // todo
+    //unsigned char opcode;
+    int opcode;
     ic_inst_operand operand;
 };
 
@@ -739,9 +737,12 @@ struct ic_vm
     }
 };
 
-struct ic_runtime;
-void compile(ic_function& function, ic_runtime& runtime);
-void run_bytecode(ic_vm& vm);
+struct ic_vm_var
+{
+    ic_value_type type;
+    ic_string name;
+    int idx;
+};
 
 struct ic_runtime
 {
@@ -765,8 +766,8 @@ struct ic_runtime
     std::vector<ic_scope> _scopes;
     std::vector<ic_function> _functions;
     std::vector<ic_struct> _structs;
-    int _global_size;
     std::vector<ic_vm_var> _global_vars;
+    int _global_size;
 
     void push_scope(bool new_stack_frame = false);
     void pop_scope();
@@ -781,3 +782,6 @@ struct ic_runtime
 bool ic_string_compare(ic_string str1, ic_string str2);
 bool is_non_pointer_struct(ic_value_type& type);
 ic_value_type non_pointer_type(ic_basic_type type);
+ic_value_type pointer1_type(ic_basic_type type, bool at_const = false);
+void compile(ic_function& function, ic_runtime& runtime);
+void run_bytecode(ic_vm& vm);
