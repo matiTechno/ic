@@ -15,13 +15,13 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_NEGATE_S32);
+            compiler.add_instr(IC_OPC_NEGATE_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_NEGATE_F32);
+            compiler.add_instr(IC_OPC_NEGATE_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_NEGATE_F64);
+            compiler.add_instr(IC_OPC_NEGATE_F64);
             break;
         }
         return { expr_type, false };
@@ -31,7 +31,7 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         ic_value value = compile_expr(expr->_unary.expr, compiler);
 
         if (value.type.indirection_level)
-            compiler.add_inst(IC_OPC_LOGICAL_NOT_PTR);
+            compiler.add_instr(IC_OPC_LOGICAL_NOT_PTR);
         else
         {
             ic_type expr_type = get_numeric_expr_type(value.type);
@@ -40,13 +40,13 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_LOGICAL_NOT_S32);
+                compiler.add_instr(IC_OPC_LOGICAL_NOT_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_LOGICAL_NOT_F32);
+                compiler.add_instr(IC_OPC_LOGICAL_NOT_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_LOGICAL_NOT_F64);
+                compiler.add_instr(IC_OPC_LOGICAL_NOT_F64);
                 break;
             }
         }
@@ -59,8 +59,8 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         int offset = expr->token.type == IC_TOK_PLUS_PLUS ? 1 : -1;
         ic_value value = compile_expr(expr->_unary.expr, compiler, false);
         assert_modifiable_lvalue(value);
-        compiler.add_inst(IC_OPC_CLONE);
-        compiler.add_inst(IC_OPC_CLONE);
+        compiler.add_instr(IC_OPC_CLONE);
+        compiler.add_instr(IC_OPC_CLONE);
         compile_dereference(value.type, compiler);
         ic_type expr_type = get_numeric_expr_type(value.type);
         compile_implicit_conversion(expr_type, value.type, compiler);
@@ -68,31 +68,31 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst_push({ .s32 = offset });
-            compiler.add_inst(IC_OPC_ADD_S32);
+            compiler.add_instr_push({ .s32 = offset });
+            compiler.add_instr(IC_OPC_ADD_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst_push({ .f32 = (float)offset }); // fuck this, narrowing conversion errors are such a pain in the ass
-            compiler.add_inst(IC_OPC_ADD_F32);
+            compiler.add_instr_push({ .f32 = (float)offset }); // fuck this, narrowing conversion errors are such a pain in the ass
+            compiler.add_instr(IC_OPC_ADD_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst_push({ .f64 = (double)offset });
-            compiler.add_inst(IC_OPC_ADD_F64);
+            compiler.add_instr_push({ .f64 = (double)offset });
+            compiler.add_instr(IC_OPC_ADD_F64);
             break;
         }
 
         compile_implicit_conversion(value.type, expr_type, compiler);
-        compiler.add_inst(IC_OPC_SWAP);
+        compiler.add_instr(IC_OPC_SWAP);
         compile_store_at(value.type, compiler);
 
         if (substitute_lvalue)
         {
-            compiler.add_inst(IC_OPC_SWAP);
-            compiler.add_inst(IC_OPC_POP);
+            compiler.add_instr(IC_OPC_SWAP);
+            compiler.add_instr(IC_OPC_POP);
             return { value.type, false };
         }
 
-        compiler.add_inst(IC_OPC_POP);
+        compiler.add_instr(IC_OPC_POP);
         return value;
     }
     case IC_TOK_AMPERSAND:

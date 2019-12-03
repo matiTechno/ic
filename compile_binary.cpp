@@ -37,13 +37,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_ADD_S32);
+            compiler.add_instr(IC_OPC_ADD_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_ADD_F32);
+            compiler.add_instr(IC_OPC_ADD_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_ADD_F64);
+            compiler.add_instr(IC_OPC_ADD_F64);
             break;
         }
         return compile_assignment(expr->_binary.lhs, expr_type, compiler);
@@ -61,13 +61,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_SUB_S32);
+            compiler.add_instr(IC_OPC_SUB_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_SUB_F32);
+            compiler.add_instr(IC_OPC_SUB_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_SUB_F64);
+            compiler.add_instr(IC_OPC_SUB_F64);
             break;
         }
         return compile_assignment(expr->_binary.lhs, expr_type, compiler);
@@ -85,13 +85,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_MUL_S32);
+            compiler.add_instr(IC_OPC_MUL_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_MUL_F32);
+            compiler.add_instr(IC_OPC_MUL_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_MUL_F64);
+            compiler.add_instr(IC_OPC_MUL_F64);
             break;
         }
         return compile_assignment(expr->_binary.lhs, expr_type, compiler);
@@ -109,13 +109,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_DIV_S32);
+            compiler.add_instr(IC_OPC_DIV_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_DIV_F32);
+            compiler.add_instr(IC_OPC_DIV_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_DIV_F64);
+            compiler.add_instr(IC_OPC_DIV_F64);
             break;
         }
         return compile_assignment(expr->_binary.lhs, expr_type, compiler);
@@ -125,12 +125,12 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
         int idx_jump_true = compiler.bytecode.size();
-        compiler.add_inst(IC_OPC_JUMP_TRUE);
+        compiler.add_instr(IC_OPC_JUMP_TRUE);
         ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
-        compiler.add_inst_number(IC_OPC_JUMP, compiler.bytecode.size() + 2);
-        compiler.bytecode[idx_jump_true].operand.number = compiler.bytecode.size();
-        compiler.add_inst_push({ .s32 = 1 });
+        compiler.add_instr(IC_OPC_JUMP, compiler.bytecode.size() + 2);
+        compiler.bytecode[idx_jump_true].op1 = compiler.bytecode.size();
+        compiler.add_instr_push({ .s32 = 1 });
         return { non_pointer_type(IC_TYPE_S32), false };
     }
     case IC_TOK_AMPERSAND_AMPERSAND:
@@ -138,12 +138,12 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
         int idx_jump_false = compiler.bytecode.size();
-        compiler.add_inst(IC_OPC_JUMP_FALSE);
+        compiler.add_instr(IC_OPC_JUMP_FALSE);
         ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
-        compiler.add_inst_number(IC_OPC_JUMP, compiler.bytecode.size() + 2);
-        compiler.bytecode[idx_jump_false].operand.number = compiler.bytecode.size();
-        compiler.add_inst_push({ .s32 = 0 });
+        compiler.add_instr(IC_OPC_JUMP, compiler.bytecode.size() + 2);
+        compiler.bytecode[idx_jump_false].op1 = compiler.bytecode.size();
+        compiler.add_instr_push({ .s32 = 0 });
         return { non_pointer_type(IC_TYPE_S32), false };
     }
     case IC_TOK_EQUAL_EQUAL:
@@ -156,7 +156,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compiler.add_inst(IC_OPC_COMPARE_E_PTR);
+            compiler.add_instr(IC_OPC_COMPARE_E_PTR);
         }
         else
         {
@@ -169,13 +169,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_COMPARE_E_S32);
+                compiler.add_instr(IC_OPC_COMPARE_E_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_COMPARE_E_F32);
+                compiler.add_instr(IC_OPC_COMPARE_E_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_COMPARE_E_F64);
+                compiler.add_instr(IC_OPC_COMPARE_E_F64);
                 break;
             }
         }
@@ -191,7 +191,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compiler.add_inst(IC_OPC_COMPARE_NE_PTR);
+            compiler.add_instr(IC_OPC_COMPARE_NE_PTR);
         }
         else
         {
@@ -204,13 +204,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_COMPARE_NE_S32);
+                compiler.add_instr(IC_OPC_COMPARE_NE_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_COMPARE_NE_F32);
+                compiler.add_instr(IC_OPC_COMPARE_NE_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_COMPARE_NE_F64);
+                compiler.add_instr(IC_OPC_COMPARE_NE_F64);
                 break;
             }
         }
@@ -226,7 +226,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compiler.add_inst(IC_OPC_COMPARE_G_PTR);
+            compiler.add_instr(IC_OPC_COMPARE_G_PTR);
         }
         else
         {
@@ -239,13 +239,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_COMPARE_G_S32);
+                compiler.add_instr(IC_OPC_COMPARE_G_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_COMPARE_G_F32);
+                compiler.add_instr(IC_OPC_COMPARE_G_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_COMPARE_G_F64);
+                compiler.add_instr(IC_OPC_COMPARE_G_F64);
                 break;
             }
         }
@@ -261,7 +261,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compiler.add_inst(IC_OPC_COMPARE_GE_PTR);
+            compiler.add_instr(IC_OPC_COMPARE_GE_PTR);
         }
         else
         {
@@ -274,13 +274,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_COMPARE_GE_S32);
+                compiler.add_instr(IC_OPC_COMPARE_GE_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_COMPARE_GE_F32);
+                compiler.add_instr(IC_OPC_COMPARE_GE_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_COMPARE_GE_F64);
+                compiler.add_instr(IC_OPC_COMPARE_GE_F64);
                 break;
             }
         }
@@ -296,7 +296,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compiler.add_inst(IC_OPC_COMPARE_L_PTR);
+            compiler.add_instr(IC_OPC_COMPARE_L_PTR);
         }
         else
         {
@@ -309,13 +309,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_COMPARE_L_S32);
+                compiler.add_instr(IC_OPC_COMPARE_L_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_COMPARE_L_F32);
+                compiler.add_instr(IC_OPC_COMPARE_L_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_COMPARE_L_F64);
+                compiler.add_instr(IC_OPC_COMPARE_L_F64);
                 break;
             }
         }
@@ -331,7 +331,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compiler.add_inst(IC_OPC_COMPARE_LE_PTR);
+            compiler.add_instr(IC_OPC_COMPARE_LE_PTR);
         }
         else
         {
@@ -344,13 +344,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
             switch (expr_type.basic_type)
             {
             case IC_TYPE_S32:
-                compiler.add_inst(IC_OPC_COMPARE_LE_S32);
+                compiler.add_instr(IC_OPC_COMPARE_LE_S32);
                 break;
             case IC_TYPE_F32:
-                compiler.add_inst(IC_OPC_COMPARE_LE_F32);
+                compiler.add_instr(IC_OPC_COMPARE_LE_F32);
                 break;
             case IC_TYPE_F64:
-                compiler.add_inst(IC_OPC_COMPARE_LE_F64);
+                compiler.add_instr(IC_OPC_COMPARE_LE_F64);
                 break;
             }
         }
@@ -397,7 +397,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
                 }
             }
 
-            compiler.add_inst_number(IC_OPC_ADD_PTR_S32, type_size);
+            compiler.add_instr(IC_OPC_ADD_PTR_S32, type_size);
             return { lhs_type, false };
         }
         ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
@@ -409,13 +409,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_ADD_S32);
+            compiler.add_instr(IC_OPC_ADD_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_ADD_F32);
+            compiler.add_instr(IC_OPC_ADD_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_ADD_F64);
+            compiler.add_instr(IC_OPC_ADD_F64);
             break;
         }
         return { expr_type, false };
@@ -460,7 +460,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
                 }
             }
 
-            compiler.add_inst_number(IC_OPC_SUB_PTR_S32, type_size);
+            compiler.add_instr(IC_OPC_SUB_PTR_S32, type_size);
             return { lhs_type, false };
         }
         ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
@@ -472,13 +472,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_SUB_S32);
+            compiler.add_instr(IC_OPC_SUB_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_SUB_F32);
+            compiler.add_instr(IC_OPC_SUB_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_SUB_F64);
+            compiler.add_instr(IC_OPC_SUB_F64);
             break;
         }
         return { expr_type, false };
@@ -496,13 +496,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_MUL_S32);
+            compiler.add_instr(IC_OPC_MUL_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_MUL_F32);
+            compiler.add_instr(IC_OPC_MUL_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_MUL_F64);
+            compiler.add_instr(IC_OPC_MUL_F64);
             break;
         }
         return { expr_type, false };
@@ -520,13 +520,13 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         switch (expr_type.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_inst(IC_OPC_DIV_S32);
+            compiler.add_instr(IC_OPC_DIV_S32);
             break;
         case IC_TYPE_F32:
-            compiler.add_inst(IC_OPC_DIV_F32);
+            compiler.add_instr(IC_OPC_DIV_F32);
             break;
         case IC_TYPE_F64:
-            compiler.add_inst(IC_OPC_DIV_F64);
+            compiler.add_instr(IC_OPC_DIV_F64);
             break;
         }
         return { expr_type, false };
@@ -541,7 +541,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
         compile_implicit_conversion(expr_type, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
         compile_implicit_conversion(expr_type, rhs_type, compiler);
-        compiler.add_inst(IC_OPC_MODULO_S32);
+        compiler.add_instr(IC_OPC_MODULO_S32);
         return { expr_type, false };
     }
     default:

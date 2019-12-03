@@ -411,7 +411,7 @@ struct ic_param
 
 using ic_host_function = ic_data(*)(ic_data* argv);
 
-struct ic_inst;
+struct ic_instr;
 
 struct ic_function
 {
@@ -420,9 +420,9 @@ struct ic_function
     ic_token token;
     int param_count;
     ic_param params[IC_MAX_ARGC];
-    ic_inst* bytecode; // todo move to a union
+    ic_instr* bytecode; // todo move to a union
     int stack_size; // same
-    int by_size; // todo; used for dumping bytecode
+    int by_size;
     int param_size;
     int return_size;
 
@@ -590,27 +590,21 @@ enum ic_opcode
     IC_OPC_JUMP_END,
 };
 
-union ic_inst_operand
-{
-    union
-    {
-        ic_data data;
-        int number;
-
-        // todo..., additional 4 bytes added for every instruction..., maybe pass one operand as data or something
-        struct
-        {
-            int dst; // counting from the end pointer of the operand stack
-            int src; // same
-            int size; // in data, not bytes
-        } memmove;
-    };
-};
-
-struct ic_inst // todo, rename to instr, inst is misleading, e.g. inst as an instance
+struct ic_instr
 {
     unsigned char opcode;
-    ic_inst_operand operand;
+
+    union
+    {
+        ic_data op_push;
+
+        struct
+        {
+            int op1;
+            int op2;
+            int op3;
+        };
+    };
 };
 
 struct ic_stack_frame
@@ -619,8 +613,8 @@ struct ic_stack_frame
     int size;
     int return_size;
     ic_data* bp; // base pointer
-    ic_inst* ip; // instruction pointer
-    ic_inst* bytecode; // needed for jumps
+    ic_instr* ip; // instruction pointer
+    ic_instr* bytecode; // needed for jumps
 };
 
 struct ic_vm
@@ -633,7 +627,7 @@ struct ic_vm
     int call_stack_size;
     int operand_stack_size;
 
-    void push_stack_frame(ic_inst* bytecode, int stack_size, int return_size);
+    void push_stack_frame(ic_instr* bytecode, int stack_size, int return_size);
     void pop_stack_frame();
 
     void push_op(ic_data data)
@@ -730,11 +724,11 @@ ic_type non_pointer_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type, bool at_const = false);
 void compile(ic_function& function, ic_runtime& runtime);
 void run_bytecode(ic_vm& vm);
-void dump_bytecode(ic_inst* bytecode, int size);
+void dump_bytecode(ic_instr* bytecode, int size);
 
 struct ic_compiler
 {
-    std::vector<ic_inst> bytecode;
+    std::vector<ic_instr> bytecode;
     std::vector<ic_scope> scopes;
     std::vector<ic_var> vars;
     ic_runtime* runtime;
@@ -759,45 +753,28 @@ struct ic_compiler
         scopes.pop_back();
     }
 
-    void add_inst_push(ic_data data)
+    void add_instr_push(ic_data data)
     {
         if (!emit_bytecode)
             return;
 
-        ic_inst inst;
-        inst.opcode = IC_OPC_PUSH;
-        inst.operand.data = data;
-        bytecode.push_back(inst);
+        ic_instr instr;
+        instr.opcode = IC_OPC_PUSH;
+        instr.op_push = data;
+        bytecode.push_back(instr);
     }
 
-    void add_inst_number(unsigned char opcode, int number)
+    void add_instr(unsigned char opcode, int num1 = 0, int num2 = 0, int num3 = 0)
     {
         if (!emit_bytecode)
             return;
 
-        ic_inst inst;
-        inst.opcode = opcode;
-        inst.operand.number = number;
-        bytecode.push_back(inst);
-    }
-
-    void add_inst(unsigned char opcode)
-    {
-        if (!emit_bytecode)
-            return;
-
-        ic_inst inst;
-        inst.opcode = opcode;
-        bytecode.push_back(inst);
-    }
-
-    // ...
-    void add_inst2(ic_inst inst)
-    {
-        if (!emit_bytecode)
-            return;
-
-        bytecode.push_back(inst);
+        ic_instr instr;
+        instr.opcode = opcode;
+        instr.op1 = num1;
+        instr.op2 = num2;
+        instr.op3 = num3;
+        bytecode.push_back(instr);
     }
 
     ic_var declare_var(ic_type type, ic_string name)

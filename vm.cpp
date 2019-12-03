@@ -1,6 +1,6 @@
 #include "ic.h"
 
-void ic_vm::push_stack_frame(ic_inst* bytecode, int stack_size, int return_size)
+void ic_vm::push_stack_frame(ic_instr* bytecode, int stack_size, int return_size)
 {
     ic_stack_frame frame;
     frame.prev_operand_stack_size = operand_stack_size;
@@ -34,11 +34,10 @@ void run_bytecode(ic_vm& vm)
 
     for(;;)
     {
-        ic_inst inst = *frame->ip;
+        ic_instr instr = *frame->ip;
         ++frame->ip;
-        ic_opcode opcode = (ic_opcode)inst.opcode; // todo, for debugging
 
-        switch (opcode)
+        switch (instr.opcode)
         {
         case IC_OPC_BREAKPOINT:
         {
@@ -51,7 +50,7 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_PUSH:
         {
-            vm.push_op(inst.operand.data);
+            vm.push_op(instr.op_push);
             break;
         }
         case IC_OPC_POP:
@@ -61,7 +60,7 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_POP_MANY:
         {
-            vm.pop_op_many(inst.operand.number);
+            vm.pop_op_many(instr.op1);
             break;
         }
         case IC_OPC_SWAP:
@@ -74,9 +73,9 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_MEMMOVE:
         {
-            void* dst = vm.end_op() - inst.operand.memmove.dst;
-            void* src = vm.end_op() - inst.operand.memmove.src;
-            memmove(dst, src,  inst.operand.memmove.size * sizeof(ic_data));
+            void* dst = vm.end_op() - instr.op1;
+            void* src = vm.end_op() - instr.op2;
+            memmove(dst, src,  instr.op3);
             break;
         }
         case IC_OPC_CLONE:
@@ -86,7 +85,7 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_CALL:
         {
-            ic_function& function = vm.functions[inst.operand.number];
+            ic_function& function = vm.functions[instr.op1];
             int param_size = function.param_size;
 
             if (function.type == IC_FUN_HOST)
@@ -120,26 +119,26 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_JUMP_TRUE:
         {
             if(vm.pop_op().s32)
-                frame->ip = frame->bytecode + inst.operand.number;
+                frame->ip = frame->bytecode + instr.op1;
 
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
             if(!vm.pop_op().s32)
-                frame->ip = frame->bytecode + inst.operand.number;
+                frame->ip = frame->bytecode + instr.op1;
 
             break;
         }
         case IC_OPC_JUMP:
         {
-            frame->ip = frame->bytecode + inst.operand.number;
+            frame->ip = frame->bytecode + instr.op1;
             break;
         }
         case IC_OPC_ADDRESS_OF:
         {
             vm.push_op();
-            vm.top_op().pointer = &frame->bp[inst.operand.number];
+            vm.top_op().pointer = &frame->bp[instr.op1];
             break;
         }
         case IC_OPC_STORE_1_AT:
@@ -163,7 +162,7 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_STORE_STRUCT_AT:
         {
             void* dst = vm.pop_op().pointer;
-            int size = inst.operand.number;
+            int size = instr.op1;
             memcpy(dst, vm.end_op() - size, size * sizeof(ic_data));
             break;
         }
@@ -188,7 +187,7 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_DEREFERENCE_STRUCT:
         {
             void* ptr = vm.pop_op().pointer;
-            int size = inst.operand.number;
+            int size = instr.op1;
             vm.push_op_many(size);
             memcpy(vm.end_op() - size, ptr, size * sizeof(ic_data));
             break;
@@ -452,13 +451,13 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_ADD_PTR_S32:
         {
-            int bytes = vm.pop_op().s32 * inst.operand.number;
+            int bytes = vm.pop_op().s32 * instr.op1;
             vm.top_op().pointer = (char*)vm.top_op().pointer + bytes;
             break;
         }
         case IC_OPC_SUB_PTR_S32:
         {
-            int bytes = vm.pop_op().s32 * inst.operand.number;
+            int bytes = vm.pop_op().s32 * instr.op1;
             vm.top_op().pointer = (char*)vm.top_op().pointer - bytes;
             break;
         }
@@ -543,14 +542,14 @@ void run_bytecode(ic_vm& vm)
     } // while
 }
 
-void dump_bytecode(ic_inst* bytecode,int  count)
+void dump_bytecode(ic_instr* bytecode,int  count)
 {
     
     for (int i = 0; i < count; ++i)
     {
         printf("%d ", i);
-        ic_inst inst = bytecode[i];
-        switch (inst.opcode)
+        ic_instr instr = bytecode[i];
+        switch (instr.opcode)
         {
         case IC_OPC_BREAKPOINT:
         {
@@ -604,17 +603,17 @@ void dump_bytecode(ic_inst* bytecode,int  count)
         }
         case IC_OPC_JUMP_TRUE:
         {
-            printf("jump true: %d\n", inst.operand.number);
+            printf("jump true: %d\n", instr.op1);
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
-            printf("jump false: %d\n", inst.operand.number);
+            printf("jump false: %d\n", instr.op1);
             break;
         }
         case IC_OPC_JUMP:
         {
-            printf("jump: %d\n", inst.operand.number);
+            printf("jump: %d\n", instr.op1);
             break;
         }
         case IC_OPC_ADDRESS_OF:
