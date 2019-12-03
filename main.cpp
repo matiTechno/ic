@@ -83,13 +83,19 @@ ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
 
 ic_data ic_host_prints(ic_data* argv)
 {
-    printf("print: %s\n", (const char*)argv->pointer);
+    printf("prints: %s\n", (const char*)argv->pointer);
     return {};
 }
 
 ic_data ic_host_printf(ic_data* argv)
 {
-    printf("print: %f\n", argv->f64);
+    printf("printf: %f\n", argv->f64);
+    return {};
+}
+
+ic_data ic_host_printp(ic_data* argv)
+{
+    printf("printp: %p\n", argv->pointer);
     return {};
 }
 
@@ -168,6 +174,18 @@ void ic_runtime::init()
         function.param_count = 1;
         function.params[0].type = non_pointer_type(IC_TYPE_F64);
         function.callback = ic_host_printf;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "printp";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_VOID);
+        function.param_count = 1;
+        function.params[0].type = pointer1_type(IC_TYPE_VOID, true);
+        function.callback = ic_host_printp;
         _functions.push_back(function);
     }
     {

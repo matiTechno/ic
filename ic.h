@@ -37,6 +37,7 @@
 // map bytecode to source (debug view)
 // rename ic_value to ic_expr_result or something like that
 // exit instruction
+// expose ast to a script - metaprogramming like in jai
 
 template<typename T, int N>
 struct ic_deque

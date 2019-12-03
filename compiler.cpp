@@ -49,7 +49,9 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         while (body_stmt)
         {
-            assert(!returned); // don't allow code that is after a return statement (dead code)
+            if (returned) // dead code elimination
+                break;
+
             returned = compile_stmt(body_stmt, compiler);
             body_stmt = body_stmt->next;
         }
@@ -307,7 +309,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
                 type_size = 8;
                 break;
             case IC_TYPE_STRUCT:
-                type_size = compiler.get_struct(lhs.type.struct_name)->num_data;
+                type_size = compiler.get_struct(lhs.type.struct_name)->num_data * sizeof(ic_data);
                 break;
             default:
                 assert(false); // e.g. pointer to void or nullptr
@@ -336,6 +338,10 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
         {
             assert(value.type.indirection_level == 1);
             assert(expr->token.type == IC_TOK_ARROW);
+
+            if (value.lvalue)
+                compile_dereference(value.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
+            // we need to dereference pointer to get a struct address
         }
         else
             assert(expr->token.type == IC_TOK_DOT);

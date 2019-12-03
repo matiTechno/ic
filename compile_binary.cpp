@@ -391,7 +391,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
                     type_size = 8;
                     break;
                 case IC_TYPE_STRUCT:
-                    type_size = compiler.get_struct(lhs_type.struct_name)->num_data;
+                    type_size = compiler.get_struct(lhs_type.struct_name)->num_data * sizeof(ic_data);
                     break;
                 default:
                     assert(false); // e.g. pointer to void or nullptr
@@ -456,7 +456,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
                     type_size = 8;
                     break;
                 case IC_TYPE_STRUCT:
-                    type_size = compiler.get_struct(lhs_type.struct_name)->num_data;
+                    type_size = compiler.get_struct(lhs_type.struct_name)->num_data * sizeof(ic_data);
                     break;
                 default:
                     assert(false);

@@ -55,6 +55,7 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
     case IC_TOK_PLUS_PLUS:
     case IC_TOK_MINUS_MINUS:
     {
+        // todo, support pointer arithmetic
         int offset = expr->token.type == IC_TOK_PLUS_PLUS ? 1 : -1;
         ic_value value = compile_expr(expr->_unary.expr, compiler, false);
         assert_modifiable_lvalue(value);
