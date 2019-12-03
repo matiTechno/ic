@@ -11,7 +11,7 @@ ic_value compile_assignment(ic_expr* lhs_expr, ic_type rhs_type, ic_compiler& co
     }
     ic_value lhs = compile_expr(lhs_expr, compiler, false);
     assert_modifiable_lvalue(lhs);
-    compile_store_at(lhs.type, compiler);
+    compile_store(lhs.type, compiler);
     return lhs;
 }
 

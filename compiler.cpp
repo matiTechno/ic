@@ -159,12 +159,12 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             ic_value value = compile_expr(stmt->_var_declaration.expr, compiler);
             compile_implicit_conversion(var.type, value.type, compiler);
-            compiler.add_instr(IC_OPC_ADDRESS_OF, var.idx);
+            compiler.add_instr(IC_OPC_ADDRESS, var.idx);
 
             if (is_non_pointer_struct(var.type))
-                compiler.add_instr(IC_OPC_STORE_STRUCT_AT, compiler.get_struct(var.type.struct_name)->num_data);
+                compiler.add_instr(IC_OPC_STORE_STRUCT, compiler.get_struct(var.type.struct_name)->num_data);
             else
-                compiler.add_instr(IC_OPC_STORE_8_AT); // variables of any non-struct type occupy 8 bytes
+                compiler.add_instr(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
         }
         else
             assert((var.type.const_mask & 1) == 0);
@@ -216,7 +216,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     return returned;
 }
 
-ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue)
+ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 {
     assert(expr);
 
@@ -226,7 +226,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
         return compile_binary(expr, compiler);
 
     case IC_EXPR_UNARY:
-        return compile_unary(expr, compiler, substitute_lvalue);
+        return compile_unary(expr, compiler, load_lvalue);
 
     case IC_EXPR_SIZEOF:
     {
@@ -315,10 +315,10 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
         lhs.type.const_mask = lhs.type.const_mask >> 1;
         lhs.type.indirection_level -= 1;
 
-        if (substitute_lvalue)
-            compile_dereference(lhs.type, compiler);
+        if (load_lvalue)
+            compile_load(lhs.type, compiler);
 
-        return { lhs.type, !substitute_lvalue };
+        return { lhs.type, !load_lvalue };
     }
     case IC_EXPR_MEMBER_ACCESS:
     {
@@ -331,7 +331,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
             assert(expr->token.type == IC_TOK_ARROW);
 
             if (value.lvalue)
-                compile_dereference(value.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
+                compile_load(value.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
             // we need to dereference pointer to get a struct address
             // this is very tricky and it is the issue with current design
         }
@@ -369,7 +369,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
             compiler.add_instr_push({ .s32 = data_offset });
             compiler.add_instr(IC_OPC_ADD_PTR_S32, sizeof(ic_data));
 
-            if (!substitute_lvalue)
+            if (!load_lvalue)
             {
                 // propagate constness to member data
                 if (value.type.indirection_level)
@@ -380,20 +380,20 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
                 return { target_type, true };
             }
 
-            compile_dereference(target_type, compiler);
+            compile_load(target_type, compiler);
             return { target_type, false };
         }
 
         int target_type_size = is_non_pointer_struct(target_type) ?
             compiler.get_struct(target_type.struct_name)->num_data : 1;
 
-        compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, target_type_size * sizeof(ic_data));
+        compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, target_type_size);
         compiler.add_instr(IC_OPC_POP_MANY, _struct->num_data - target_type_size);
         return { target_type, false };
     }
     case IC_EXPR_PARENTHESES:
     {
-        return compile_expr(expr->_parentheses.expr, compiler, substitute_lvalue);
+        return compile_expr(expr->_parentheses.expr, compiler, load_lvalue);
     }
     case IC_EXPR_FUNCTION_CALL:
     {
@@ -434,12 +434,12 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
         case IC_TOK_IDENTIFIER:
         {
             ic_var var = compiler.get_var(token.string);
-            compiler.add_instr(IC_OPC_ADDRESS_OF, var.idx);
+            compiler.add_instr(IC_OPC_ADDRESS, var.idx);
 
-            if (!substitute_lvalue)
+            if (!load_lvalue)
                 return { var.type, true };
 
-            compile_dereference(var.type, compiler);
+            compile_load(var.type, compiler);
             return { var.type, false };
 
         }

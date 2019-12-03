@@ -203,11 +203,11 @@ void assert_modifiable_lvalue(ic_value value)
     assert((value.type.const_mask & 1) == 0); // watch out for operator precedence
 }
 
-void compile_dereference(ic_type type, ic_compiler& compiler)
+void compile_load(ic_type type, ic_compiler& compiler)
 {
     if (type.indirection_level)
     {
-        compiler.add_instr(IC_OPC_DEREFERENCE_8);
+        compiler.add_instr(IC_OPC_LOAD_8);
         return;
     }
 
@@ -216,27 +216,27 @@ void compile_dereference(ic_type type, ic_compiler& compiler)
     case IC_TYPE_BOOL:
     case IC_TYPE_S8:
     case IC_TYPE_U8:
-        compiler.add_instr(IC_OPC_DEREFERENCE_1);
+        compiler.add_instr(IC_OPC_LOAD_1);
         return;
     case IC_TYPE_S32:
     case IC_TYPE_F32:
-        compiler.add_instr(IC_OPC_DEREFERENCE_4);
+        compiler.add_instr(IC_OPC_LOAD_4);
         return;
     case IC_TYPE_F64:
-        compiler.add_instr(IC_OPC_DEREFERENCE_8);
+        compiler.add_instr(IC_OPC_LOAD_8);
         return;
     case IC_TYPE_STRUCT:
-        compiler.add_instr(IC_OPC_DEREFERENCE_STRUCT, compiler.get_struct(type.struct_name)->num_data);
+        compiler.add_instr(IC_OPC_LOAD_STRUCT, compiler.get_struct(type.struct_name)->num_data);
         return;
     }
     assert(false);
 }
 
-void compile_store_at(ic_type type, ic_compiler& compiler)
+void compile_store(ic_type type, ic_compiler& compiler)
 {
     if (type.indirection_level)
     {
-        compiler.add_instr(IC_OPC_STORE_8_AT);
+        compiler.add_instr(IC_OPC_STORE_8);
         return;
     }
 
@@ -245,17 +245,17 @@ void compile_store_at(ic_type type, ic_compiler& compiler)
     case IC_TYPE_BOOL:
     case IC_TYPE_S8:
     case IC_TYPE_U8:
-        compiler.add_instr(IC_OPC_STORE_1_AT);
+        compiler.add_instr(IC_OPC_STORE_1);
         return;
     case IC_TYPE_S32:
     case IC_TYPE_F32:
-        compiler.add_instr(IC_OPC_STORE_4_AT);
+        compiler.add_instr(IC_OPC_STORE_4);
         return;
     case IC_TYPE_F64:
-        compiler.add_instr(IC_OPC_STORE_8_AT);
+        compiler.add_instr(IC_OPC_STORE_8);
         return;
     case IC_TYPE_STRUCT:
-        compiler.add_instr(IC_OPC_STORE_STRUCT_AT, compiler.get_struct(type.struct_name)->num_data);
+        compiler.add_instr(IC_OPC_STORE_STRUCT, compiler.get_struct(type.struct_name)->num_data);
         return;
     }
     assert(false);

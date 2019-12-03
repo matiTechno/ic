@@ -2,7 +2,7 @@
 
 // todo, rename expr_type to something else
 
-ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue)
+ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 {
     switch (expr->token.type)
     {
@@ -61,7 +61,7 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         assert_modifiable_lvalue(value);
         compiler.add_instr(IC_OPC_CLONE);
         compiler.add_instr(IC_OPC_CLONE);
-        compile_dereference(value.type, compiler);
+        compile_load(value.type, compiler);
         ic_type expr_type = get_numeric_expr_type(value.type);
         compile_implicit_conversion(expr_type, value.type, compiler);
 
@@ -83,9 +83,9 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
 
         compile_implicit_conversion(value.type, expr_type, compiler);
         compiler.add_instr(IC_OPC_SWAP);
-        compile_store_at(value.type, compiler);
+        compile_store(value.type, compiler);
 
-        if (substitute_lvalue)
+        if (load_lvalue)
         {
             compiler.add_instr(IC_OPC_SWAP);
             compiler.add_instr(IC_OPC_POP);
@@ -110,10 +110,10 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         value.type.const_mask = value.type.const_mask >> 1;
         value.type.indirection_level -= 1;
 
-        if (substitute_lvalue)
-            compile_dereference(value.type, compiler);
+        if (load_lvalue)
+            compile_load(value.type, compiler);
 
-        return { value.type, !substitute_lvalue };
+        return { value.type, !load_lvalue };
     }
     default:
         assert(false);

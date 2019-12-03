@@ -75,7 +75,7 @@ void run_bytecode(ic_vm& vm)
         {
             void* dst = vm.end_op() - instr.op1;
             void* src = vm.end_op() - instr.op2;
-            memmove(dst, src,  instr.op3);
+            memmove(dst, src,  instr.op3 * sizeof(ic_data));
             break;
         }
         case IC_OPC_CLONE:
@@ -135,56 +135,56 @@ void run_bytecode(ic_vm& vm)
             frame->ip = frame->bytecode + instr.op1;
             break;
         }
-        case IC_OPC_ADDRESS_OF:
+        case IC_OPC_ADDRESS:
         {
             vm.push_op();
             vm.top_op().pointer = &frame->bp[instr.op1];
             break;
         }
-        case IC_OPC_STORE_1_AT:
+        case IC_OPC_STORE_1:
         {
             void* ptr = vm.pop_op().pointer;
             *(char*)ptr = vm.top_op().s8;
             break;
         }
-        case IC_OPC_STORE_4_AT:
+        case IC_OPC_STORE_4:
         {
             void* ptr = vm.pop_op().pointer;
             *(int*)ptr = vm.top_op().s32;
             break;
         }
-        case IC_OPC_STORE_8_AT:
+        case IC_OPC_STORE_8:
         {
             void* ptr = vm.pop_op().pointer;
             *(double*)ptr = vm.top_op().f64;
             break;
         }
-        case IC_OPC_STORE_STRUCT_AT:
+        case IC_OPC_STORE_STRUCT:
         {
             void* dst = vm.pop_op().pointer;
             int size = instr.op1;
             memcpy(dst, vm.end_op() - size, size * sizeof(ic_data));
             break;
         }
-        case IC_OPC_DEREFERENCE_1:
+        case IC_OPC_LOAD_1:
         {
             void* ptr = vm.top_op().pointer;
             vm.top_op().s8 = *(char*)ptr;
             break;
         }
-        case IC_OPC_DEREFERENCE_4:
+        case IC_OPC_LOAD_4:
         {
             void* ptr = vm.top_op().pointer;
             vm.top_op().s32 = *(int*)ptr;
             break;
         }
-        case IC_OPC_DEREFERENCE_8:
+        case IC_OPC_LOAD_8:
         {
             void* ptr = vm.top_op().pointer;
             vm.top_op().f64 = *(double*)ptr;
             break;
         }
-        case IC_OPC_DEREFERENCE_STRUCT:
+        case IC_OPC_LOAD_STRUCT:
         {
             void* ptr = vm.pop_op().pointer;
             int size = instr.op1;
@@ -616,49 +616,49 @@ void dump_bytecode(ic_instr* bytecode,int  count)
             printf("jump: %d\n", instr.op1);
             break;
         }
-        case IC_OPC_ADDRESS_OF:
+        case IC_OPC_ADDRESS:
         {
-            printf("address of\n");
+            printf("address\n");
             break;
         }
-        case IC_OPC_STORE_1_AT:
+        case IC_OPC_STORE_1:
         {
-            printf("store 1 at\n");
+            printf("store 1\n");
             break;
         }
-        case IC_OPC_STORE_4_AT:
+        case IC_OPC_STORE_4:
         {
-            printf("store 4 at\n");
+            printf("store 4\n");
             break;
         }
-        case IC_OPC_STORE_8_AT:
+        case IC_OPC_STORE_8:
         {
-            printf("store 8 at\n");
+            printf("store 8\n");
             break;
         }
-        case IC_OPC_STORE_STRUCT_AT:
+        case IC_OPC_STORE_STRUCT:
         {
-            printf("store struct at\n");
+            printf("store struct\n");
             break;
         }
-        case IC_OPC_DEREFERENCE_1:
+        case IC_OPC_LOAD_1:
         {
-            printf("dereference\n");
+            printf("load 1\n");
             break;
         }
-        case IC_OPC_DEREFERENCE_4:
+        case IC_OPC_LOAD_4:
         {
-            printf("dereference 4\n");
+            printf("load 4\n");
             break;
         }
-        case IC_OPC_DEREFERENCE_8:
+        case IC_OPC_LOAD_8:
         {
-            printf("dereference 8\n");
+            printf("load 8\n");
             break;
         }
-        case IC_OPC_DEREFERENCE_STRUCT:
+        case IC_OPC_LOAD_STRUCT:
         {
-            printf("dereference struct\n");
+            printf("load struct\n");
             break;
         }
         case IC_OPC_COMPARE_E_S32:

@@ -483,20 +483,20 @@ enum ic_opcode
     IC_OPC_JUMP_TRUE, // expects s32
     IC_OPC_JUMP_FALSE, // expects s32
     IC_OPC_JUMP,
-    IC_OPC_ADDRESS_OF,
+    IC_OPC_ADDRESS,
 
-    // order of operands is reversed (data before address)
+    // order of stack operands is reversed (data before address)
     // address is popped, data is left
-    IC_OPC_STORE_1_AT,
-    IC_OPC_STORE_4_AT,
-    IC_OPC_STORE_8_AT,
-    IC_OPC_STORE_STRUCT_AT,
+    IC_OPC_STORE_1,
+    IC_OPC_STORE_4,
+    IC_OPC_STORE_8,
+    IC_OPC_STORE_STRUCT,
 
     // address is popped, data is pushed
-    IC_OPC_DEREFERENCE_1,
-    IC_OPC_DEREFERENCE_4,
-    IC_OPC_DEREFERENCE_8,
-    IC_OPC_DEREFERENCE_STRUCT,
+    IC_OPC_LOAD_1,
+    IC_OPC_LOAD_4,
+    IC_OPC_LOAD_8,
+    IC_OPC_LOAD_STRUCT,
 
     IC_OPC_COMPARE_E_S32,
     IC_OPC_COMPARE_NE_S32,
@@ -581,7 +581,7 @@ enum ic_opcode
     IC_OPC_F64_S32,
     IC_OPC_F64_F32,
 
-    // I don't like these (resolved during compilation)
+    // todo; I don't like these (resolved during compilation)
     IC_OPC_JUMP_CONDITION_FAIL,
     IC_OPC_JUMP_START,
     IC_OPC_JUMP_END,
@@ -854,5 +854,5 @@ ic_type get_numeric_expr_type(ic_type lhs, ic_type rhs);
 ic_type get_numeric_expr_type(ic_type type);
 void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs);
 void assert_modifiable_lvalue(ic_value value);
-void compile_dereference(ic_type type, ic_compiler& compiler);
-void compile_store_at(ic_type type, ic_compiler& compiler);
+void compile_load(ic_type type, ic_compiler& compiler);
+void compile_store(ic_type type, ic_compiler& compiler);
