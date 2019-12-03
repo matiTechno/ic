@@ -1,12 +1,9 @@
 #include "ic.h"
 
-// todo, get_expr_type() may be redundant in many cases
-// todo, rename expr type, to e.g. numeric_type, to not confuse with ic_expr.type
-
 ic_expr_result compile_assignment(ic_expr* lhs_expr, ic_type rhs_type, ic_compiler& compiler)
 {
     {
-        ic_type lhs_type = get_expr_type(lhs_expr, compiler);
+        ic_type lhs_type = get_expr_result_type(lhs_expr, compiler);
         compile_implicit_conversion(lhs_type, rhs_type, compiler);
     }
     ic_expr_result lhs = compile_expr(lhs_expr, compiler, false);
@@ -24,17 +21,17 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         ic_expr_result rhs = compile_expr(expr->_binary.rhs, compiler);
         return compile_assignment(expr->_binary.lhs, rhs.type, compiler);
     }
-    case IC_TOK_PLUS_EQUAL: // there is a lot of redundancy with get_expr_type() and compile_assignment(), fix it
+    case IC_TOK_PLUS_EQUAL: // there is a lot of redundancy with get_expr_result_type() and compile_assignment(), fix it
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_ADD_S32);
@@ -46,19 +43,19 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_ADD_F64);
             break;
         }
-        return compile_assignment(expr->_binary.lhs, expr_type, compiler);
+        return compile_assignment(expr->_binary.lhs, atype, compiler);
     }
     case IC_TOK_MINUS_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_SUB_S32);
@@ -70,19 +67,19 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_SUB_F64);
             break;
         }
-        return compile_assignment(expr->_binary.lhs, expr_type, compiler);
+        return compile_assignment(expr->_binary.lhs, atype, compiler);
     }
     case IC_TOK_STAR_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_MUL_S32);
@@ -94,19 +91,19 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_MUL_F64);
             break;
         }
-        return compile_assignment(expr->_binary.lhs, expr_type, compiler);
+        return compile_assignment(expr->_binary.lhs, atype, compiler);
     }
     case IC_TOK_SLASH_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_DIV_S32);
@@ -118,7 +115,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_DIV_F64);
             break;
         }
-        return compile_assignment(expr->_binary.lhs, expr_type, compiler);
+        return compile_assignment(expr->_binary.lhs, atype, compiler);
     }
     case IC_TOK_VBAR_VBAR:
     {
@@ -148,8 +145,8 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     }
     case IC_TOK_EQUAL_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
@@ -160,13 +157,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         }
         else
         {
-            ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+            ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
-            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_implicit_conversion(atype, lhs_type, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compile_implicit_conversion(atype, rhs_type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_COMPARE_E_S32);
@@ -183,8 +180,8 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     }
     case IC_TOK_BANG_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
@@ -195,13 +192,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         }
         else
         {
-            ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+            ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
-            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_implicit_conversion(atype, lhs_type, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compile_implicit_conversion(atype, rhs_type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_COMPARE_NE_S32);
@@ -218,8 +215,8 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     }
     case IC_TOK_GREATER:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
@@ -230,13 +227,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         }
         else
         {
-            ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+            ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
-            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_implicit_conversion(atype, lhs_type, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compile_implicit_conversion(atype, rhs_type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_COMPARE_G_S32);
@@ -253,8 +250,8 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     }
     case IC_TOK_GREATER_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
@@ -265,13 +262,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         }
         else
         {
-            ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+            ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
-            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_implicit_conversion(atype, lhs_type, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compile_implicit_conversion(atype, rhs_type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_COMPARE_GE_S32);
@@ -288,8 +285,8 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     }
     case IC_TOK_LESS:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
@@ -300,13 +297,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         }
         else
         {
-            ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+            ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
-            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_implicit_conversion(atype, lhs_type, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compile_implicit_conversion(atype, rhs_type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_COMPARE_L_S32);
@@ -323,8 +320,8 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     }
     case IC_TOK_LESS_EQUAL:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
@@ -335,13 +332,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         }
         else
         {
-            ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+            ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
             compile_expr(expr->_binary.lhs, compiler);
-            compile_implicit_conversion(expr_type, lhs_type, compiler);
+            compile_implicit_conversion(atype, lhs_type, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(expr_type, rhs_type, compiler);
+            compile_implicit_conversion(atype, rhs_type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_COMPARE_LE_S32);
@@ -359,16 +356,16 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     case IC_TOK_PLUS:
     {
         // this is unnecessary
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
-            ic_type rhs_convert_type = get_numeric_expr_type(rhs_type);
-            assert(rhs_convert_type.basic_type == IC_TYPE_S32); // only integer types can be pointer offsets + every integer type is promoted to s32
+            ic_type rhs_atype = arithmetic_expr_type(rhs_type);
+            assert(rhs_atype.basic_type == IC_TYPE_S32); // only integer types can be pointer offsets + every integer type is promoted to s32
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(rhs_convert_type, rhs_type, compiler);
+            compile_implicit_conversion(rhs_atype, rhs_type, compiler);
             int type_size;
 
             if (lhs_type.indirection_level > 1)
@@ -400,13 +397,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_ADD_PTR_S32, type_size);
             return { lhs_type, false };
         }
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_ADD_S32);
@@ -418,20 +415,20 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_ADD_F64);
             break;
         }
-        return { expr_type, false };
+        return { atype, false };
     }
     case IC_TOK_MINUS:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
 
         if (lhs_type.indirection_level)
         {
-            ic_type rhs_convert_type = get_numeric_expr_type(rhs_type);
-            assert(rhs_convert_type.basic_type == IC_TYPE_S32);
+            ic_type rhs_atype = arithmetic_expr_type(rhs_type);
+            assert(rhs_atype.basic_type == IC_TYPE_S32);
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);
-            compile_implicit_conversion(rhs_convert_type, rhs_type, compiler);
+            compile_implicit_conversion(rhs_atype, rhs_type, compiler);
             int type_size;
 
             if (lhs_type.indirection_level > 1)
@@ -463,13 +460,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_SUB_PTR_S32, type_size);
             return { lhs_type, false };
         }
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_SUB_S32);
@@ -481,19 +478,19 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_SUB_F64);
             break;
         }
-        return { expr_type, false };
+        return { atype, false };
     }
     case IC_TOK_STAR:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_MUL_S32);
@@ -505,19 +502,19 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_MUL_F64);
             break;
         }
-        return { expr_type, false };
+        return { atype, false };
     }
     case IC_TOK_SLASH:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_DIV_S32);
@@ -529,20 +526,20 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_instr(IC_OPC_DIV_F64);
             break;
         }
-        return { expr_type, false };
+        return { atype, false };
     }
     case IC_TOK_PERCENT:
     {
-        ic_type lhs_type = get_expr_type(expr->_binary.lhs, compiler);
-        ic_type rhs_type = get_expr_type(expr->_binary.rhs, compiler);
-        ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
-        assert(expr_type.basic_type == IC_TYPE_S32); // only integer types can be modulo operands + every integer type is promoted to s32
+        ic_type lhs_type = get_expr_result_type(expr->_binary.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
+        assert(atype.basic_type == IC_TYPE_S32); // only integer types can be modulo operands + every integer type is promoted to s32
         compile_expr(expr->_binary.lhs, compiler);
-        compile_implicit_conversion(expr_type, lhs_type, compiler);
+        compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
-        compile_implicit_conversion(expr_type, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler);
         compiler.add_instr(IC_OPC_MODULO_S32);
-        return { expr_type, false };
+        return { atype, false };
     }
     default:
         assert(false);

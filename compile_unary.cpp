@@ -1,7 +1,5 @@
 #include "ic.h"
 
-// todo, rename expr_type to something else, promoted_type,..., promotion_type
-
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 {
     switch (expr->token.type)
@@ -9,10 +7,10 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     case IC_TOK_MINUS:
     {
         ic_expr_result result = compile_expr(expr->_unary.expr, compiler);
-        ic_type expr_type = get_numeric_expr_type(result.type);
-        compile_implicit_conversion(expr_type, result.type, compiler);
+        ic_type atype = arithmetic_expr_type(result.type);
+        compile_implicit_conversion(atype, result.type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr(IC_OPC_NEGATE_S32);
@@ -24,7 +22,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
             compiler.add_instr(IC_OPC_NEGATE_F64);
             break;
         }
-        return { expr_type, false };
+        return { atype, false };
     }
     case IC_TOK_BANG:
     {
@@ -34,10 +32,10 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
             compiler.add_instr(IC_OPC_LOGICAL_NOT_PTR);
         else
         {
-            ic_type expr_type = get_numeric_expr_type(result.type);
-            compile_implicit_conversion(expr_type, result.type, compiler);
+            ic_type atype = arithmetic_expr_type(result.type);
+            compile_implicit_conversion(atype, result.type, compiler);
 
-            switch (expr_type.basic_type)
+            switch (atype.basic_type)
             {
             case IC_TYPE_S32:
                 compiler.add_instr(IC_OPC_LOGICAL_NOT_S32);
@@ -52,7 +50,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
         }
         return { non_pointer_type(IC_TYPE_S32), false }; // logical not pushes s32 onto operand stack
     }
-    // this produces terrible code
+    // this produces terribly long code for such a simple operation
     case IC_TOK_PLUS_PLUS:
     case IC_TOK_MINUS_MINUS:
     {
@@ -63,10 +61,10 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
         compiler.add_instr(IC_OPC_CLONE);
         compiler.add_instr(IC_OPC_CLONE);
         compile_load(result.type, compiler);
-        ic_type expr_type = get_numeric_expr_type(result.type);
-        compile_implicit_conversion(expr_type, result.type, compiler);
+        ic_type atype = arithmetic_expr_type(result.type);
+        compile_implicit_conversion(atype, result.type, compiler);
 
-        switch (expr_type.basic_type)
+        switch (atype.basic_type)
         {
         case IC_TYPE_S32:
             compiler.add_instr_push({ .s32 = offset });
@@ -82,7 +80,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
             break;
         }
 
-        compile_implicit_conversion(result.type, expr_type, compiler);
+        compile_implicit_conversion(result.type, atype, compiler);
         compiler.add_instr(IC_OPC_SWAP);
         compile_store(result.type, compiler);
 

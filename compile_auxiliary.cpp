@@ -144,16 +144,16 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
     assert(false);
 }
 
-ic_type get_expr_type(ic_expr* expr, ic_compiler& compiler)
+ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler)
 {
-    int prev = compiler.emit_bytecode;
-    compiler.emit_bytecode = false;
+    int prev = compiler.generate_bytecode;
+    compiler.generate_bytecode = false;
     ic_type type = compile_expr(expr, compiler).type;
-    compiler.emit_bytecode = prev;
+    compiler.generate_bytecode = prev;
     return type;
 }
 
-ic_type get_numeric_expr_type(ic_type lhs, ic_type rhs)
+ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs)
 {
     assert(!lhs.indirection_level && !rhs.indirection_level);
 
@@ -176,9 +176,9 @@ ic_type get_numeric_expr_type(ic_type lhs, ic_type rhs)
     return lhs.basic_type > rhs.basic_type ? lhs : rhs;
 }
 
-ic_type get_numeric_expr_type(ic_type type)
+ic_type arithmetic_expr_type(ic_type operand_type)
 {
-    return get_numeric_expr_type(type, non_pointer_type(IC_TYPE_BOOL));
+    return arithmetic_expr_type(operand_type, non_pointer_type(IC_TYPE_BOOL));
 }
 
 

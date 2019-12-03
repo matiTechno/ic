@@ -732,8 +732,8 @@ struct ic_compiler
     ic_function* function;
     int stack_size;
     int max_stack_size;
-    int loop_level;
-    bool emit_bytecode;
+    int loop_count;
+    bool generate_bytecode;
 
     void push_scope()
     {
@@ -752,7 +752,7 @@ struct ic_compiler
 
     void add_instr_push(ic_data data)
     {
-        if (!emit_bytecode)
+        if (!generate_bytecode)
             return;
 
         ic_instr instr;
@@ -763,7 +763,7 @@ struct ic_compiler
 
     void add_instr(unsigned char opcode, int num1 = 0, int num2 = 0, int num3 = 0)
     {
-        if (!emit_bytecode)
+        if (!generate_bytecode)
             return;
 
         ic_instr instr;
@@ -849,10 +849,9 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
 
 // auxiliary
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler);
-ic_type get_expr_type(ic_expr* expr, ic_compiler& compiler);
-// to do, rename to numeric promotion or something
-ic_type get_numeric_expr_type(ic_type lhs, ic_type rhs);
-ic_type get_numeric_expr_type(ic_type type);
+ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler);
+ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs);
+ic_type arithmetic_expr_type(ic_type operand_type);
 void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs);
 void assert_modifiable_lvalue(ic_expr_result result);
 void compile_load(ic_type type, ic_compiler& compiler);

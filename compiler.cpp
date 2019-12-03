@@ -7,8 +7,8 @@ void compile(ic_function& function, ic_runtime& runtime)
     compiler.function = &function;
     compiler.stack_size = 0;
     compiler.max_stack_size = 0;
-    compiler.loop_level = 0;
-    compiler.emit_bytecode = true;
+    compiler.loop_count = 0;
+    compiler.generate_bytecode = true;
     compiler.push_scope();
 
     for (int i = 0; i < function.param_count; ++i)
@@ -43,22 +43,24 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         while (body_stmt)
         {
-            if (returned) // dead code elimination
-                break;
+            //if (returned) // dead code elimination
+                //break; // but it still needs to be compiled for corectness
+            // print warning
 
-            returned = compile_stmt(body_stmt, compiler);
+            returned = returned || compile_stmt(body_stmt, compiler);
             body_stmt = body_stmt->next;
         }
 
         if (stmt->_compound.push_scope)
             compiler.pop_scope();
 
+        compiler.add_instr(IC_OPC_POP_ALL); // todo, this is temp solution
         break;
     }
     case IC_STMT_FOR:
     {
         // don't set returned flag here, loop may never be executed
-        compiler.loop_level += 1;
+        compiler.loop_count += 1;
         compiler.push_scope();
 
         if (stmt->_for.header1)
@@ -103,7 +105,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         }
 
         compiler.pop_scope();
-        compiler.loop_level -= 1;
+        compiler.loop_count -= 1;
         break;
     }
     case IC_STMT_IF:
@@ -189,13 +191,13 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     }
     case IC_STMT_BREAK:
     {
-        assert(compiler.loop_level);
+        assert(compiler.loop_count);
         compiler.add_instr(IC_OPC_JUMP_END);
         break;
     }
     case IC_STMT_CONTINUE:
     {
-        assert(compiler.loop_level);
+        assert(compiler.loop_count);
         compiler.add_instr(IC_OPC_JUMP_START);
         break;
     }
@@ -279,9 +281,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         ic_expr_result lhs = compile_expr(expr->_subscript.lhs, compiler);
         assert(lhs.type.indirection_level);
         ic_expr_result rhs = compile_expr(expr->_subscript.rhs, compiler);
-        ic_type rhs_convert_type = get_numeric_expr_type(rhs.type);
-        assert(rhs_convert_type.basic_type == IC_TYPE_S32);
-        compile_implicit_conversion(rhs_convert_type, rhs.type, compiler);
+        ic_type rhs_atype = arithmetic_expr_type(rhs.type);
+        assert(rhs_atype.basic_type == IC_TYPE_S32);
+        compile_implicit_conversion(rhs_atype, rhs.type, compiler);
         int type_size;
 
         if (lhs.type.indirection_level > 1)
