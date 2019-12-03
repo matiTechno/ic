@@ -1134,12 +1134,6 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' after continue keyword");
         return runtime.allocate_stmt(IC_STMT_CONTINUE);
     }
-    case IC_TOK_BREAKPOINT:
-    {
-        token_advance(it);
-        token_consume(it, IC_TOK_SEMICOLON, "expected ';' after breakpoint keyword");
-        return runtime.allocate_stmt(IC_STMT_BREAKPOINT);
-    }
     } // switch
 
     return produce_stmt_var_declaration(it, runtime);

@@ -199,11 +199,6 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         compiler.add_instr(IC_OPC_JUMP_START);
         break;
     }
-    case IC_STMT_BREAKPOINT:
-    {
-        compiler.add_instr(IC_OPC_BREAKPOINT);
-        break;
-    }
     case IC_STMT_EXPR:
     {
         if (stmt->_expr)

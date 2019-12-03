@@ -125,7 +125,6 @@ enum ic_token_type
     IC_TOK_CONST,
     IC_TOK_STRUCT,
     IC_TOK_SIZEOF,
-    IC_TOK_BREAKPOINT,
     // literals
     IC_TOK_INT_NUMBER_LITERAL,
     IC_TOK_FLOAT_NUMBER_LITERAL,
@@ -176,7 +175,6 @@ enum ic_stmt_type
     IC_STMT_RETURN,
     IC_STMT_BREAK,
     IC_STMT_CONTINUE,
-    IC_STMT_BREAKPOINT,
     IC_STMT_EXPR,
 };
 
@@ -243,7 +241,6 @@ static ic_keyword _keywords[] = {
     {"const", IC_TOK_CONST},
     {"struct", IC_TOK_STRUCT},
     {"sizeof", IC_TOK_SIZEOF},
-    {"breakpoint", IC_TOK_BREAKPOINT},
 };
 
 struct ic_string
