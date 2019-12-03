@@ -3,25 +3,25 @@
 // todo, get_expr_type() may be redundant in many cases
 // todo, rename expr type, to e.g. numeric_type, to not confuse with ic_expr.type
 
-ic_value compile_assignment(ic_expr* lhs_expr, ic_type rhs_type, ic_compiler& compiler)
+ic_expr_result compile_assignment(ic_expr* lhs_expr, ic_type rhs_type, ic_compiler& compiler)
 {
     {
         ic_type lhs_type = get_expr_type(lhs_expr, compiler);
         compile_implicit_conversion(lhs_type, rhs_type, compiler);
     }
-    ic_value lhs = compile_expr(lhs_expr, compiler, false);
+    ic_expr_result lhs = compile_expr(lhs_expr, compiler, false);
     assert_modifiable_lvalue(lhs);
     compile_store(lhs.type, compiler);
     return lhs;
 }
 
-ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
+ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
 {
     switch (expr->token.type)
     {
     case IC_TOK_EQUAL: // order of lhs rhs is reversed on the operand stack for assignment
     {
-        ic_value rhs = compile_expr(expr->_binary.rhs, compiler);
+        ic_expr_result rhs = compile_expr(expr->_binary.rhs, compiler);
         return compile_assignment(expr->_binary.lhs, rhs.type, compiler);
     }
     case IC_TOK_PLUS_EQUAL: // there is a lot of redundancy with get_expr_type() and compile_assignment(), fix it

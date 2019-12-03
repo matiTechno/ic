@@ -1,16 +1,16 @@
 #include "ic.h"
 
-// todo, rename expr_type to something else
+// todo, rename expr_type to something else, promoted_type,..., promotion_type
 
-ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
+ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 {
     switch (expr->token.type)
     {
     case IC_TOK_MINUS:
     {
-        ic_value value = compile_expr(expr->_unary.expr, compiler);
-        ic_type expr_type = get_numeric_expr_type(value.type);
-        compile_implicit_conversion(expr_type, value.type, compiler);
+        ic_expr_result result = compile_expr(expr->_unary.expr, compiler);
+        ic_type expr_type = get_numeric_expr_type(result.type);
+        compile_implicit_conversion(expr_type, result.type, compiler);
 
         switch (expr_type.basic_type)
         {
@@ -28,14 +28,14 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
     }
     case IC_TOK_BANG:
     {
-        ic_value value = compile_expr(expr->_unary.expr, compiler);
+        ic_expr_result result = compile_expr(expr->_unary.expr, compiler);
 
-        if (value.type.indirection_level)
+        if (result.type.indirection_level)
             compiler.add_instr(IC_OPC_LOGICAL_NOT_PTR);
         else
         {
-            ic_type expr_type = get_numeric_expr_type(value.type);
-            compile_implicit_conversion(expr_type, value.type, compiler);
+            ic_type expr_type = get_numeric_expr_type(result.type);
+            compile_implicit_conversion(expr_type, result.type, compiler);
 
             switch (expr_type.basic_type)
             {
@@ -52,18 +52,19 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
         }
         return { non_pointer_type(IC_TYPE_S32), false }; // logical not pushes s32 onto operand stack
     }
+    // this produces terrible code
     case IC_TOK_PLUS_PLUS:
     case IC_TOK_MINUS_MINUS:
     {
         // todo, support pointer arithmetic
         int offset = expr->token.type == IC_TOK_PLUS_PLUS ? 1 : -1;
-        ic_value value = compile_expr(expr->_unary.expr, compiler, false);
-        assert_modifiable_lvalue(value);
+        ic_expr_result result = compile_expr(expr->_unary.expr, compiler, false);
+        assert_modifiable_lvalue(result);
         compiler.add_instr(IC_OPC_CLONE);
         compiler.add_instr(IC_OPC_CLONE);
-        compile_load(value.type, compiler);
-        ic_type expr_type = get_numeric_expr_type(value.type);
-        compile_implicit_conversion(expr_type, value.type, compiler);
+        compile_load(result.type, compiler);
+        ic_type expr_type = get_numeric_expr_type(result.type);
+        compile_implicit_conversion(expr_type, result.type, compiler);
 
         switch (expr_type.basic_type)
         {
@@ -81,39 +82,39 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
             break;
         }
 
-        compile_implicit_conversion(value.type, expr_type, compiler);
+        compile_implicit_conversion(result.type, expr_type, compiler);
         compiler.add_instr(IC_OPC_SWAP);
-        compile_store(value.type, compiler);
+        compile_store(result.type, compiler);
 
         if (load_lvalue)
         {
             compiler.add_instr(IC_OPC_SWAP);
             compiler.add_instr(IC_OPC_POP);
-            return { value.type, false };
+            return { result.type, false };
         }
 
         compiler.add_instr(IC_OPC_POP);
-        return value;
+        return result;
     }
     case IC_TOK_AMPERSAND:
     {
-        ic_value value = compile_expr(expr->_unary.expr, compiler, false);
-        assert(value.lvalue);
-        value.type.indirection_level += 1;
-        value.type.const_mask = value.type.const_mask << 1;
-        return { value.type, false };
+        ic_expr_result result = compile_expr(expr->_unary.expr, compiler, false);
+        assert(result.lvalue);
+        result.type.indirection_level += 1;
+        result.type.const_mask = result.type.const_mask << 1;
+        return { result.type, false };
     }
     case IC_TOK_STAR:
     {
-        ic_value value = compile_expr(expr->_unary.expr, compiler);
-        assert(value.type.indirection_level);
-        value.type.const_mask = value.type.const_mask >> 1;
-        value.type.indirection_level -= 1;
+        ic_expr_result result = compile_expr(expr->_unary.expr, compiler);
+        assert(result.type.indirection_level);
+        result.type.const_mask = result.type.const_mask >> 1;
+        result.type.indirection_level -= 1;
 
         if (load_lvalue)
-            compile_load(value.type, compiler);
+            compile_load(result.type, compiler);
 
-        return { value.type, !load_lvalue };
+        return { result.type, !load_lvalue };
     }
     default:
         assert(false);

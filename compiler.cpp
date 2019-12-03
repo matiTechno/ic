@@ -68,8 +68,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_for.header2)
         {
-            ic_value value = compile_expr(stmt->_for.header2, compiler);
-            compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), value.type, compiler);
+            ic_expr_result result = compile_expr(stmt->_for.header2, compiler);
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
             compiler.add_instr({ IC_OPC_JUMP_CONDITION_FAIL });
         }
 
@@ -110,8 +110,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     {
         int returned_if = false;
         int returned_else = false;
-        ic_value value = compile_expr(stmt->_if.header, compiler);
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), value.type, compiler);
+        ic_expr_result result = compile_expr(stmt->_if.header, compiler);
+        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
         int idx_start = compiler.bytecode.size();
         compiler.add_instr(IC_OPC_JUMP_CONDITION_FAIL);
         compiler.push_scope();
@@ -157,8 +157,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_var_declaration.expr)
         {
-            ic_value value = compile_expr(stmt->_var_declaration.expr, compiler);
-            compile_implicit_conversion(var.type, value.type, compiler);
+            ic_expr_result result = compile_expr(stmt->_var_declaration.expr, compiler);
+            compile_implicit_conversion(var.type, result.type, compiler);
             compiler.add_instr(IC_OPC_ADDRESS, var.idx);
 
             if (is_non_pointer_struct(var.type))
@@ -178,8 +178,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_return.expr)
         {
-            ic_value value = compile_expr(stmt->_return.expr, compiler);
-            compile_implicit_conversion(return_type, value.type, compiler);
+            ic_expr_result result = compile_expr(stmt->_return.expr, compiler);
+            compile_implicit_conversion(return_type, result.type, compiler);
         }
         else
             assert(!return_type.indirection_level && return_type.basic_type == IC_TYPE_VOID);
@@ -216,7 +216,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     return returned;
 }
 
-ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
+ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 {
     assert(expr);
 
@@ -263,22 +263,22 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
     }
     case IC_EXPR_CAST_OPERATOR:
     {
-        ic_value value = compile_expr(expr->_cast_operator.expr, compiler);
+        ic_expr_result result = compile_expr(expr->_cast_operator.expr, compiler);
         ic_type target_type = expr->_cast_operator.type;
 
         if (target_type.indirection_level)
-            assert(value.type.indirection_level);
+            assert(result.type.indirection_level);
         else
-            compile_implicit_conversion(target_type, value.type, compiler);
+            compile_implicit_conversion(target_type, result.type, compiler);
 
         return { target_type, false };
     }
     case IC_EXPR_SUBSCRIPT:
     {
         // todo, redundant with IC_TOK_PLUS
-        ic_value lhs = compile_expr(expr->_subscript.lhs, compiler);
+        ic_expr_result lhs = compile_expr(expr->_subscript.lhs, compiler);
         assert(lhs.type.indirection_level);
-        ic_value rhs = compile_expr(expr->_subscript.rhs, compiler);
+        ic_expr_result rhs = compile_expr(expr->_subscript.rhs, compiler);
         ic_type rhs_convert_type = get_numeric_expr_type(rhs.type);
         assert(rhs_convert_type.basic_type == IC_TYPE_S32);
         compile_implicit_conversion(rhs_convert_type, rhs.type, compiler);
@@ -322,16 +322,16 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
     }
     case IC_EXPR_MEMBER_ACCESS:
     {
-        ic_value value = compile_expr(expr->_member_access.lhs, compiler, false);
-        assert(value.type.basic_type == IC_TYPE_STRUCT);
+        ic_expr_result result = compile_expr(expr->_member_access.lhs, compiler, false);
+        assert(result.type.basic_type == IC_TYPE_STRUCT);
 
-        if (value.type.indirection_level)
+        if (result.type.indirection_level)
         {
-            assert(value.type.indirection_level == 1);
+            assert(result.type.indirection_level == 1);
             assert(expr->token.type == IC_TOK_ARROW);
 
-            if (value.lvalue)
-                compile_load(value.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
+            if (result.lvalue)
+                compile_load(result.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
             // we need to dereference pointer to get a struct address
             // this is very tricky and it is the issue with current design
         }
@@ -339,7 +339,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
             assert(expr->token.type == IC_TOK_DOT);
 
         ic_string target_name = expr->_member_access.rhs_token.string;
-        ic_struct* _struct = compiler.get_struct(value.type.struct_name);
+        ic_struct* _struct = compiler.get_struct(result.type.struct_name);
         ic_type target_type;
         int data_offset = 0;
         bool match = false;
@@ -364,7 +364,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 
         assert(match);
         
-        if (value.lvalue || value.type.indirection_level)
+        if (result.lvalue || result.type.indirection_level)
         {
             compiler.add_instr_push({ .s32 = data_offset });
             compiler.add_instr(IC_OPC_ADD_PTR_S32, sizeof(ic_data));
@@ -372,10 +372,10 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
             if (!load_lvalue)
             {
                 // propagate constness to member data
-                if (value.type.indirection_level)
-                    target_type.const_mask |= ((value.type.const_mask >> 1) & 1);
+                if (result.type.indirection_level)
+                    target_type.const_mask |= ((result.type.const_mask >> 1) & 1);
                 else
-                    target_type.const_mask |= (value.type.const_mask & 1);
+                    target_type.const_mask |= (result.type.const_mask & 1);
 
                 return { target_type, true };
             }
@@ -404,8 +404,8 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 
         while (expr_arg)
         {
-            ic_value value = compile_expr(expr_arg, compiler);
-            compile_implicit_conversion(function->params[argc].type, value.type, compiler);
+            ic_expr_result result = compile_expr(expr_arg, compiler);
+            compile_implicit_conversion(function->params[argc].type, result.type, compiler);
             expr_arg = expr_arg->next;
             ++argc;
         }

@@ -681,7 +681,7 @@ struct ic_scope
     int prev_var_count;
 };
 
-struct ic_value
+struct ic_expr_result
 {
     ic_type type;
     bool lvalue;
@@ -843,16 +843,17 @@ struct ic_compiler
 
 // returnes true if all branches have a return statements
 bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
-ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue = true);
-ic_value compile_binary(ic_expr* expr, ic_compiler& compiler);
-ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue);
+ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
+ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
+ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
 
 // auxiliary
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler);
 ic_type get_expr_type(ic_expr* expr, ic_compiler& compiler);
+// to do, rename to numeric promotion or something
 ic_type get_numeric_expr_type(ic_type lhs, ic_type rhs);
 ic_type get_numeric_expr_type(ic_type type);
 void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs);
-void assert_modifiable_lvalue(ic_value value);
+void assert_modifiable_lvalue(ic_expr_result result);
 void compile_load(ic_type type, ic_compiler& compiler);
 void compile_store(ic_type type, ic_compiler& compiler);

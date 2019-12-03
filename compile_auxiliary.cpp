@@ -197,10 +197,10 @@ void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs)
         assert(ic_string_compare(lhs.struct_name, rhs.struct_name));
 }
 
-void assert_modifiable_lvalue(ic_value value)
+void assert_modifiable_lvalue(ic_expr_result result)
 {
-    assert(value.lvalue);
-    assert((value.type.const_mask & 1) == 0); // watch out for operator precedence
+    assert(result.lvalue);
+    assert((result.type.const_mask & 1) == 0); // watch out for operator precedence
 }
 
 void compile_load(ic_type type, ic_compiler& compiler)
