@@ -452,13 +452,13 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_ADD_PTR_S32:
         {
-            int bytes = vm.pop_op().s32;
+            int bytes = vm.pop_op().s32 * inst.operand.number;
             vm.top_op().pointer = (char*)vm.top_op().pointer + bytes;
             break;
         }
         case IC_OPC_SUB_PTR_S32:
         {
-            int bytes = vm.pop_op().s32;
+            int bytes = vm.pop_op().s32 * inst.operand.number;
             vm.top_op().pointer = (char*)vm.top_op().pointer - bytes;
             break;
         }

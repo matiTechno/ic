@@ -397,9 +397,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
                 }
             }
 
-            compiler.add_inst_push({ .s32 = type_size }); // todo? pass type size as an operand of add_ptr instruction
-            compiler.add_inst(IC_OPC_MUL_S32);
-            compiler.add_inst(IC_OPC_ADD_PTR_S32);
+            compiler.add_inst_number(IC_OPC_ADD_PTR_S32, type_size);
             return { lhs_type, false };
         }
         ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);
@@ -462,9 +460,7 @@ ic_value compile_binary(ic_expr* expr, ic_compiler& compiler)
                 }
             }
 
-            compiler.add_inst_push({ .s32 = type_size });
-            compiler.add_inst(IC_OPC_MUL_S32);
-            compiler.add_inst(IC_OPC_SUB_PTR_S32);
+            compiler.add_inst_number(IC_OPC_SUB_PTR_S32, type_size);
             return { lhs_type, false };
         }
         ic_type expr_type = get_numeric_expr_type(lhs_type, rhs_type);

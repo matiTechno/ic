@@ -321,10 +321,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
             }
         }
 
-        compiler.add_inst_push({ .s32 = type_size }); // todo? pass type size as an operand of add_ptr instruction
-        compiler.add_inst(IC_OPC_MUL_S32);
-        compiler.add_inst(IC_OPC_ADD_PTR_S32);
-
+        compiler.add_inst_number(IC_OPC_ADD_PTR_S32, type_size);
         // todo, this is quite redundant with IC_TOK_STAR...
         lhs.type.const_mask = lhs.type.const_mask >> 1;
         lhs.type.indirection_level -= 1;
@@ -380,8 +377,8 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
         
         if (value.lvalue || value.type.indirection_level)
         {
-            compiler.add_inst_push({ .s32 = data_offset * (int)sizeof(ic_data) });
-            compiler.add_inst(IC_OPC_ADD_PTR_S32);
+            compiler.add_inst_push({ .s32 = data_offset });
+            compiler.add_inst_number(IC_OPC_ADD_PTR_S32, sizeof(ic_data));
 
             if (!substitute_lvalue)
             {
