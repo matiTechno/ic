@@ -422,8 +422,8 @@ bool ic_runtime::run(const char* source_code)
         if (function.type == IC_FUN_SOURCE)
         {
             compile(function, *this);
-            printf("\n\nfunction: %.*s\nstack_size: %d\n", function.token.string.len, function.token.string.data, function.stack_size);
-            dump_bytecode(function.bytecode, function.by_size);
+            //printf("\n\nfunction: %.*s\nstack_size: %d\n", function.token.string.len, function.token.string.data, function.stack_size);
+            //dump_bytecode(function.bytecode, function.by_size);
         }
 
         // calculate return and param size for vm
@@ -1133,6 +1133,12 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' after continue keyword");
         return runtime.allocate_stmt(IC_STMT_CONTINUE);
+    }
+    case IC_TOK_BREAKPOINT:
+    {
+        token_advance(it);
+        token_consume(it, IC_TOK_SEMICOLON, "expected ';' after breakpoint keyword");
+        return runtime.allocate_stmt(IC_STMT_BREAKPOINT);
     }
     } // switch
 

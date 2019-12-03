@@ -60,6 +60,7 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
         ic_value value = compile_expr(expr->_unary.expr, compiler, false);
         assert_modifiable_lvalue(value);
         compiler.add_inst(IC_OPC_CLONE);
+        compiler.add_inst(IC_OPC_CLONE);
         compile_dereference(value.type, compiler);
         ic_type expr_type = get_numeric_expr_type(value.type);
         compile_implicit_conversion(expr_type, value.type, compiler);
@@ -86,11 +87,11 @@ ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lva
 
         if (substitute_lvalue)
         {
+            compiler.add_inst(IC_OPC_SWAP);
             compiler.add_inst(IC_OPC_POP);
             return { value.type, false };
         }
 
-        compiler.add_inst(IC_OPC_SWAP);
         compiler.add_inst(IC_OPC_POP);
         return value;
     }

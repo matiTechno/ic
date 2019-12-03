@@ -205,12 +205,17 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         compiler.add_inst(IC_OPC_JUMP_START);
         break;
     }
+    case IC_STMT_BREAKPOINT:
+    {
+        compiler.add_inst(IC_OPC_BREAKPOINT);
+        break;
+    }
     case IC_STMT_EXPR:
     {
         if (stmt->_expr)
         {
             compile_expr(stmt->_expr, compiler);
-            compiler.add_inst(IC_OPC_CLEAR); // todo
+            compiler.add_inst(IC_OPC_POP_ALL); // todo
         }
 
         break;
@@ -342,6 +347,7 @@ ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lval
             if (value.lvalue)
                 compile_dereference(value.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
             // we need to dereference pointer to get a struct address
+            // this is very tricky and it is the issue with current design
         }
         else
             assert(expr->token.type == IC_TOK_DOT);

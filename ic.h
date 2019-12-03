@@ -125,6 +125,7 @@ enum ic_token_type
     IC_TOK_CONST,
     IC_TOK_STRUCT,
     IC_TOK_SIZEOF,
+    IC_TOK_BREAKPOINT,
     // literals
     IC_TOK_INT_NUMBER_LITERAL,
     IC_TOK_FLOAT_NUMBER_LITERAL,
@@ -175,6 +176,7 @@ enum ic_stmt_type
     IC_STMT_RETURN,
     IC_STMT_BREAK,
     IC_STMT_CONTINUE,
+    IC_STMT_BREAKPOINT,
     IC_STMT_EXPR,
 };
 
@@ -241,6 +243,7 @@ static ic_keyword _keywords[] = {
     {"const", IC_TOK_CONST},
     {"struct", IC_TOK_STRUCT},
     {"sizeof", IC_TOK_SIZEOF},
+    {"breakpoint", IC_TOK_BREAKPOINT},
 };
 
 struct ic_string
@@ -470,7 +473,8 @@ enum ic_opcode
 {
     // important: compare and logical not push s32 not bool
 
-    IC_OPC_CLEAR, // todo, remove this hack
+    IC_OPC_BREAKPOINT,
+    IC_OPC_POP_ALL, // todo, remove this hack, create operand stack in compiler and use this only if there are some left overs on a stack
     IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc. ; so bytecode can be human readable
     IC_OPC_POP,
     IC_OPC_POP_MANY,
@@ -485,7 +489,7 @@ enum ic_opcode
     IC_OPC_ADDRESS_OF,
 
     // order of operands is reversed (data before address)
-    // no operands are popped
+    // address is popped, data is left
     IC_OPC_STORE_1_AT,
     IC_OPC_STORE_4_AT,
     IC_OPC_STORE_8_AT,

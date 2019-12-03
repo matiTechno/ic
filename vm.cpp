@@ -36,10 +36,15 @@ void run_bytecode(ic_vm& vm)
     {
         ic_inst inst = *frame->ip;
         ++frame->ip;
+        ic_opcode opcode = (ic_opcode)inst.opcode; // todo, for debugging
 
-        switch (inst.opcode)
+        switch (opcode)
         {
-        case IC_OPC_CLEAR:
+        case IC_OPC_BREAKPOINT:
+        {
+            break;
+        }
+        case IC_OPC_POP_ALL:
         {
             vm.operand_stack_size = frame->prev_operand_stack_size;
             break;
@@ -547,9 +552,14 @@ void dump_bytecode(ic_inst* bytecode,int  count)
         ic_inst inst = bytecode[i];
         switch (inst.opcode)
         {
-        case IC_OPC_CLEAR:
+        case IC_OPC_BREAKPOINT:
         {
-            printf("clear\n");
+            printf("breakpoint\n");
+            break;
+        }
+        case IC_OPC_POP_ALL:
+        {
+            printf("pop all\n");
             break;
         }
         case IC_OPC_PUSH:
