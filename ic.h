@@ -32,10 +32,11 @@
 // software rasterizer benchmark
 // change type keywords? (char, uchar, int, float, double)
 // struct allignment (currently each member consumes 8 bytes)
-// struct in value_type should be a pointer to a struct and not string
 // text editor with colors and error reporting using our very own ast technology
-// after implementing bytecode fix all the leftovers and naming conventions
-// option to dump readable bytecode
+// big cleanup after implementing bytecode
+// map bytecode to source (debug view)
+// rename ic_value to ic_expr_result or something like that
+// exit instruction
 
 template<typename T, int N>
 struct ic_deque
@@ -92,7 +93,7 @@ struct ic_deque
 static_assert(sizeof(int) == 4, "sizeof(int) == 4");
 static_assert(sizeof(float) == 4, "sizeof(float) == 4");
 static_assert(sizeof(double) == 8, "sizeof(double) == 8");
-// it is asserted that a write at ic_value.double will cover ic_value.pointer and vice versa (union)
+// it is asserted that a write at ic_data.double will cover ic_data.pointer and vice versa (union)
 static_assert(sizeof(double) == sizeof(void*), "sizeof(double) == sizeof(void*)");
 
 #define IC_MAX_ARGC 10
@@ -191,21 +192,6 @@ enum ic_expr_type
     IC_EXPR_PRIMARY,
 };
 
-// order is important here
-enum ic_basic_type
-{
-    IC_TYPE_BOOL, // stores only 0 or 1; 1 byte at .s8
-    IC_TYPE_S8,
-    IC_TYPE_U8,
-    IC_TYPE_S32,
-    IC_TYPE_U32,
-    IC_TYPE_F32,
-    IC_TYPE_F64,
-    IC_TYPE_VOID,
-    IC_TYPE_NULLPTR,
-    IC_TYPE_STRUCT,
-};
-
 enum ic_error_type
 {
     IC_ERR_LEXING,
@@ -224,14 +210,6 @@ enum ic_global_type
     IC_GLOBAL_FUNCTION,
     IC_GLOBAL_STRUCT,
     IC_GLOBAL_VAR_DECLARATION,
-};
-
-enum ic_stmt_result_type
-{
-    IC_STMT_RESULT_BREAK,
-    IC_STMT_RESULT_CONTINUE,
-    IC_STMT_RESULT_RETURN,
-    IC_STMT_RESULT_NOP,
 };
 
 struct ic_keyword
@@ -283,7 +261,23 @@ struct ic_token
     };
 };
 
-struct ic_value_type
+// order is important here
+enum ic_basic_type
+{
+    IC_TYPE_BOOL, // stores only 0 or 1; 1 byte at .s8
+    IC_TYPE_S8,
+    IC_TYPE_U8,
+    IC_TYPE_S32,
+    IC_TYPE_F32,
+    IC_TYPE_F64,
+    IC_TYPE_VOID,
+    IC_TYPE_NULLPTR,
+    IC_TYPE_STRUCT,
+};
+
+struct ic_struct;
+
+struct ic_type
 {
     ic_basic_type basic_type;
     int indirection_level;
@@ -323,7 +317,7 @@ struct ic_stmt
 
         struct
         {
-            ic_value_type type;
+            ic_type type;
             ic_token token;
             ic_expr* expr;
         } _var_declaration;
@@ -358,12 +352,12 @@ struct ic_expr
 
         struct
         {
-            ic_value_type type;
+            ic_type type;
         } _sizeof;
 
         struct
         {
-            ic_value_type type;
+            ic_type type;
             ic_expr* expr;
         } _cast_operator;
 
@@ -391,10 +385,8 @@ struct ic_expr
     };
 };
 
-struct ic_value
+struct ic_data
 {
-    ic_value_type type;
-
     union
     {
         char s8;
@@ -407,35 +399,10 @@ struct ic_value
     };
 };
 
-struct ic_var
-{
-    ic_string name;
-    ic_value value;
-};
-
-struct ic_scope
-{
-    int prev_var_count;
-    int prev_struct_data_count;
-    bool new_stack_frame; // so variables do not leak to lower functions
-};
-
 struct ic_param
 {
-    ic_value_type type;
+    ic_type type;
     ic_string name;
-};
-
-// partially redundant with ic_value
-// ic_value can inherit this union to avoid redundancy
-union ic_data
-{
-    char s8;
-    unsigned char u8;
-    int s32;
-    float f32;
-    double f64;
-    void* pointer;
 };
 
 using ic_host_function = ic_data(*)(ic_data* argv);
@@ -445,13 +412,15 @@ struct ic_inst;
 struct ic_function
 {
     ic_function_type type;
-    ic_value_type return_type;
+    ic_type return_type;
     ic_token token;
     int param_count;
     ic_param params[IC_MAX_ARGC];
     ic_inst* bytecode; // todo move to a union
     int stack_size; // same
     int by_size; // todo; used for dumping bytecode
+    int param_size;
+    int return_size;
 
     union
     {
@@ -462,7 +431,7 @@ struct ic_function
 
 struct ic_struct_member
 {
-    ic_value_type type;
+    ic_type type;
     ic_string name;
 };
 
@@ -482,20 +451,13 @@ struct ic_global
     {
         ic_function function;
         ic_struct _struct;
-        ic_stmt stmt; // var declaration
+
+        struct
+        {
+            ic_type type;
+            ic_token token;
+        } var;
     };
-};
-
-struct ic_stmt_result
-{
-    ic_stmt_result_type type;
-    ic_value value;
-};
-
-struct ic_expr_result
-{
-    void* lvalue_data;
-    ic_value value;
 };
 
 struct ic_exception_parsing {};
@@ -505,29 +467,21 @@ struct ic_exception_parsing {};
 
 enum ic_opcode
 {
-    IC_OPC_PUSH,
+    // important: compare and logical not push s32 not bool
+
+    IC_OPC_CLEAR, // todo, remove this hack
+    IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc. ; so bytecode can be human readable
     IC_OPC_POP,
+    IC_OPC_POP_MANY,
     IC_OPC_SWAP,
+    IC_OPC_MEMMOVE, // todo, this is quite gross, needed for rvalue struct member access
     IC_OPC_CLONE,
     IC_OPC_CALL, // last function argument is at the top of a operand stack (order is not reversed)
     IC_OPC_RETURN,
-    IC_OPC_LOGICAL_NOT,
-    IC_OPC_JUMP_TRUE,
-    IC_OPC_JUMP_FALSE,
+    IC_OPC_JUMP_TRUE, // expects s32
+    IC_OPC_JUMP_FALSE, // expects s32
     IC_OPC_JUMP,
     IC_OPC_ADDRESS_OF,
-    IC_OPC_ADDRESS_OF_GLOBAL,
-
-    IC_OPC_LOAD,
-    IC_OPC_LOAD_GLOBAL,
-    IC_OPC_LOAD_STRUCT,
-    IC_OPC_LOAD_STRUCT_GLOBAL,
-
-    // data is not popped
-    IC_OPC_STORE,
-    IC_OPC_STORE_GLOBAL,
-    IC_OPC_STORE_STRUCT,
-    IC_OPC_STORE_STRUCT_GLOBAL,
 
     // order of operands is reversed (data before address)
     // no operands are popped
@@ -548,6 +502,7 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_S32,
     IC_OPC_COMPARE_L_S32,
     IC_OPC_COMPARE_LE_S32,
+    IC_OPC_LOGICAL_NOT_S32,
     IC_OPC_NEGATE_S32,
     IC_OPC_ADD_S32,
     IC_OPC_SUB_S32,
@@ -561,6 +516,7 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_F32,
     IC_OPC_COMPARE_L_F32,
     IC_OPC_COMPARE_LE_F32,
+    IC_OPC_LOGICAL_NOT_F32,
     IC_OPC_NEGATE_F32,
     IC_OPC_ADD_F32,
     IC_OPC_SUB_F32,
@@ -573,6 +529,7 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_F64,
     IC_OPC_COMPARE_L_F64,
     IC_OPC_COMPARE_LE_F64,
+    IC_OPC_LOGICAL_NOT_F64,
     IC_OPC_NEGATE_F64,
     IC_OPC_ADD_F64,
     IC_OPC_SUB_F64,
@@ -585,6 +542,7 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_PTR,
     IC_OPC_COMPARE_L_PTR,
     IC_OPC_COMPARE_LE_PTR,
+    IC_OPC_LOGICAL_NOT_PTR,
     IC_OPC_ADD_PTR_S32,
     IC_OPC_SUB_PTR_S32,
 
@@ -629,28 +587,24 @@ enum ic_opcode
 
 union ic_inst_operand
 {
-    ic_data push_data;
-    int idx;
-    int size;
-
-    struct
+    union
     {
-        int idx;
-        int size;
-    } load;
+        ic_data data;
+        int number;
 
-    struct
-    {
-        int idx;
-        int size;
-    } store;
+        // todo..., additional 4 bytes added for every instruction..., maybe pass one operand as data or something
+        struct
+        {
+            int dst; // counting from the end pointer of the operand stack
+            int src; // same
+            int size; // in data, not bytes
+        } memmove;
+    };
 };
 
-struct ic_inst
+struct ic_inst // todo, rename to instr, inst is misleading, e.g. inst as an instance
 {
-    // todo
-    //unsigned char opcode;
-    int opcode;
+    unsigned char opcode;
     ic_inst_operand operand;
 };
 
@@ -664,30 +618,11 @@ struct ic_stack_frame
     ic_inst* bytecode; // needed for jumps
 };
 
-struct ic_vm_function
-{
-    bool is_host;
-    int param_size;
-    int return_size;
-
-    union
-    {
-        ic_host_function host_callback;
-
-        struct
-        {
-            ic_inst* bytecode;
-            int stack_size;
-        } source;
-    };
-};
-
 struct ic_vm
 {
     // important, ic_data buffers must not be invalidated during execution
     std::vector<ic_stack_frame> stack_frames;
-    ic_vm_function* functions;
-    ic_data* global_data;
+    ic_function* functions;
     ic_data* call_stack;
     ic_data* operand_stack;
     int call_stack_size;
@@ -737,42 +672,47 @@ struct ic_vm
     }
 };
 
-struct ic_vm_var
+struct ic_var
 {
-    ic_value_type type;
+    ic_type type;
     ic_string name;
     int idx;
+};
+
+struct ic_scope
+{
+    int prev_stack_size;
+    int prev_var_count;
+};
+
+struct ic_value
+{
+    ic_type type;
+    bool lvalue;
 };
 
 struct ic_runtime
 {
     void init();
-    bool add_global_var(const char* name, ic_value value);
+    //bool add_global_var(const char* name, ic_value value);
     // if a function with the same name exists it is replaced
     void add_host_function(const char* name, ic_host_function function);
     bool run(const char* source); // after run() variables can be extracted
-    ic_value* get_global_var(const char* name);
+    //ic_value* get_global_var(const char* name);
     void clear_global_vars(); // use this before next run()
     void clear_host_functions(); // useful when e.g. running different script
     void free(); // todo; after free() next init() will not put runtime into correct state (not all vectors are cleared, etc.)
 
     // implementation
-    ic_deque<ic_stmt, 1000> _stmt_deque; // same
+    ic_deque<ic_stmt, 1000> _stmt_deque; // memory must be not invalidated when adding new statements
     ic_deque<ic_expr, 1000> _expr_deque; // same
-    ic_deque<ic_var, 1000> _var_deque; // deque is used because variables must not be invalidated (pointers are supported)
-    ic_deque<ic_data, 1000> _struct_data_deque; // same
-    std::vector<char*> _string_literals;
     std::vector<ic_token> _tokens;
-    std::vector<ic_scope> _scopes;
     std::vector<ic_function> _functions;
     std::vector<ic_struct> _structs;
-    std::vector<ic_vm_var> _global_vars;
+    std::vector<char*> _string_literals;
+    std::vector<ic_var> _global_vars;
     int _global_size;
 
-    void push_scope(bool new_stack_frame = false);
-    void pop_scope();
-    bool add_var(ic_string name, ic_value value);
-    ic_value* get_var(ic_string name);
     ic_function* get_function(ic_string name);
     ic_struct* get_struct(ic_string name);
     ic_stmt* allocate_stmt(ic_stmt_type type);
@@ -780,8 +720,160 @@ struct ic_runtime
 };
 
 bool ic_string_compare(ic_string str1, ic_string str2);
-bool is_non_pointer_struct(ic_value_type& type);
-ic_value_type non_pointer_type(ic_basic_type type);
-ic_value_type pointer1_type(ic_basic_type type, bool at_const = false);
+bool is_non_pointer_struct(ic_type& type);
+ic_type non_pointer_type(ic_basic_type type);
+ic_type pointer1_type(ic_basic_type type, bool at_const = false);
 void compile(ic_function& function, ic_runtime& runtime);
 void run_bytecode(ic_vm& vm);
+void dump_bytecode(ic_inst* bytecode, int size);
+
+struct ic_compiler
+{
+    std::vector<ic_inst> bytecode;
+    std::vector<ic_scope> scopes;
+    std::vector<ic_var> vars;
+    ic_runtime* runtime;
+    ic_function* function;
+    int stack_size;
+    int max_stack_size;
+    int loop_level;
+    bool emit_bytecode;
+
+    void push_scope()
+    {
+        ic_scope scope;
+        scope.prev_var_count = vars.size();
+        scope.prev_stack_size = stack_size;
+        scopes.push_back(scope);
+    }
+
+    void pop_scope()
+    {
+        vars.resize(scopes.back().prev_var_count);
+        stack_size = scopes.back().prev_stack_size;
+        scopes.pop_back();
+    }
+
+    void add_inst_push(ic_data data)
+    {
+        if (!emit_bytecode)
+            return;
+
+        ic_inst inst;
+        inst.opcode = IC_OPC_PUSH;
+        inst.operand.data = data;
+        bytecode.push_back(inst);
+    }
+
+    void add_inst_number(unsigned char opcode, int number)
+    {
+        if (!emit_bytecode)
+            return;
+
+        ic_inst inst;
+        inst.opcode = opcode;
+        inst.operand.number = number;
+        bytecode.push_back(inst);
+    }
+
+    void add_inst(unsigned char opcode)
+    {
+        if (!emit_bytecode)
+            return;
+
+        ic_inst inst;
+        inst.opcode = opcode;
+        bytecode.push_back(inst);
+    }
+
+    // ...
+    void add_inst2(ic_inst inst)
+    {
+        if (!emit_bytecode)
+            return;
+
+        bytecode.push_back(inst);
+    }
+
+    ic_var declare_var(ic_type type, ic_string name)
+    {
+        assert(scopes.size());
+        bool present = false;
+
+        for (int i = vars.size() - 1; i >= scopes.back().prev_var_count; --i)
+        {
+            if (ic_string_compare(vars[i].name, name))
+            {
+                present = true;
+                break;
+            }
+        }
+
+        if (present)
+            assert(false);
+
+        int idx = stack_size + runtime->_global_size; // this is important, _global_size offset
+
+        if (is_non_pointer_struct(type))
+            stack_size += get_struct(type.struct_name)->num_data;
+        else
+            stack_size += 1;
+
+        max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
+        ic_var var;
+        var.idx = idx;
+        var.name = name;
+        var.type = type;
+        vars.push_back(var);
+        return var;
+    }
+
+    ic_var get_var(ic_string name)
+    {
+        assert(scopes.size());
+
+        for (int i = vars.size() - 1; i >= 0; --i)
+        {
+            if (ic_string_compare(vars[i].name, name))
+                return vars[i];
+        }
+        for (ic_var& var : runtime->_global_vars)
+        {
+            if (ic_string_compare(var.name, name))
+                return var;
+        }
+
+        assert(false);
+        return {};
+    }
+
+    ic_function* get_fun(ic_string name)
+    {
+        ic_function* function = runtime->get_function(name);
+        assert(function);
+        return function;
+    }
+
+    ic_struct* get_struct(ic_string name)
+    {
+        ic_struct* _struct = runtime->get_struct(name);
+        assert(_struct);
+        return _struct;
+    }
+};
+
+// returnes true if all branches have a return statements
+bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
+ic_value compile_expr(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue = true);
+ic_value compile_binary(ic_expr* expr, ic_compiler& compiler);
+ic_value compile_unary(ic_expr* expr, ic_compiler& compiler, bool substitute_lvalue);
+
+// auxiliary
+void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler);
+ic_type get_expr_type(ic_expr* expr, ic_compiler& compiler);
+ic_type get_numeric_expr_type(ic_type lhs, ic_type rhs);
+ic_type get_numeric_expr_type(ic_type type);
+void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs);
+void assert_modifiable_lvalue(ic_value value);
+void compile_dereference(ic_type type, ic_compiler& compiler);
+void compile_store_at(ic_type type, ic_compiler& compiler);

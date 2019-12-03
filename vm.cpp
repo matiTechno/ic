@@ -39,14 +39,24 @@ void run_bytecode(ic_vm& vm)
 
         switch (inst.opcode)
         {
+        case IC_OPC_CLEAR:
+        {
+            vm.operand_stack_size = frame->prev_operand_stack_size;
+            break;
+        }
         case IC_OPC_PUSH:
         {
-            vm.push_op(inst.operand.push_data);
+            vm.push_op(inst.operand.data);
             break;
         }
         case IC_OPC_POP:
         {
             vm.pop_op();
+            break;
+        }
+        case IC_OPC_POP_MANY:
+        {
+            vm.pop_op_many(inst.operand.number);
             break;
         }
         case IC_OPC_SWAP:
@@ -57,6 +67,13 @@ void run_bytecode(ic_vm& vm)
             *second = top;
             break;
         }
+        case IC_OPC_MEMMOVE:
+        {
+            void* dst = vm.end_op() - inst.operand.memmove.dst;
+            void* src = vm.end_op() - inst.operand.memmove.src;
+            memmove(dst, src,  inst.operand.memmove.size * sizeof(ic_data));
+            break;
+        }
         case IC_OPC_CLONE:
         {
             vm.push_op(vm.top_op());
@@ -64,12 +81,12 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_CALL:
         {
-            ic_vm_function& function = vm.functions[inst.operand.idx];
+            ic_function& function = vm.functions[inst.operand.number];
             int param_size = function.param_size;
 
-            if (function.is_host)
+            if (function.type == IC_FUN_HOST)
             {
-                ic_data return_data = function.host_callback(vm.end_op() - param_size);
+                ic_data return_data = function.callback(vm.end_op() - param_size);
                 vm.pop_op_many(function.param_size);
 
                 if (function.return_size)
@@ -77,7 +94,7 @@ void run_bytecode(ic_vm& vm)
             }
             else
             {
-                vm.push_stack_frame(function.source.bytecode, function.source.stack_size, function.return_size);
+                vm.push_stack_frame(function.bytecode, function.stack_size, function.return_size);
                 frame = &vm.stack_frames.back();
                 memcpy(frame->bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
                 frame->prev_operand_stack_size -= param_size;
@@ -95,85 +112,29 @@ void run_bytecode(ic_vm& vm)
             frame = &vm.stack_frames.back();
             break;
         }
-        case IC_OPC_LOGICAL_NOT:
-        {
-            vm.top_op().s8 = !vm.top_op().s8;
-        }
         case IC_OPC_JUMP_TRUE:
         {
-            if(vm.pop_op().s8)
-                frame->ip = frame->bytecode + inst.operand.idx;
+            if(vm.pop_op().s32)
+                frame->ip = frame->bytecode + inst.operand.number;
 
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
-            if(!vm.pop_op().s8)
-                frame->ip = frame->bytecode + inst.operand.idx;
+            if(!vm.pop_op().s32)
+                frame->ip = frame->bytecode + inst.operand.number;
 
             break;
         }
         case IC_OPC_JUMP:
         {
-            frame->ip = frame->bytecode + inst.operand.idx;
+            frame->ip = frame->bytecode + inst.operand.number;
             break;
         }
         case IC_OPC_ADDRESS_OF:
         {
             vm.push_op();
-            vm.top_op().pointer = &frame->bp[inst.operand.idx];
-            break;
-        }
-        case IC_OPC_ADDRESS_OF_GLOBAL:
-        {
-            vm.push_op();
-            vm.top_op().pointer = &vm.global_data[inst.operand.idx];
-            break;
-        }
-        case IC_OPC_LOAD:
-        {
-            vm.push_op(frame->bp[inst.operand.load.idx]);
-            break;
-        }
-        case IC_OPC_LOAD_GLOBAL:
-        {
-            vm.push_op(vm.global_data[inst.operand.load.idx]);
-            break;
-        }
-        case IC_OPC_LOAD_STRUCT:
-        {
-            void* dst = vm.end_op();
-            int size = inst.operand.load.size;
-            vm.push_op_many(size);
-            memcpy(dst, &frame->bp[inst.operand.load.idx], size * sizeof(ic_data));
-        }
-        case IC_OPC_LOAD_STRUCT_GLOBAL:
-        {
-            void* dst = vm.end_op();
-            int size = inst.operand.load.size;
-            vm.push_op_many(size);
-            memcpy(dst, &vm.global_data[inst.operand.load.idx], size * sizeof(ic_data));
-        }
-        case IC_OPC_STORE:
-        {
-            frame->bp[inst.operand.store.idx] = vm.top_op();
-            break;
-        }
-        case IC_OPC_STORE_GLOBAL:
-        {
-            vm.global_data[inst.operand.store.idx] = vm.top_op();
-            break;
-        }
-        case IC_OPC_STORE_STRUCT:
-        {
-            int size = inst.operand.store.size;
-            memcpy(&frame->bp[inst.operand.store.idx], vm.end_op() - size, size * sizeof(ic_data));
-            break;
-        }
-        case IC_OPC_STORE_STRUCT_GLOBAL:
-        {
-            int size = inst.operand.store.size;
-            memcpy(&vm.global_data[inst.operand.store.idx], vm.end_op() - size, size * sizeof(ic_data));
+            vm.top_op().pointer = &frame->bp[inst.operand.number];
             break;
         }
         case IC_OPC_STORE_1_AT:
@@ -197,7 +158,7 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_STORE_STRUCT_AT:
         {
             void* dst = vm.pop_op().pointer;
-            int size = inst.operand.size;
+            int size = inst.operand.number;
             memcpy(dst, vm.end_op() - size, size * sizeof(ic_data));
             break;
         }
@@ -222,7 +183,7 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_DEREFERENCE_STRUCT:
         {
             void* ptr = vm.pop_op().pointer;
-            int size = inst.operand.size;
+            int size = inst.operand.number;
             vm.push_op_many(size);
             memcpy(vm.end_op() - size, ptr, size * sizeof(ic_data));
             break;
@@ -230,42 +191,47 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_COMPARE_E_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 == rhs;
+            vm.top_op().s32 = vm.top_op().s32 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 != rhs;
+            vm.top_op().s32 = vm.top_op().s32 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 > rhs;
+            vm.top_op().s32 = vm.top_op().s32 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 >= rhs;
+            vm.top_op().s32 = vm.top_op().s32 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 < rhs;
+            vm.top_op().s32 = vm.top_op().s32 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 <= rhs;
+            vm.top_op().s32 = vm.top_op().s32 <= rhs;
+            break;
+        }
+        case IC_OPC_LOGICAL_NOT_S32:
+        {
+            vm.top_op().s32 = !vm.top_op().s32;
             break;
         }
         case IC_OPC_NEGATE_S32:
         {
-            vm.top_op().s32 = !vm.top_op().s32;
+            vm.top_op().s32 = -vm.top_op().s32;
             break;
         }
         case IC_OPC_ADD_S32:
@@ -301,43 +267,47 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_COMPARE_E_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 == rhs;
+            vm.top_op().s32 = vm.top_op().f32 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 != rhs;
+            vm.top_op().s32 = vm.top_op().f32 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 > rhs;
+            vm.top_op().s32 = vm.top_op().f32 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 >= rhs;
+            vm.top_op().s32 = vm.top_op().f32 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 < rhs;
+            vm.top_op().s32 = vm.top_op().f32 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 <= rhs;
+            vm.top_op().s32 = vm.top_op().f32 <= rhs;
+            break;
+        }
+        case IC_OPC_LOGICAL_NOT_F32:
+        {
+            vm.top_op().s32 = !vm.top_op().f32;
             break;
         }
         case IC_OPC_NEGATE_F32:
         {
-            printf("negate f32: %f\n", vm.top_op().f32);
-            vm.top_op().f32 = !vm.top_op().f32;
+            vm.top_op().f32 = -vm.top_op().f32;
             break;
         }
         case IC_OPC_ADD_F32:
@@ -367,42 +337,47 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_COMPARE_E_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 == rhs;
+            vm.top_op().s32 = vm.top_op().f64 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 != rhs;
+            vm.top_op().s32 = vm.top_op().f64 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 > rhs;
+            vm.top_op().s32 = vm.top_op().f64 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 >= rhs;
+            vm.top_op().s32 = vm.top_op().f64 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 < rhs;
+            vm.top_op().s32 = vm.top_op().f64 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 <= rhs;
+            vm.top_op().s32 = vm.top_op().f64 <= rhs;
+            break;
+        }
+        case IC_OPC_LOGICAL_NOT_F64:
+        {
+            vm.top_op().s32 = !vm.top_op().f64;
             break;
         }
         case IC_OPC_NEGATE_F64:
         {
-            vm.top_op().f64 = !vm.top_op().f64;
+            vm.top_op().f64 = -vm.top_op().f64;
             break;
         }
         case IC_OPC_ADD_F64:
@@ -432,48 +407,53 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_COMPARE_E_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer == rhs;
+            vm.top_op().s32 = vm.top_op().pointer == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer != rhs;
+            vm.top_op().s32 = vm.top_op().pointer != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer > rhs;
+            vm.top_op().s32 = vm.top_op().pointer > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer >= rhs;
+            vm.top_op().s32 = vm.top_op().pointer >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer < rhs;
+            vm.top_op().s32 = vm.top_op().pointer < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer <= rhs;
+            vm.top_op().s32 = vm.top_op().pointer <= rhs;
+            break;
+        }
+        case IC_OPC_LOGICAL_NOT_PTR:
+        {
+            vm.top_op().s32 = !vm.top_op().pointer;
             break;
         }
         case IC_OPC_ADD_PTR_S32:
         {
-            int bytes = vm.pop_op().s32 * inst.operand.size;
+            int bytes = vm.pop_op().s32;
             vm.top_op().pointer = (char*)vm.top_op().pointer + bytes;
             break;
         }
         case IC_OPC_SUB_PTR_S32:
         {
-            int bytes = vm.pop_op().s32 * inst.operand.size;
+            int bytes = vm.pop_op().s32;
             vm.top_op().pointer = (char*)vm.top_op().pointer - bytes;
             break;
         }
@@ -563,9 +543,15 @@ void dump_bytecode(ic_inst* bytecode,int  count)
     
     for (int i = 0; i < count; ++i)
     {
+        printf("%d ", i);
         ic_inst inst = bytecode[i];
         switch (inst.opcode)
         {
+        case IC_OPC_CLEAR:
+        {
+            printf("clear\n");
+            break;
+        }
         case IC_OPC_PUSH:
         {
             printf("push\n");
@@ -576,9 +562,19 @@ void dump_bytecode(ic_inst* bytecode,int  count)
             printf("pop\n");
             break;
         }
+        case IC_OPC_POP_MANY:
+        {
+            printf("pop many\n");
+            break;
+        }
         case IC_OPC_SWAP:
         {
             printf("swap\n");
+            break;
+        }
+        case IC_OPC_MEMMOVE:
+        {
+            printf("memmove\n");
             break;
         }
         case IC_OPC_CLONE:
@@ -596,74 +592,24 @@ void dump_bytecode(ic_inst* bytecode,int  count)
             printf("return\n");
             break;
         }
-        case IC_OPC_LOGICAL_NOT:
-        {
-            printf("logical not\n");
-            break;
-        }
         case IC_OPC_JUMP_TRUE:
         {
-            printf("jump true\n");
+            printf("jump true: %d\n", inst.operand.number);
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
-            printf("jump false\n");
+            printf("jump false: %d\n", inst.operand.number);
             break;
         }
         case IC_OPC_JUMP:
         {
-            printf("jump\n");
+            printf("jump: %d\n", inst.operand.number);
             break;
         }
         case IC_OPC_ADDRESS_OF:
         {
             printf("address of\n");
-            break;
-        }
-        case IC_OPC_ADDRESS_OF_GLOBAL:
-        {
-            printf("address of global\n");
-            break;
-        }
-        case IC_OPC_LOAD:
-        {
-            printf("load\n");
-            break;
-        }
-        case IC_OPC_LOAD_GLOBAL:
-        {
-            printf("load global\n");
-            break;
-        }
-        case IC_OPC_LOAD_STRUCT:
-        {
-            printf("load struct\n");
-            break;
-        }
-        case IC_OPC_LOAD_STRUCT_GLOBAL:
-        {
-            printf("load struct global\n");
-            break;
-        }
-        case IC_OPC_STORE:
-        {
-            printf("store\n");
-            break;
-        }
-        case IC_OPC_STORE_GLOBAL:
-        {
-            printf("store global\n");
-            break;
-        }
-        case IC_OPC_STORE_STRUCT:
-        {
-            printf("store struct\n");
-            break;
-        }
-        case IC_OPC_STORE_STRUCT_GLOBAL:
-        {
-            printf("store struct global\n");
             break;
         }
         case IC_OPC_STORE_1_AT:
@@ -736,6 +682,11 @@ void dump_bytecode(ic_inst* bytecode,int  count)
             printf("compare le s32\n");
             break;
         }
+        case IC_OPC_LOGICAL_NOT_S32:
+        {
+            printf("logical not s32\n");
+            break;
+        }
         case IC_OPC_NEGATE_S32:
         {
             printf("negate s32\n");
@@ -796,9 +747,14 @@ void dump_bytecode(ic_inst* bytecode,int  count)
             printf("compare le f32\n");
             break;
         }
+        case IC_OPC_LOGICAL_NOT_F32:
+        {
+            printf("logical not f32\n");
+            break;
+        }
         case IC_OPC_NEGATE_F32:
         {
-            printf("negate f32: %f\n");
+            printf("negate f32\n");
             break;
         }
         case IC_OPC_ADD_F32:
@@ -849,6 +805,11 @@ void dump_bytecode(ic_inst* bytecode,int  count)
         case IC_OPC_COMPARE_LE_F64:
         {
             printf("compare le f64\n");
+            break;
+        }
+        case IC_OPC_LOGICAL_NOT_F64:
+        {
+            printf("logical not f64\n");
             break;
         }
         case IC_OPC_NEGATE_F64:
@@ -904,6 +865,11 @@ void dump_bytecode(ic_inst* bytecode,int  count)
         case IC_OPC_COMPARE_LE_PTR:
         {
             printf("compare le ptr\n");
+            break;
+        }
+        case IC_OPC_LOGICAL_NOT_PTR:
+        {
+            printf("logical not ptr\n");
             break;
         }
         case IC_OPC_ADD_PTR_S32:

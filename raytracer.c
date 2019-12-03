@@ -214,7 +214,7 @@ f64 get_collision_distance(rt_ray ray, rt_sphere sphere, f64 min_distance, f64 m
     return 0.0;
 }
 
-rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 depth)
+rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 num_spheres, s32 depth)
 {
     if (depth > 9)
     {
@@ -258,7 +258,7 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 depth)
         if (attenuation.x == 0.0 && attenuation.y == 0.0 && attenuation.z == 0.0)
             return attenuation;
         
-        return mul_vec3(attenuation, get_ray_color(scattered_ray, spheres, depth + 1));
+        return mul_vec3(attenuation, get_ray_color(scattered_ray, spheres, num_spheres, depth + 1));
     }
 
     // miss, render sky color (gradient)
@@ -374,7 +374,7 @@ void main()
                 sensor_pos.z = 1.0 / tan(to_radians(camera.half_fov_y_deg));
 
                 ray.dir = normalize(transform_vec3(mat, sensor_pos));
-                color = add_vec3(color, get_ray_color(ray, spheres, 0));
+                color = add_vec3(color, get_ray_color(ray, spheres, num_spheres, 0));
             }
 
             color = div_vec3_scalar(color, samples_per_pixel); // average
