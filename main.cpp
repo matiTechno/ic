@@ -40,7 +40,7 @@ ic_type pointer1_type(ic_basic_type type, bool at_const)
     return { type, 1, (unsigned)(at_const ? 2 : 0) };
 }
 
-bool is_non_pointer_struct(ic_type type)
+bool is_struct(ic_type type)
 {
     return !type.indirection_level && type.basic_type == IC_TYPE_STRUCT;
 }
@@ -403,7 +403,7 @@ bool ic_runtime::run(const char* source_code)
             var.type = global.var.type;
             var.name = global.var.token.string;
 
-            if (is_non_pointer_struct(var.type))
+            if (is_struct(var.type))
             {
                 ic_struct* _struct = get_struct(var.type.struct_name);
                 assert(_struct);
@@ -436,7 +436,7 @@ bool ic_runtime::run(const char* source_code)
 
         for (int j = 0; j < function.param_count; ++j)
         {
-            if (is_non_pointer_struct(function.params[j].type))
+            if (is_struct(function.params[j].type))
             {
                 ic_struct* _struct = get_struct(function.params[j].type.struct_name);
                 assert(_struct); // todo; nice error
@@ -446,7 +446,7 @@ bool ic_runtime::run(const char* source_code)
                 function.param_size += 1;
         }
 
-        if (is_non_pointer_struct(function.return_type))
+        if (is_struct(function.return_type))
         {
             ic_struct* _struct = get_struct(function.return_type.struct_name);
             assert(_struct);
@@ -949,7 +949,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
             if (is_void(type))
                 exit_parsing(it, "struct member can't be of type void");
 
-            if (is_non_pointer_struct(type))
+            if (is_struct(type))
             {
                 ic_struct* sub_struct = runtime.get_struct(type.struct_name);
                 assert(sub_struct); //  todo, print nice error here

@@ -163,7 +163,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             compile_implicit_conversion(var.type, result.type, compiler);
             compiler.add_instr(IC_OPC_ADDRESS, var.idx);
 
-            if (is_non_pointer_struct(var.type))
+            if (is_struct(var.type))
                 compiler.add_instr(IC_OPC_STORE_STRUCT, compiler.get_struct(var.type.struct_name)->num_data);
             else
                 compiler.add_instr(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
@@ -357,7 +357,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
                 break;
             }
 
-            if (is_non_pointer_struct(member.type))
+            if (is_struct(member.type))
                 data_offset += compiler.get_struct(member.type.struct_name)->num_data;
             else
                 data_offset += 1;
@@ -386,7 +386,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { target_type, false };
         }
 
-        int target_type_size = is_non_pointer_struct(target_type) ?
+        int target_type_size = is_struct(target_type) ?
             compiler.get_struct(target_type.struct_name)->num_data : 1;
 
         compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, target_type_size);

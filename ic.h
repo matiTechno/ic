@@ -703,7 +703,7 @@ struct ic_runtime
 };
 
 bool ic_string_compare(ic_string str1, ic_string str2);
-bool is_non_pointer_struct(ic_type type);
+bool is_struct(ic_type type);
 bool is_void(ic_type type);
 ic_type non_pointer_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type, bool at_const = false);
@@ -781,7 +781,7 @@ struct ic_compiler
 
         int idx = stack_size;
 
-        if (is_non_pointer_struct(type))
+        if (is_struct(type))
             stack_size += get_struct(type.struct_name)->num_data;
         else
             stack_size += 1;
