@@ -473,7 +473,8 @@ bool ic_runtime::run(const char* source_code)
             assert(function.type == IC_FUN_SOURCE);
             assert(function.param_count == 0);
             assert(is_void(function.return_type));
-            vm.push_stack_frame(function.bytecode, function.stack_size, 0);
+            assert(function.return_size == 0);
+            vm.push_stack_frame(function.bytecode, function.stack_size, function.return_size);
             break;
         }
     }

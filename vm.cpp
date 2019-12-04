@@ -138,7 +138,17 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_ADDRESS:
         {
             vm.push_op();
-            vm.top_op().pointer = &frame->bp[instr.op1];
+            void* addr = frame->bp + instr.op1;
+            assert(addr >= frame->bp && addr < vm.call_stack + vm.call_stack_size);
+            vm.top_op().pointer = addr;
+            break;
+        }
+        case IC_OPC_ADDRESS_GLOBAL:
+        {
+            vm.push_op();
+            void* addr = vm.call_stack + instr.op1;
+            assert(addr >= 0 && addr < vm.stack_frames[0].bp);
+            vm.top_op().pointer = addr;
             break;
         }
         case IC_OPC_STORE_1:
@@ -619,6 +629,11 @@ void dump_bytecode(ic_instr* bytecode,int  count)
         case IC_OPC_ADDRESS:
         {
             printf("address\n");
+            break;
+        }
+        case IC_OPC_ADDRESS_GLOBAL:
+        {
+            printf("address global\n");
             break;
         }
         case IC_OPC_STORE_1:

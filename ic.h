@@ -16,8 +16,9 @@
 // use common prefix for all declaration names
 // comma, ternary, bitwise operators
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences
+// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, simple #define, enum, union
 // host structures; struct alignment, packing; exposing ast
+// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of stack (operand / local)
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
 // tail call optimization
@@ -469,6 +470,7 @@ enum ic_opcode
     IC_OPC_JUMP_FALSE, // expects s32
     IC_OPC_JUMP,
     IC_OPC_ADDRESS,
+    IC_OPC_ADDRESS_GLOBAL,
 
     // order of stack operands is reversed (data before address)
     // address is popped, data is left
@@ -777,7 +779,7 @@ struct ic_compiler
         if (present)
             assert(false);
 
-        int idx = stack_size + runtime->_global_size; // this is important (_global_size offset)
+        int idx = stack_size;
 
         if (is_non_pointer_struct(type))
             stack_size += get_struct(type.struct_name)->num_data;
@@ -793,19 +795,25 @@ struct ic_compiler
         return var;
     }
 
-    ic_var get_var(ic_string name)
+    ic_var get_var(ic_string name, bool* is_global)
     {
         assert(scopes.size());
 
         for (int i = vars.size() - 1; i >= 0; --i)
         {
             if (ic_string_compare(vars[i].name, name))
+            {
+                *is_global = false;
                 return vars[i];
+            }
         }
         for (ic_var& var : runtime->_global_vars)
         {
             if (ic_string_compare(var.name, name))
+            {
+                *is_global = true;
                 return var;
+            }
         }
 
         assert(false);

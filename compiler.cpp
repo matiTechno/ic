@@ -435,8 +435,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         }
         case IC_TOK_IDENTIFIER:
         {
-            ic_var var = compiler.get_var(token.string);
-            compiler.add_instr(IC_OPC_ADDRESS, var.idx);
+            bool is_global;
+            ic_var var = compiler.get_var(token.string, &is_global);
+            compiler.add_instr(is_global ? IC_OPC_ADDRESS_GLOBAL : IC_OPC_ADDRESS, var.idx);
 
             if (!load_lvalue)
                 return { var.type, true };
