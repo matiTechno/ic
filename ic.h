@@ -17,7 +17,7 @@
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
 // function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, simple #define, enum, union
 // host structures; struct alignment, packing; exposing ast
-// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of stack (operand / variable)
+// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of stack (operand / variable) - this is important
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
 // tail call optimization
@@ -571,6 +571,8 @@ enum ic_opcode
     IC_OPC_JUMP_END,
 };
 
+// todo, use byte stream instead of this gigantic structure
+// use memcopy to retrive types larger than 1 byte from a byte stream
 struct ic_instr
 {
     unsigned char opcode;
