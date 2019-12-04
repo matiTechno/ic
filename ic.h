@@ -457,17 +457,16 @@ enum ic_opcode
     // important: compare and logical_not push s32 not bool
 
     IC_OPC_BREAKPOINT,
-    IC_OPC_POP_ALL, // todo, remove this hack, create operand stack in compiler and use this only if there are some left overs on a stack
-    IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc. ; so bytecode can be human readable and more easly converted to other targets
+    IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc., so bytecode can be human readable and more easly converted to other targets
     IC_OPC_POP,
     IC_OPC_POP_MANY,
     IC_OPC_SWAP,
-    IC_OPC_MEMMOVE, // todo, this is quite gross, needed for member access of an rvalue struct
+    IC_OPC_MEMMOVE, // needed for member access of an rvalue struct
     IC_OPC_CLONE,
     IC_OPC_CALL, // last function argument is at the top of an operand stack (order is not reversed)
     IC_OPC_RETURN,
-    IC_OPC_JUMP_TRUE, // expects s32
-    IC_OPC_JUMP_FALSE, // expects s32
+    IC_OPC_JUMP_TRUE, // expects s32, operand is popped
+    IC_OPC_JUMP_FALSE, // expects s32, operand is popped
     IC_OPC_JUMP,
     IC_OPC_ADDRESS,
     IC_OPC_ADDRESS_GLOBAL,
@@ -568,7 +567,7 @@ enum ic_opcode
     IC_OPC_F64_S32,
     IC_OPC_F64_F32,
 
-    // todo; I don't like these (resolved during compilation)
+    // these are resolved during compilation
     IC_OPC_JUMP_CONDITION_FAIL,
     IC_OPC_JUMP_START,
     IC_OPC_JUMP_END,
@@ -850,3 +849,4 @@ void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs);
 void assert_modifiable_lvalue(ic_expr_result result);
 void compile_load(ic_type type, ic_compiler& compiler);
 void compile_store(ic_type type, ic_compiler& compiler);
+void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler);

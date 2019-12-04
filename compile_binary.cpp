@@ -9,7 +9,7 @@ ic_expr_result compile_assignment(ic_expr* lhs_expr, ic_type rhs_type, ic_compil
     ic_expr_result lhs = compile_expr(lhs_expr, compiler, false);
     assert_modifiable_lvalue(lhs);
     compile_store(lhs.type, compiler);
-    return lhs;
+    return { lhs.type, false };
 }
 
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)

@@ -43,11 +43,6 @@ void run_bytecode(ic_vm& vm)
         {
             break;
         }
-        case IC_OPC_POP_ALL:
-        {
-            vm.operand_stack_size = frame->prev_operand_stack_size;
-            break;
-        }
         case IC_OPC_PUSH:
         {
             vm.push_op(instr.op_push);
@@ -564,11 +559,6 @@ void dump_bytecode(ic_instr* bytecode,int  count)
         case IC_OPC_BREAKPOINT:
         {
             printf("breakpoint\n");
-            break;
-        }
-        case IC_OPC_POP_ALL:
-        {
-            printf("pop all\n");
             break;
         }
         case IC_OPC_PUSH:

@@ -41,5 +41,5 @@ void main()
         }
     }
 
-    write_ppm6("fractal_render.ppm", width, height, image_buf);
+    write_ppm6("render_fractal.ppm", width, height, image_buf);
 }

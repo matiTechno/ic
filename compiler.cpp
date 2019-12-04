@@ -19,7 +19,7 @@ void compile(ic_function& function, ic_runtime& runtime)
     if(!is_void(function.return_type))
         assert(returned);
     else if(!returned)
-        compiler.add_instr({ IC_OPC_RETURN });
+        compiler.add_instr(IC_OPC_RETURN);
 
     function.by_size = compiler.bytecode.size();
     function.bytecode = (ic_instr*)malloc(function.by_size * sizeof(ic_instr));
@@ -54,7 +54,6 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_compound.push_scope)
             compiler.pop_scope();
 
-        compiler.add_instr(IC_OPC_POP_ALL); // todo, this is temp solution
         break;
     }
     case IC_STMT_FOR:
@@ -70,15 +69,19 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_for.header2)
         {
+            // no need to pop result, JUMP_FALSE instr pops it
             ic_expr_result result = compile_expr(stmt->_for.header2, compiler);
             compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
-            compiler.add_instr({ IC_OPC_JUMP_CONDITION_FAIL });
+            compiler.add_instr(IC_OPC_JUMP_CONDITION_FAIL);
         }
 
         compile_stmt(stmt->_for.body, compiler);
 
         if (stmt->_for.header3)
-            compile_expr(stmt->_for.header3, compiler);
+        {
+            ic_expr_result result =compile_expr(stmt->_for.header3, compiler);
+            compile_pop_expr_result(result, compiler);
+        }
 
         compiler.add_instr(IC_OPC_JUMP, loop_start_idx);
 
@@ -112,6 +115,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     {
         int returned_if = false;
         int returned_else = false;
+        // no need to pop result, JUMP_FALSE instr pops it
         ic_expr_result result = compile_expr(stmt->_if.header, compiler);
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
         int idx_start = compiler.bytecode.size();
@@ -167,6 +171,9 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
                 compiler.add_instr(IC_OPC_STORE_STRUCT, compiler.get_struct(var.type.struct_name)->num_data);
             else
                 compiler.add_instr(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
+
+            // STORE poppes the address, data is still left on the operand stack
+            compile_pop_expr_result(result, compiler);
         }
         else
             assert((var.type.const_mask & 1) == 0);
@@ -182,6 +189,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             ic_expr_result result = compile_expr(stmt->_return.expr, compiler);
             compile_implicit_conversion(return_type, result.type, compiler);
+            // non need to pop result, VM passes it to parent stack_frame
         }
         else
             assert(is_void(return_type));
@@ -205,8 +213,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     {
         if (stmt->_expr)
         {
-            compile_expr(stmt->_expr, compiler);
-            compiler.add_instr(IC_OPC_POP_ALL); // todo
+            ic_expr_result result = compile_expr(stmt->_expr, compiler);
+            compile_pop_expr_result(result, compiler);
         }
 
         break;
@@ -386,9 +394,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { target_type, false };
         }
 
-        int target_type_size = is_struct(target_type) ?
-            compiler.get_struct(target_type.struct_name)->num_data : 1;
-
+        int target_type_size = is_struct(target_type) ? compiler.get_struct(target_type.struct_name)->num_data : 1;
         compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, target_type_size);
         compiler.add_instr(IC_OPC_POP_MANY, _struct->num_data - target_type_size);
         return { target_type, false };
