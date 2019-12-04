@@ -39,10 +39,6 @@ void run_bytecode(ic_vm& vm)
 
         switch (instr.opcode)
         {
-        case IC_OPC_BREAKPOINT:
-        {
-            break;
-        }
         case IC_OPC_PUSH:
         {
             vm.push_op(instr.op_push);
@@ -556,11 +552,6 @@ void dump_bytecode(ic_instr* bytecode,int  count)
         ic_instr instr = bytecode[i];
         switch (instr.opcode)
         {
-        case IC_OPC_BREAKPOINT:
-        {
-            printf("breakpoint\n");
-            break;
-        }
         case IC_OPC_PUSH:
         {
             printf("push\n");

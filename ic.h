@@ -455,7 +455,6 @@ enum ic_opcode
 {
     // important: compare and logical_not push s32 not bool
 
-    IC_OPC_BREAKPOINT,
     IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc., so bytecode can be human readable and more easly converted to other targets
     IC_OPC_POP,
     IC_OPC_POP_MANY,
