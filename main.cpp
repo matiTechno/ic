@@ -40,9 +40,14 @@ ic_type pointer1_type(ic_basic_type type, bool at_const)
     return { type, 1, (unsigned)(at_const ? 2 : 0) };
 }
 
-bool is_non_pointer_struct(ic_type& type)
+bool is_non_pointer_struct(ic_type type)
 {
     return !type.indirection_level && type.basic_type == IC_TYPE_STRUCT;
+}
+
+bool is_void(ic_type type)
+{
+    return !type.indirection_level && type.basic_type == IC_TYPE_VOID;
 }
 
 void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
@@ -447,7 +452,7 @@ bool ic_runtime::run(const char* source_code)
             assert(_struct);
             function.return_size = _struct->num_data;
         }
-        else if (function.return_type.indirection_level || function.return_type.basic_type != IC_TYPE_VOID)
+        else if(!is_void(function.return_type))
             function.return_size = 1;
         else
             function.return_size = 0;
@@ -467,7 +472,7 @@ bool ic_runtime::run(const char* source_code)
         {
             assert(function.type == IC_FUN_SOURCE);
             assert(function.param_count == 0);
-            assert(function.return_type.basic_type == IC_TYPE_VOID && !function.return_type.indirection_level);
+            assert(is_void(function.return_type));
             vm.push_stack_frame(function.bytecode, function.stack_size, 0);
             break;
         }
@@ -940,7 +945,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
             if (type.const_mask & 1)
                 exit_parsing(it, "struct member can't be const");
 
-            if (!type.indirection_level && type.basic_type == IC_TYPE_VOID)
+            if (is_void(type))
                 exit_parsing(it, "struct member can't be of type void");
 
             if (is_non_pointer_struct(type))
@@ -1000,8 +1005,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
                 if (!produce_type(it, runtime, param_type))
                     exit_parsing(it, "expected parameter type");
 
-                // constness should not be compared here and that's why == non_pointer(IC_TYPE_VOID) is not used
-                if (!param_type.indirection_level && param_type.basic_type == IC_TYPE_VOID)
+                if (is_void(param_type))
                     exit_parsing(it, "parameter can't be of type void");
 
                 function.params[function.param_count].type = param_type;
@@ -1027,7 +1031,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 
     // variable
     // todo; redundant with produce_stmt_var_declaration()
-    if (type.basic_type == IC_TYPE_VOID && !type.indirection_level)
+    if (is_void(type))
         exit_parsing(it, "variables can't be of type void");
 
     ic_global global;
@@ -1147,8 +1151,7 @@ ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
 
     if (produce_type(it, runtime, type))
     {
-        // constness should not be compared here and that's why == non_pointer(IC_TYPE_VOID) is not used
-        if (type.basic_type == IC_TYPE_VOID && !type.indirection_level)
+        if (is_void(type))
             exit_parsing(it, "variables can't be of type void");
 
         ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_VAR_DECLARATION);

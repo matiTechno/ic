@@ -16,7 +16,7 @@ void compile(ic_function& function, ic_runtime& runtime)
 
     bool returned = compile_stmt(function.body, compiler);
 
-    if (function.return_type.indirection_level || function.return_type.basic_type != IC_TYPE_VOID)
+    if(!is_void(function.return_type))
         assert(returned);
     else if(!returned)
         compiler.add_instr({ IC_OPC_RETURN });
@@ -184,7 +184,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             compile_implicit_conversion(return_type, result.type, compiler);
         }
         else
-            assert(!return_type.indirection_level && return_type.basic_type == IC_TYPE_VOID);
+            assert(is_void(return_type));
 
         compiler.add_instr(IC_OPC_RETURN);
         break;
