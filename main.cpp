@@ -154,6 +154,11 @@ ic_data ic_host_random01(ic_data*)
     return data;
 }
 
+ic_data ic_host_exit(ic_data*)
+{
+    exit(0);
+}
+
 void ic_runtime::init()
 {
     // todo; use add_host_function()
@@ -266,6 +271,17 @@ void ic_runtime::init()
         function.return_type = non_pointer_type(IC_TYPE_F64);
         function.param_count = 0;
         function.callback = ic_host_random01;
+        _functions.push_back(function);
+    }
+    {
+        const char* str = "exit";
+        ic_string name = { str, strlen(str) };
+        ic_function function;
+        function.type = IC_FUN_HOST;
+        function.token.string = name;
+        function.return_type = non_pointer_type(IC_TYPE_VOID);
+        function.param_count = 0;
+        function.callback = ic_host_exit;
         _functions.push_back(function);
     }
 }

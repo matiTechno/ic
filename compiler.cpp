@@ -15,6 +15,7 @@ void compile(ic_function& function, ic_runtime& runtime)
         compiler.declare_var(function.params[i].type, function.params[i].name);
 
     bool returned = compile_stmt(function.body, compiler);
+    assert(compiler.scopes.size() == 1);
 
     if(!is_void(function.return_type))
         assert(returned);
@@ -79,7 +80,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_for.header3)
         {
-            ic_expr_result result =compile_expr(stmt->_for.header3, compiler);
+            ic_expr_result result = compile_expr(stmt->_for.header3, compiler);
             compile_pop_expr_result(result, compiler);
         }
 
@@ -189,7 +190,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             ic_expr_result result = compile_expr(stmt->_return.expr, compiler);
             compile_implicit_conversion(return_type, result.type, compiler);
-            // non need to pop result, VM passes it to parent stack_frame
+            // non need to pop result, VM passes it to a parent stack_frame
         }
         else
             assert(is_void(return_type));
@@ -436,7 +437,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         }
         case IC_TOK_FLOAT_NUMBER_LITERAL:
         {
-            compiler.add_instr_push({ .f64 = (double)token.number });
+            compiler.add_instr_push({ .f64 = token.number });
             return { non_pointer_type(IC_TYPE_F64), false };
         }
         case IC_TOK_IDENTIFIER:

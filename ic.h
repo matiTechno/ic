@@ -12,13 +12,12 @@
 
 // ic - interpreted C
 // todo
-// final goal: dump assembly that can be assembled by e.g. nasm to an object file (or dump LLVM IR, or AOT compilation + execution)
 // use common prefix for all declaration names
 // comma, ternary, bitwise operators
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
 // function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, simple #define, enum, union
 // host structures; struct alignment, packing; exposing ast
-// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of stack (operand / local)
+// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of stack (operand / variable)
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
 // tail call optimization
@@ -796,8 +795,6 @@ struct ic_compiler
 
     ic_var get_var(ic_string name, bool* is_global)
     {
-        assert(scopes.size());
-
         for (int i = vars.size() - 1; i >= 0; --i)
         {
             if (ic_string_compare(vars[i].name, name))
