@@ -14,30 +14,15 @@
 // todo
 // final goal: dump assembly that can be assembled by e.g. nasm to an object file (or dump LLVM IR, or AOT compilation + execution)
 // use common prefix for all declaration names
-// comma, ternary operators
-// print source code line on error
+// comma, ternary, bitwise operators
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// function pointers, typedefs (or better 'using = ')
-// host structures registering ?
+// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences
+// host structures; struct alignment, packing; exposing ast
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
-// one of the next goals will be to change execution into type pass with byte code generation and then execute bytecode
-// escape sequences
-// automatic array
 // auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
-// data of returned struct value is leaked until function call scope is popped (except when value is used to initialize a variable); this is not a huge deal
 // tail call optimization
-// initializer-list
-// bitwise operators
-// imgui debugger
-// software rasterizer benchmark
-// change type keywords? (char, uchar, int, float, double)
-// struct allignment (currently each member consumes 8 bytes)
-// text editor with colors and error reporting using our very own ast technology
-// big cleanup after implementing bytecode
-// map bytecode to source (debug view)
-// rename ic_value to ic_expr_result or something like that
+// imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
 // exit instruction
-// expose ast to a script - metaprogramming like in jai
 
 template<typename T, int N>
 struct ic_deque
@@ -468,17 +453,17 @@ struct ic_exception_parsing {};
 
 enum ic_opcode
 {
-    // important: compare and logical not push s32 not bool
+    // important: compare and logical_not push s32 not bool
 
     IC_OPC_BREAKPOINT,
     IC_OPC_POP_ALL, // todo, remove this hack, create operand stack in compiler and use this only if there are some left overs on a stack
-    IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc. ; so bytecode can be human readable
+    IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc. ; so bytecode can be human readable and more easly converted to other targets
     IC_OPC_POP,
     IC_OPC_POP_MANY,
     IC_OPC_SWAP,
-    IC_OPC_MEMMOVE, // todo, this is quite gross, needed for rvalue struct member access
+    IC_OPC_MEMMOVE, // todo, this is quite gross, needed for member access of an rvalue struct
     IC_OPC_CLONE,
-    IC_OPC_CALL, // last function argument is at the top of a operand stack (order is not reversed)
+    IC_OPC_CALL, // last function argument is at the top of an operand stack (order is not reversed)
     IC_OPC_RETURN,
     IC_OPC_JUMP_TRUE, // expects s32
     IC_OPC_JUMP_FALSE, // expects s32
@@ -792,7 +777,7 @@ struct ic_compiler
         if (present)
             assert(false);
 
-        int idx = stack_size + runtime->_global_size; // this is important, _global_size offset
+        int idx = stack_size + runtime->_global_size; // this is important (_global_size offset)
 
         if (is_non_pointer_struct(type))
             stack_size += get_struct(type.struct_name)->num_data;
