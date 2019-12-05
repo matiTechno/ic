@@ -466,7 +466,7 @@ bool ic_runtime::run(const char* source_code)
         {
             ic_struct* _struct = get_struct(function.return_type.struct_name);
             assert(_struct);
-            function.return_size = _struct->num_data;
+            function.return_size = _struct->num_data; // todo, have a function that returns a data size of a type
         }
         else if(!is_void(function.return_type))
             function.return_size = 1;

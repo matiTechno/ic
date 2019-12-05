@@ -242,33 +242,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     case IC_EXPR_SIZEOF:
     {
         ic_type type = expr->_sizeof.type;
-        int size;
-
-        if (type.indirection_level)
-            size = 8;
-        else
-        {
-            switch (type.basic_type)
-            {
-            case IC_TYPE_BOOL:
-            case IC_TYPE_S8:
-            case IC_TYPE_U8:
-                size = 1;
-                break;
-            case IC_TYPE_S32:
-            case IC_TYPE_F32:
-                size = 4;
-                break;
-            case IC_TYPE_F64:
-                size = 8;
-                break;
-            case IC_TYPE_STRUCT:
-                size = compiler.get_struct(type.struct_name)->num_data * sizeof(ic_data);
-                break;
-            default:
-                assert(false);
-            }
-        }
+        type.indirection_level += 1; // this is quite a hack
+        int size = pointed_type_byte_size(type, compiler);
+        assert(size); // incomplete type is not allowed
         compiler.add_instr_push({ .s32 = size });
         return { non_pointer_type(IC_TYPE_S32), false };
     }

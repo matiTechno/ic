@@ -291,3 +291,27 @@ void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
     }
     assert(false);
 }
+
+int pointed_type_byte_size(ic_type type, ic_compiler& compiler)
+{
+    if (type.indirection_level > 1)
+        return 8;
+    switch (type.basic_type)
+    {
+    case IC_TYPE_BOOL:
+    case IC_TYPE_S8:
+    case IC_TYPE_U8:
+        return 1;
+    case IC_TYPE_S32:
+    case IC_TYPE_F32:
+        return 4;
+    case IC_TYPE_F64:
+        return 8;
+    case IC_TYPE_STRUCT:
+        return compiler.get_struct(type.struct_name)->num_data * sizeof(ic_data);
+    case IC_TYPE_VOID:
+        return 0;
+    }
+    assert(false);
+    return {};
+}

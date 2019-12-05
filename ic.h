@@ -23,6 +23,7 @@
 // tail call optimization
 // imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
 // exit instruction
+// do some benchmarks against jvm and python vm and lua
 
 template<typename T, int N>
 struct ic_deque
@@ -52,27 +53,6 @@ struct ic_deque
 
         size += 1;
         return &get(size - 1);
-    }
-
-    // this is quite tricky
-    T* allocate_continuous(int num) // todo; change size to _size; num so it does not collide with member size
-    {
-        assert(num <= N);
-        num = num ? num : 1; // this is to support non-member structs - allocate for them one dummy data
-
-        if (pools.empty() || size + num > pools.size() * N)
-        {
-            T* new_pool = (T*)malloc(N * sizeof(T));
-            pools.push_back(new_pool);
-        }
-
-        int current_pool_size = size % N;
-
-        if (current_pool_size + num > N)
-            size += N - current_pool_size; // move to the next pool (we want continuous memory)
-
-        size += num;
-        return &get(size - num);
     }
 };
 
@@ -848,3 +828,4 @@ void assert_modifiable_lvalue(ic_expr_result result);
 void compile_load(ic_type type, ic_compiler& compiler);
 void compile_store(ic_type type, ic_compiler& compiler);
 void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler);
+int pointed_type_byte_size(ic_type type, ic_compiler& compiler);
