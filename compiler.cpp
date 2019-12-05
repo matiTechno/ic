@@ -17,6 +17,7 @@ void compile(ic_function& function, ic_runtime& runtime)
 
     bool returned = compile_stmt(function.body, compiler);
     assert(compiler.scopes.size() == 1);
+    assert(compiler.loop_count == 0);
 
     if(!is_void(function.return_type))
         assert(returned);
@@ -46,10 +47,10 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         while (body_stmt)
         {
-            //if (returned) // dead code elimination
-                //break; // but it still needs to be compiled for corectness
+            // dead code elimination, but still needs to be compiled to check corectness
             // print warning
-
+            //if (returned)
+                //break;
             returned = returned || compile_stmt(body_stmt, compiler);
             body_stmt = body_stmt->next;
         }
@@ -61,7 +62,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     }
     case IC_STMT_FOR:
     {
-        // don't set returned flag here, loop may never be executed
+        // don't set returned flag in any case, loop may never be executed
         compiler.loop_count += 1;
         compiler.push_scope();
 
@@ -99,12 +100,12 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
                 instr.opcode = IC_OPC_JUMP_FALSE;
                 instr.op1 = compiler.bytecode.size();
                 break;
-            case IC_OPC_JUMP_START:
+            case IC_OPC_JUMP_START: // continue stmt
                 instr.opcode = IC_OPC_JUMP;
                 instr.op1 = loop_start_idx;
                 break;
             case IC_OPC_JUMP_END:
-                instr.opcode = IC_OPC_JUMP;
+                instr.opcode = IC_OPC_JUMP; // break stmt
                 instr.op1 = compiler.bytecode.size();
                 break;
             }
@@ -119,7 +120,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         int returned_if = false;
         int returned_else = false;
         // no need to pop result, JUMP_FALSE instr pops it
-        ic_expr_result result = compile_expr(stmt->_if.header, compiler);
+        ic_expr_result result = compile_expr(stmt->_if.header, compiler); // no need to push a scope here, expr can't declare a new variable
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
         int idx_start = compiler.bytecode.size();
         compiler.add_instr(IC_OPC_JUMP_CONDITION_FAIL);
@@ -130,7 +131,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_if.body_else)
         {
-            compiler.add_instr(IC_OPC_JUMP_END); // don't enter else when if block was entered
+            compiler.add_instr(IC_OPC_JUMP_END);
             idx_else = compiler.bytecode.size();
             compiler.push_scope();
             returned_else = compile_stmt(stmt->_if.body_else, compiler);
@@ -156,7 +157,6 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
                 break;
             }
         }
-
         returned = returned_if && returned_else; // both branches must return, if there is no else branch return false
         break;
     }
@@ -175,11 +175,11 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             else
                 compiler.add_instr(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
 
-            // STORE poppes the address, data is still left on the operand stack
+            // STORE poppes an address, data is still left on the operand stack
             compile_pop_expr_result(result, compiler);
         }
         else
-            assert((var.type.const_mask & 1) == 0);
+            assert((var.type.const_mask & 1) == 0); // const variable must be initialized
 
         break;
     }
@@ -192,7 +192,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             ic_expr_result result = compile_expr(stmt->_return.expr, compiler);
             compile_implicit_conversion(return_type, result.type, compiler);
-            // non need to pop result, VM passes it to a parent stack_frame
+            // don't pop the result, VM passes it to a parent stack_frame
         }
         else
             assert(is_void(return_type));
@@ -219,7 +219,6 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             ic_expr_result result = compile_expr(stmt->_expr, compiler);
             compile_pop_expr_result(result, compiler);
         }
-
         break;
     }
     default:
@@ -264,78 +263,38 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     }
     case IC_EXPR_SUBSCRIPT:
     {
-        // todo, redundant with IC_TOK_PLUS
-        ic_expr_result lhs = compile_expr(expr->_subscript.lhs, compiler);
-        assert(lhs.type.indirection_level);
-        ic_expr_result rhs = compile_expr(expr->_subscript.rhs, compiler);
-        ic_type rhs_atype = arithmetic_expr_type(rhs.type);
-        assert(rhs_atype.basic_type == IC_TYPE_S32);
-        compile_implicit_conversion(rhs_atype, rhs.type, compiler);
-        int type_size;
-
-        if (lhs.type.indirection_level > 1)
-            type_size = 8;
-        else
-        {
-            switch (lhs.type.basic_type)
-            {
-            case IC_TYPE_BOOL:
-            case IC_TYPE_S8:
-            case IC_TYPE_U8:
-                type_size = 1;
-                break;
-            case IC_TYPE_S32:
-            case IC_TYPE_F32:
-                type_size = 4;
-                break;
-            case IC_TYPE_F64:
-                type_size = 8;
-                break;
-            case IC_TYPE_STRUCT:
-                type_size = compiler.get_struct(lhs.type.struct_name)->num_data * sizeof(ic_data);
-                break;
-            default:
-                assert(false); // e.g. pointer to void or nullptr
-            }
-        }
-
-        compiler.add_instr(IC_OPC_ADD_PTR_S32, type_size);
-        // todo, this is quite redundant with IC_TOK_STAR...
-        lhs.type.const_mask = lhs.type.const_mask >> 1;
-        lhs.type.indirection_level -= 1;
-
-        if (load_lvalue)
-            compile_load(lhs.type, compiler);
-
-        return { lhs.type, !load_lvalue };
+        ic_type lhs_type = compile_expr(expr->_subscript.lhs, compiler).type;
+        compile_pointer_additive_expr(lhs_type, expr->_subscript.rhs, IC_OPC_ADD_PTR_S32, compiler);
+        return compile_dereference(lhs_type, compiler, load_lvalue);
     }
     case IC_EXPR_MEMBER_ACCESS:
     {
-        ic_expr_result result = compile_expr(expr->_member_access.lhs, compiler, false);
-        assert(result.type.basic_type == IC_TYPE_STRUCT);
+        ic_expr_result result;
 
-        if (result.type.indirection_level)
+        switch (expr->token.type)
         {
-            assert(result.type.indirection_level == 1);
-            assert(expr->token.type == IC_TOK_ARROW);
-
-            if (result.lvalue)
-                compile_load(result.type, compiler); // this is important, on operand stack there is currently an address of a pointer,
-            // we need to dereference pointer to get a struct address
-            // this is very tricky and it is the issue with current design
+        case IC_TOK_DOT:
+            result = compile_expr(expr->_member_access.lhs, compiler, false);
+            break;
+        case IC_TOK_ARROW:
+            result = compile_expr(expr->_member_access.lhs, compiler);
+            result = compile_dereference(result.type, compiler, false);
+            assert(!result.type.indirection_level);
+            break;
+        default:
+            assert(false);
         }
-        else
-            assert(expr->token.type == IC_TOK_DOT);
 
+        assert(result.type.basic_type == IC_TYPE_STRUCT);
         ic_string target_name = expr->_member_access.rhs_token.string;
-        ic_struct* _struct = compiler.get_struct(result.type.struct_name);
         ic_type target_type;
+        ic_struct* _struct = compiler.get_struct(result.type.struct_name);
         int data_offset = 0;
         bool match = false;
 
         for (int i = 0; i < _struct->num_members; ++i)
         {
-            ic_struct_member member = _struct->members[i];
+            const ic_struct_member& member = _struct->members[i];
 
             if (ic_string_compare(target_name, member.name))
             {
@@ -348,24 +307,20 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
                 data_offset += compiler.get_struct(member.type.struct_name)->num_data;
             else
                 data_offset += 1;
-
         }
 
         assert(match);
         
-        if (result.lvalue || result.type.indirection_level)
+        if (result.lvalue)
         {
             compiler.add_instr_push({ .s32 = data_offset });
             compiler.add_instr(IC_OPC_ADD_PTR_S32, sizeof(ic_data));
 
             if (!load_lvalue)
             {
-                // propagate constness to member data
-                if (result.type.indirection_level)
-                    target_type.const_mask |= ((result.type.const_mask >> 1) & 1);
-                else
-                    target_type.const_mask |= (result.type.const_mask & 1);
-
+                // propagate constness to accessed data; non pointer type can have only one first bit set in a const mask
+                assert(result.type.const_mask == 0 || result.type.const_mask == 1);
+                target_type.const_mask |= result.type.const_mask;
                 return { target_type, true };
             }
 
@@ -373,9 +328,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { target_type, false };
         }
 
-        int target_type_size = is_struct(target_type) ? compiler.get_struct(target_type.struct_name)->num_data : 1;
-        compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, target_type_size);
-        compiler.add_instr(IC_OPC_POP_MANY, _struct->num_data - target_type_size);
+        int size = is_struct(target_type) ? compiler.get_struct(target_type.struct_name)->num_data : 1;
+        compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, size);
+        compiler.add_instr(IC_OPC_POP_MANY, _struct->num_data - size);
         return { target_type, false };
     }
     case IC_EXPR_PARENTHESES:
@@ -384,22 +339,21 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     }
     case IC_EXPR_FUNCTION_CALL:
     {
-        ic_function* function = compiler.get_fun(expr->token.string);
-
         int argc = 0;
+        int idx;
+        ic_function* function = compiler.get_fun(expr->token.string, &idx);
         ic_expr* expr_arg = expr->_function_call.arg;
 
         while (expr_arg)
         {
-            ic_expr_result result = compile_expr(expr_arg, compiler);
-            compile_implicit_conversion(function->params[argc].type, result.type, compiler);
+            ic_type arg_type = compile_expr(expr_arg, compiler).type;
+            compile_implicit_conversion(function->params[argc].type, arg_type, compiler);
             expr_arg = expr_arg->next;
             ++argc;
         }
 
         assert(argc == function->param_count);
-
-        compiler.add_instr(IC_OPC_CALL, function - compiler.runtime->_functions.data()); // todo, something nicer?
+        compiler.add_instr(IC_OPC_CALL, idx);
         return { function->return_type, false };
     }
     case IC_EXPR_PRIMARY:
@@ -408,16 +362,6 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
         switch (token.type)
         {
-        case IC_TOK_INT_NUMBER_LITERAL:
-        {
-            compiler.add_instr_push({ .s32 = (int)token.number });
-            return { non_pointer_type(IC_TYPE_S32), false };
-        }
-        case IC_TOK_FLOAT_NUMBER_LITERAL:
-        {
-            compiler.add_instr_push({ .f64 = token.number });
-            return { non_pointer_type(IC_TYPE_F64), false };
-        }
         case IC_TOK_IDENTIFIER:
         {
             bool is_global;
@@ -429,33 +373,32 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
             compile_load(var.type, compiler);
             return { var.type, false };
-
         }
         case IC_TOK_TRUE:
-        {
             compiler.add_instr_push({ .s32 = 1 });
             return { non_pointer_type(IC_TYPE_S32), false };
-        }
+
         case IC_TOK_FALSE:
-        {
             compiler.add_instr_push({ .s32 = 0 });
             return { non_pointer_type(IC_TYPE_S32), false };
-        }
+
         case IC_TOK_NULLPTR:
-        {
             compiler.add_instr_push({ .pointer = nullptr });
             return { pointer1_type(IC_TYPE_NULLPTR), false };
-        }
-        case IC_TOK_STRING_LITERAL:
-        {
-            compiler.add_instr_push({ .pointer = (void*)token.string.data }); // ub? removing const
-            return { pointer1_type(IC_TYPE_S8, true), false };
-        }
+
+        case IC_TOK_INT_NUMBER_LITERAL:
         case IC_TOK_CHARACTER_LITERAL:
-        {
             compiler.add_instr_push({ .s32 = (int)token.number });
             return { non_pointer_type(IC_TYPE_S32), false };
-        }
+
+        case IC_TOK_FLOAT_NUMBER_LITERAL:
+            compiler.add_instr_push({ .f64 = token.number });
+            return { non_pointer_type(IC_TYPE_F64), false };
+
+        case IC_TOK_STRING_LITERAL:
+            compiler.add_instr_push({ .pointer = (void*)token.string.data });
+            return { pointer1_type(IC_TYPE_S8, true), false };
+
         default:
             assert(false);
         }

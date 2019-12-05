@@ -444,7 +444,7 @@ bool ic_runtime::run(const char* source_code)
         {
             compile(function, *this);
             //printf("\n\nfunction: %.*s\nstack_size: %d\n", function.token.string.len, function.token.string.data, function.stack_size);
-            //dump_bytecode(function.bytecode, function.by_size);
+            //dump_bytecode(function.bytecode, function.bytecode_size);
         }
 
         // calculate return and param size for vm

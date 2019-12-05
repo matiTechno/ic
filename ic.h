@@ -24,6 +24,7 @@
 // imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
 // exit instruction
 // do some benchmarks against jvm and python vm and lua
+// ptr = 1 + ptr; ptr = 1[ptr]; - both of these are legal in C, in ic pointer must be on the lhs of the expression
 
 template<typename T, int N>
 struct ic_deque
@@ -351,18 +352,15 @@ struct ic_expr
     };
 };
 
-struct ic_data
+union ic_data
 {
-    union
-    {
-        char s8;
-        unsigned char u8;
-        int s32;
-        unsigned int u32;
-        float f32;
-        double f64;
-        void* pointer;
-    };
+    char s8;
+    unsigned char u8;
+    int s32;
+    unsigned int u32;
+    float f32;
+    double f64;
+    void* pointer;
 };
 
 struct ic_param
@@ -430,7 +428,8 @@ struct ic_global
     };
 };
 
-struct ic_exception_parsing {};
+struct ic_exception_parsing {}; // todo, we can probably do without exceptions, just point a token iterator at the last
+// element and set a flag in runtime to not print further parsing errors when exiting the call stack
 
 #define IC_CALL_STACK_SIZE (1024 * 1024)
 #define IC_OPERAND_STACK_SIZE 1024
@@ -801,10 +800,11 @@ struct ic_compiler
         return {};
     }
 
-    ic_function* get_fun(ic_string name)
+    ic_function* get_fun(ic_string name, int* idx)
     {
         ic_function* function = runtime->get_function(name);
         assert(function);
+        *idx = function - &runtime->_functions[0];
         return function;
     }
 
@@ -821,8 +821,10 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
+ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, int opc, ic_compiler& compiler);
+ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue);
 
-// auxiliary
+// compile_auxiliary.cpp
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler);
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler);
 ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs);

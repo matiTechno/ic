@@ -91,6 +91,7 @@ ic_expr_result compile_binary_arithmetic(ic_type lhs_type, ic_expr* rhs_expr, in
 // lhs expr should be compiled before calling this function
 ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, int opc, ic_compiler& compiler)
 {
+    assert(lhs_type.indirection_level);
     ic_type rhs_type = compile_expr(rhs_expr, compiler).type;
     ic_type atype = arithmetic_expr_type(rhs_type);
     assert(atype.basic_type == IC_TYPE_S32);

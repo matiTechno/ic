@@ -11,7 +11,7 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
     {
         assert(to.basic_type != IC_TYPE_NULLPTR);
 
-        // to must be 'more' const than from, except constness of a pointer itself; todo test if it works
+        // to_type must be more const than from_type, except constness of a pointer itself
         for (int i = 1; i <= to.indirection_level; ++i)
         {
             int const_to = to.const_mask & (1 << i);

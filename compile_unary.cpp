@@ -1,5 +1,17 @@
 #include "ic.h"
 
+ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue)
+{
+    assert(type.indirection_level);
+    type.indirection_level -= 1;
+    type.const_mask = type.const_mask >> 1;
+
+    if (load_lvalue)
+        compile_load(type, compiler);
+
+    return { type, !load_lvalue };
+}
+
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
 {
     switch (expr->token.type)
@@ -113,14 +125,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     case IC_TOK_STAR:
     {
         ic_type type = compile_expr(expr->_unary.expr, compiler).type;
-        assert(type.indirection_level);
-        type.indirection_level -= 1;
-        type.const_mask = type.const_mask >> 1;
-
-        if (load_lvalue)
-            compile_load(type, compiler);
-
-        return { type, !load_lvalue };
+        return compile_dereference(type, compiler, load_lvalue);
     }
     default:
         assert(false);
