@@ -382,16 +382,20 @@ struct ic_function
     ic_token token;
     int param_count;
     ic_param params[IC_MAX_ARGC];
-    ic_instr* bytecode; // todo move to a union
-    int stack_size; // same
-    int by_size;
     int param_size;
     int return_size;
 
     union
     {
         ic_host_function callback;
-        ic_stmt* body;
+
+        struct
+        {
+            ic_stmt* body;
+            ic_instr* bytecode;
+            int bytecode_size;
+            int stack_size;
+        };
     };
 };
 

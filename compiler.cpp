@@ -2,6 +2,7 @@
 
 void compile(ic_function& function, ic_runtime& runtime)
 {
+    assert(function.type == IC_FUN_SOURCE);
     ic_compiler compiler;
     compiler.runtime = &runtime;
     compiler.function = &function;
@@ -22,9 +23,10 @@ void compile(ic_function& function, ic_runtime& runtime)
     else if(!returned)
         compiler.add_instr(IC_OPC_RETURN);
 
-    function.by_size = compiler.bytecode.size();
-    function.bytecode = (ic_instr*)malloc(function.by_size * sizeof(ic_instr));
-    memcpy(function.bytecode, compiler.bytecode.data(), function.by_size * sizeof(ic_instr));
+    int size = compiler.bytecode.size();
+    function.bytecode = (ic_instr*)malloc(size * sizeof(ic_instr));
+    memcpy(function.bytecode, compiler.bytecode.data(), size * sizeof(ic_instr));
+    function.bytecode_size = size;
     function.stack_size = compiler.max_stack_size;
 }
 
