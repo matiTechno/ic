@@ -83,7 +83,6 @@ enum ic_token_type
     IC_TOK_S8,
     IC_TOK_U8,
     IC_TOK_S32,
-    IC_TOK_U32,
     IC_TOK_F32,
     IC_TOK_F64,
     IC_TOK_VOID,
@@ -199,7 +198,6 @@ static ic_keyword _keywords[] = {
     {"s8", IC_TOK_S8},
     {"u8", IC_TOK_U8},
     {"s32", IC_TOK_S32},
-    {"u32", IC_TOK_U32},
     {"f32", IC_TOK_F32},
     {"f64", IC_TOK_F64},
     {"void", IC_TOK_VOID},
@@ -357,7 +355,6 @@ union ic_data
     char s8;
     unsigned char u8;
     int s32;
-    unsigned int u32;
     float f32;
     double f64;
     void* pointer;
