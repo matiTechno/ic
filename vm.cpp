@@ -153,8 +153,8 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_ADDRESS:
         {
-            int idx = read_s32_operand(&frame->ip);
-            void* addr = frame->bp + idx;
+            int byte_offset = read_s32_operand(&frame->ip);
+            void* addr = (char*)frame->bp + byte_offset;
             assert(addr >= frame->bp && addr < vm.call_stack + vm.call_stack_size);
             vm.push_op();
             vm.top_op().pointer = addr;
@@ -162,9 +162,9 @@ void run_bytecode(ic_vm& vm)
         }
         case IC_OPC_ADDRESS_GLOBAL:
         {
-            int idx = read_s32_operand(&frame->ip);
-            void* addr = vm.call_stack + idx;
-            assert(addr >= 0 && addr < vm.stack_frames[0].bp);
+            int byte_offset = read_s32_operand(&frame->ip);
+            void* addr = (char*)vm.call_stack + byte_offset;
+            assert(addr >= vm.call_stack && addr < vm.stack_frames[0].bp);
             vm.push_op();
             vm.top_op().pointer = addr;
             break;

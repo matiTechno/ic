@@ -296,8 +296,6 @@ void ic_runtime::free()
 
     for (char* str : _string_literals)
         ::free(str);
-
-    _string_literals.clear();
 }
 
 // todo; these functions should allocate and then free memory for host strings (which can be temporary variables)
@@ -359,10 +357,12 @@ bool ic_runtime::run(const char* source_code)
 
     _global_vars.clear();
     _global_size = 0;
+    _string_literals_byte_size = 0;
 
     if (!ic_tokenize(*this, source_code))
         return false;
 
+    _global_size = _string_literals_byte_size / sizeof(ic_data) + 1;
     const ic_token* token_it = _tokens.data();
 
     while (token_it->type != IC_TOK_EOF)
@@ -415,7 +415,7 @@ bool ic_runtime::run(const char* source_code)
             }
 
             ic_var var;
-            var.idx = _global_size;
+            var.idx = _global_size * sizeof(ic_data);
             var.type = global.var.type;
             var.name = global.var.token.string;
 
@@ -473,10 +473,20 @@ bool ic_runtime::run(const char* source_code)
     ic_vm vm;
     vm.functions = _functions.data();
     vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
-    memset(vm.call_stack, 0, _global_size * sizeof(ic_data)); // todo is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
+    // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
+    // no need to clear string literals memory
+    memset(vm.call_stack, 0, _global_size * sizeof(ic_data));
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
     vm.call_stack_size = _global_size; // this is important
     vm.operand_stack_size = 0;
+
+    char* dst = (char*)vm.call_stack;
+    for (char* str : _string_literals)
+    {
+        int size = strlen(str) + 1;
+        memcpy(dst, str, size);
+        dst += size;
+    }
 
     for (ic_function& function : _functions)
     {
@@ -699,13 +709,15 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
                 return false;
             }
 
+            // todo, if the same string literal already exists, reuse it
+            lexer.add_token_number(IC_TOK_STRING_LITERAL, runtime._string_literals_byte_size);
             const char* string_begin = token_begin + 1; // skip first "
             int len = lexer.pos() - string_begin; // this doesn't count last "
             char* data = (char*)malloc(len + 1); // one more for \0
             memcpy(data, string_begin, len);
             data[len] = '\0';
-            lexer.add_token_string(IC_TOK_STRING_LITERAL, { data }); // len doesn't need to be initialized, string will never be compared
             runtime._string_literals.push_back(data);
+            runtime._string_literals_byte_size += len + 1;
             break;
         }
         case '\'':

@@ -22,12 +22,13 @@
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // tail call optimization
 // imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
-// exit instruction
+// exit function should exit bytecode execution, not a host program
 // do some benchmarks against jvm, python and lua
 // I could just use double, float, etc. instead of f64, f32, s32..., for no good reason I'm making this project not portable
 // bytecode endianness
 // I would like to support simple generics and struct functions (no operator overloading and stuff like this)
 // self-hosting
+// naming convention - size (number of elements), byte_size (number of bytes)
 
 template<typename T, int N>
 struct ic_deque
@@ -224,6 +225,7 @@ struct ic_token
 
     union
     {
+        // todo, int type for storing string literal idx and integer values
         double number;
         ic_string string;
     };
@@ -450,6 +452,7 @@ enum ic_opcode
     IC_OPC_JUMP_TRUE, // expects s32, operand is popped
     IC_OPC_JUMP_FALSE, // expects s32, operand is popped
     IC_OPC_JUMP,
+    // operand is a BYTE index of a variable (this is to simplify string literals stuff)
     IC_OPC_ADDRESS,
     IC_OPC_ADDRESS_GLOBAL,
 
@@ -551,6 +554,24 @@ enum ic_opcode
     IC_OPC_F64_F32,
 };
 
+struct ic_compiled_function
+{
+    unsigned char* bytecode;
+    int stack_size;
+    int return_size;
+    int param_size;
+};
+
+struct ic_program
+{
+    ic_compiled_function* functions;
+    int functions_size;
+    char** strings;
+    int strings_size;
+    int global_size;
+};
+
+// todo, hold ic_compiled_function ptr
 struct ic_stack_frame
 {
     int prev_operand_stack_size;
@@ -652,8 +673,9 @@ struct ic_runtime
     std::vector<ic_token> _tokens;
     std::vector<ic_function> _functions;
     std::vector<ic_struct> _structs;
-    std::vector<char*> _string_literals;
     std::vector<ic_var> _global_vars;
+    std::vector<char*> _string_literals;
+    int _string_literals_byte_size;
     int _global_size;
 
     ic_function* get_function(ic_string name);
@@ -772,7 +794,7 @@ struct ic_compiler
         if (present)
             assert(false);
 
-        int idx = stack_size;
+        int byte_idx = stack_size * sizeof(ic_data);
 
         if (is_struct(type))
             stack_size += get_struct(type.struct_name)->num_data;
@@ -781,7 +803,7 @@ struct ic_compiler
 
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
         ic_var var;
-        var.idx = idx;
+        var.idx = byte_idx;
         var.name = name;
         var.type = type;
         vars.push_back(var);

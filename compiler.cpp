@@ -26,6 +26,7 @@ void compile(ic_function& function, ic_runtime& runtime)
 
     int size = compiler.bytecode.size();
     function.bytecode = (unsigned char*)malloc(size);
+    // todo, replace std::vector with ic_array and just assign pointer...
     memcpy(function.bytecode, compiler.bytecode.data(), size);
     function.bytecode_size = size;
     function.stack_size = compiler.max_stack_size;
@@ -401,9 +402,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { non_pointer_type(IC_TYPE_F64), false };
 
         case IC_TOK_STRING_LITERAL:
-            // todo
-            compiler.add_opcode(IC_OPC_PUSH_F64);
-            compiler.add_ptr((void*)token.string.data);
+            compiler.add_opcode(IC_OPC_ADDRESS_GLOBAL);
+            compiler.add_s32(token.number);
             return { pointer1_type(IC_TYPE_S8, true), false };
 
         default:
