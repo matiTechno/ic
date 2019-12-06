@@ -47,20 +47,6 @@ void run_bytecode(ic_vm& vm)
 
         switch (opcode)
         {
-        case IC_OPC_PUSH_S8:
-        {
-            vm.push_op();
-            vm.top_op().s8 = *(char*)frame->ip;
-            frame->ip += 1;
-            break;
-        }
-        case IC_OPC_PUSH_U8:
-        {
-            vm.push_op();
-            vm.top_op().u8 = *frame->ip;
-            frame->ip += 1;
-            break;
-        }
         case IC_OPC_PUSH_S32:
         case IC_OPC_PUSH_F32:
         {

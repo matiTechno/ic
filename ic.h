@@ -435,8 +435,6 @@ struct ic_exception_parsing {}; // todo, we can probably do without exceptions, 
 // important: compare and logical_not push s32 not bool
 enum ic_opcode
 {
-    IC_OPC_PUSH_S8,
-    IC_OPC_PUSH_U8,
     IC_OPC_PUSH_S32,
     IC_OPC_PUSH_F32,
     IC_OPC_PUSH_F64,
