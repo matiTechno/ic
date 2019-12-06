@@ -491,9 +491,18 @@ void run_bytecode(ic_vm& vm)
             vm.top_op().s32 = !vm.top_op().pointer;
             break;
         }
+        case IC_OPC_SUB_PTR_PTR:
+        {
+            int type_byte_size = read_s32_operand(&frame->ip);
+            assert(type_byte_size);
+            void* rhs = vm.pop_op().pointer;
+            vm.top_op().s32 = ((char*)vm.top_op().pointer - (char*)rhs) / type_byte_size;
+            break;
+        }
         case IC_OPC_ADD_PTR_S32:
         {
             int type_byte_size = read_s32_operand(&frame->ip);
+            assert(type_byte_size);
             int bytes = vm.pop_op().s32 * type_byte_size;
             vm.top_op().pointer = (char*)vm.top_op().pointer + bytes;
             break;
@@ -501,6 +510,7 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_SUB_PTR_S32:
         {
             int type_byte_size = read_s32_operand(&frame->ip);
+            assert(type_byte_size);
             int bytes = vm.pop_op().s32 * type_byte_size;
             vm.top_op().pointer = (char*)vm.top_op().pointer - bytes;
             break;

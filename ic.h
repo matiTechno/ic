@@ -27,6 +27,7 @@
 // I could just use double, float, etc. instead of f64, f32, s32..., for no good reason I'm making this project not portable
 // bytecode endianness
 // I would like to support simple generics and struct functions (no operator overloading and stuff like this)
+// self-hosting
 
 template<typename T, int N>
 struct ic_deque
@@ -514,6 +515,7 @@ enum ic_opcode
     IC_OPC_COMPARE_L_PTR,
     IC_OPC_COMPARE_LE_PTR,
     IC_OPC_LOGICAL_NOT_PTR,
+    IC_OPC_SUB_PTR_PTR,
     IC_OPC_ADD_PTR_S32,
     IC_OPC_SUB_PTR_S32,
 
@@ -832,7 +834,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
-ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, ic_opcode opc, ic_compiler& compiler);
+ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_expr, ic_opcode opc, ic_compiler& compiler);
 ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue);
 
 // compile_auxiliary.cpp
