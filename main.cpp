@@ -16,14 +16,29 @@ int main(int argc, const char** argv)
     fread(source_code.data(), 1, size, file);
     source_code.back() = '\0';
     fclose(file);
-    ic_runtime runtime;
+    ic_runtime runtime; // todo, runtime structure is not needed at all right now
     runtime.init();
-
+    runtime.load_core_functions();
+    ic_program program;
+    ic_vm vm;
     // I hate chrono api, but it is easy to use and there is no portable C version for high resolution timers
     auto t1 = std::chrono::high_resolution_clock::now();
-    runtime.run(source_code.data());
+    {
+        auto t1 = std::chrono::high_resolution_clock::now();
+        bool success = runtime.compile_to_bytecode(source_code.data(), &program);
+        assert(success);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+    }
+    {
+        auto t1 = std::chrono::high_resolution_clock::now();
+        vm_init(vm, program);
+        vm_run(vm, program);
+        auto t2 = std::chrono::high_resolution_clock::now();
+        printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+    }
     auto t2 = std::chrono::high_resolution_clock::now();
-    printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+    printf("total time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     return 0;
 }
 
@@ -159,9 +174,32 @@ ic_data ic_host_exit(ic_data*)
     exit(0);
 }
 
+bool ic_string_compare(ic_string str1, ic_string str2)
+{
+    if (str1.len != str2.len)
+        return false;
+
+    return (strncmp(str1.data, str2.data, str1.len) == 0);
+}
+
+bool ic_tokenize(ic_runtime& runtime, const char* source_code);
+ic_global produce_global(const ic_token** it, ic_runtime& runtime);
+
+void resolve_function(ic_function& function, ic_runtime& runtime)
+{
+}
+
 void ic_runtime::init()
 {
-    // todo; use add_host_function()
+    // todo, this sucks ass, after replacing vectors initialize all fucking members,
+    // but anyway, it will be massive redesign
+    _string_literals_byte_size = 0;
+    _stmt_deque.size = 0;
+    _expr_deque.size = 0;
+}
+
+void ic_runtime::load_core_functions()
+{
     {
         const char* str = "prints";
         ic_string name = { str, strlen(str) };
@@ -286,84 +324,41 @@ void ic_runtime::init()
     }
 }
 
-void ic_runtime::free()
+void compile_cleanup(ic_runtime& runtime)
 {
-    _stmt_deque.free();
-    _expr_deque.free();
+    runtime._tokens.clear();
 
-    for (ic_struct& _struct : _structs)
+    for (char* str : runtime._string_literals)
+        ::free(str);
+
+    runtime._string_literals.clear();
+    runtime._string_literals_byte_size = 0;
+    runtime._global_size = 0;
+    runtime._stmt_deque.size = 0;
+    runtime._expr_deque.size = 0;
+    runtime._functions.clear();
+
+    for (ic_struct& _struct : runtime._structs)
         ::free(_struct.members);
 
-    for (char* str : _string_literals)
-        ::free(str);
+    runtime._structs.clear();
+    runtime._global_vars.clear();
 }
 
-// todo; these functions should allocate and then free memory for host strings (which can be temporary variables)
-
-void ic_runtime::clear_host_functions()
+bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
 {
-    assert(false);
-}
+    assert(source);
+    bool success = true;
+    const ic_token* token_it;
 
-void ic_runtime::clear_global_vars()
-{
-    assert(false);
-}
-
-// todo; overwrite if exists; parameters can't be of type void
-void ic_runtime::add_host_function(const char* name, ic_host_function function)
-{
-    assert(false);
-}
-
-bool ic_string_compare(ic_string str1, ic_string str2)
-{
-    if (str1.len != str2.len)
-        return false;
-
-    return (strncmp(str1.data, str2.data, str1.len) == 0);
-}
-
-bool ic_tokenize(ic_runtime& runtime, const char* source_code);
-ic_global produce_global(const ic_token** it, ic_runtime& runtime);
-
-bool ic_runtime::run(const char* source_code)
-{
-    assert(source_code);
-    _tokens.clear();
-    _stmt_deque.size = 0;
-    _expr_deque.size = 0;
-
-    // clear allocated strings from previous run
-    for (char* str : _string_literals)
-        ::free(str);
-
-    _string_literals.clear();
-
-    // remove source functions from previous run; it must be here and not at the end of this function because it can return early
+    if (!ic_tokenize(*this, source))
     {
-        auto it = _functions.begin();
-        for (; it != _functions.end(); ++it)
-        {
-            if (it->type == IC_FUN_SOURCE)
-                break;
-        }
-        _functions.erase(it, _functions.end()); // source function are always stored after host ones
-    }
-    for (ic_struct& _struct : _structs)
-        ::free(_struct.members);
-
-    _structs.clear();
-
-    _global_vars.clear();
-    _global_size = 0;
-    _string_literals_byte_size = 0;
-
-    if (!ic_tokenize(*this, source_code))
+        compile_cleanup(*this);
         return false;
+    }
 
     _global_size = _string_literals_byte_size / sizeof(ic_data) + 1;
-    const ic_token* token_it = _tokens.data();
+    token_it = _tokens.data();
 
     while (token_it->type != IC_TOK_EOF)
     {
@@ -375,6 +370,7 @@ bool ic_runtime::run(const char* source_code)
         }
         catch (ic_exception_parsing)
         {
+            compile_cleanup(*this);
             return false;
         }
 
@@ -387,6 +383,7 @@ bool ic_runtime::run(const char* source_code)
             if (get_function(token.string))
             {
                 ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
+                compile_cleanup(*this);
                 return false;
             }
 
@@ -400,6 +397,7 @@ bool ic_runtime::run(const char* source_code)
             if (get_struct(token.string))
             {
                 ic_print_error(IC_ERR_PARSING, token.line, token.col, "struct with such name already exists");
+                compile_cleanup(*this);
                 return false;
             }
 
@@ -422,7 +420,7 @@ bool ic_runtime::run(const char* source_code)
             if (is_struct(var.type))
             {
                 ic_struct* _struct = get_struct(var.type.struct_name);
-                assert(_struct);
+                assert(_struct); //  todo
                 _global_size += _struct->num_data;
             }
             else
@@ -436,15 +434,44 @@ bool ic_runtime::run(const char* source_code)
         }
     }
 
-    // todo, free vm resources
+    // set program structure
+    program->strings_byte_size = 0;
+
+    for (char* str : _string_literals)
+        program->strings_byte_size += strlen(str) + 1;
+
+    program->strings = (char*)malloc(program->strings_byte_size);
+
+    int offset = 0;
+    for (char* str : _string_literals)
+    {
+        int size = strlen(str) + 1;
+        memcpy(program->strings + offset, str, size);
+        offset += size;
+    }
+
+    program->global_size = _global_size;
+    program->entry_point = -1;
+    // todo, optimize out unused functions
+    std::vector<ic_vm_function> vm_functions;
 
     for (ic_function& function : _functions)
     {
         if (function.type == IC_FUN_SOURCE)
+        {
             compile(function, *this);
 
-        // calculate return and param sizes for vm
-        function.param_size = 0;
+            if (ic_string_compare(function.token.string, { "main", 4 }))
+            {
+                // todo, remove asserts
+                assert(function.param_count == 0);
+                assert(is_void(function.return_type));
+                program->entry_point = &function - _functions.data();
+            }
+        }
+
+        ic_vm_function vmfun;
+        vmfun.param_size = 0;
 
         for (int j = 0; j < function.param_count; ++j)
         {
@@ -452,58 +479,50 @@ bool ic_runtime::run(const char* source_code)
             {
                 ic_struct* _struct = get_struct(function.params[j].type.struct_name);
                 assert(_struct); // todo; nice error
-                function.param_size += _struct->num_data;
+                vmfun.param_size += _struct->num_data;
             }
             else
-                function.param_size += 1;
+                vmfun.param_size += 1;
         }
 
         if (is_struct(function.return_type))
         {
             ic_struct* _struct = get_struct(function.return_type.struct_name);
             assert(_struct);
-            function.return_size = _struct->num_data; // todo, have a function that returns a data size of a type
+            vmfun.return_size = _struct->num_data; // todo, have a function that returns a data size of a type
         }
         else if(!is_void(function.return_type))
-            function.return_size = 1;
+            vmfun.return_size = 1;
         else
-            function.return_size = 0;
-    }
+            vmfun.return_size = 0;
 
-    ic_vm vm;
-    vm.functions = _functions.data();
-    vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
-    // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
-    // no need to clear string literals memory
-    memset(vm.call_stack, 0, _global_size * sizeof(ic_data));
-    vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
-    vm.call_stack_size = _global_size; // this is important
-    vm.operand_stack_size = 0;
+        vmfun.type = function.type;
 
-    char* dst = (char*)vm.call_stack;
-    for (char* str : _string_literals)
-    {
-        int size = strlen(str) + 1;
-        memcpy(dst, str, size);
-        dst += size;
-    }
-
-    for (ic_function& function : _functions)
-    {
-        if (ic_string_compare(function.token.string, { "main", 4 }))
+        if (vmfun.type == IC_FUN_HOST)
+            vmfun.callback = function.callback;
+        else
         {
-            assert(function.type == IC_FUN_SOURCE);
-            assert(function.param_count == 0);
-            assert(is_void(function.return_type));
-            assert(function.return_size == 0);
-            vm.push_stack_frame(function.bytecode, function.stack_size, function.return_size);
-            break;
+            vmfun.bytecode = function.bytecode;
+            vmfun.stack_size = function.stack_size;
         }
+
+        vm_functions.push_back(vmfun);
     }
 
-    assert(vm.stack_frames.size() == 1);
-    run_bytecode(vm);
+    assert(program->entry_point != -1);
+    program->functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
+    memcpy(program->functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
+    program->functions_size = vm_functions.size();
+
+    compile_cleanup(*this);
     return true;
+}
+
+void ic_runtime::free()
+{
+    _functions.clear();
+    _stmt_deque.free();
+    _expr_deque.free();
 }
 
 ic_function* ic_runtime::get_function(ic_string name)

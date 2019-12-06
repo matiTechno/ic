@@ -371,6 +371,7 @@ struct ic_param
     ic_string name;
 };
 
+// add pointer to void*, so host can change its internal state without using global variables
 using ic_host_function = ic_data(*)(ic_data* argv);
 
 struct ic_function
@@ -380,8 +381,6 @@ struct ic_function
     ic_token token;
     int param_count;
     ic_param params[IC_MAX_ARGC];
-    int param_size;
-    int return_size;
 
     union
     {
@@ -554,39 +553,52 @@ enum ic_opcode
     IC_OPC_F64_F32,
 };
 
-struct ic_compiled_function
+// todo, some better naming would be nice
+struct ic_vm_function
 {
-    unsigned char* bytecode;
-    int stack_size;
+    ic_function_type type;
     int return_size;
     int param_size;
+
+    union
+    {
+        struct
+        {
+            unsigned char* bytecode;
+            int stack_size;
+        };
+        struct
+        {
+            ic_host_function callback; // may be set to null - must be resolved before execution;
+            // signature - functions will be checked against it when resolving
+        };
+    };
 };
 
 struct ic_program
 {
-    ic_compiled_function* functions;
+    ic_vm_function* functions;
     int functions_size;
-    char** strings;
-    int strings_size;
+    int entry_point;
+    char* strings;
+    int strings_byte_size;
     int global_size;
 };
 
-// todo, hold ic_compiled_function ptr
 struct ic_stack_frame
 {
-    int prev_operand_stack_size;
     int size;
     int return_size;
+    int prev_operand_stack_size;
     ic_data* bp; // base pointer
     unsigned char* ip; // instruction pointer
-    unsigned char* bytecode; // needed for jumps
+    unsigned char* bytecode; // this is needed for jumps
 };
 
 struct ic_vm
 {
     // important, ic_data buffers must not be invalidated during execution
     std::vector<ic_stack_frame> stack_frames;
-    ic_function* functions;
     ic_data* call_stack;
     ic_data* operand_stack;
     int call_stack_size;
@@ -655,28 +667,29 @@ struct ic_expr_result
     bool lvalue;
 };
 
+// todo
+// this structure will be totally redesigned
 struct ic_runtime
 {
     void init();
-    //bool add_global_var(const char* name, ic_value value);
-    // if a function with the same name exists it is replaced
-    void add_host_function(const char* name, ic_host_function function);
-    bool run(const char* source); // after run() variables can be extracted
-    //ic_value* get_global_var(const char* name);
-    void clear_global_vars(); // use this before next run()
-    void clear_host_functions(); // useful when e.g. running different script
-    void free(); // todo; after free() next init() will not put runtime into correct state (not all vectors are cleared, etc.)
+    // vm, should have similar function - in case bytecode was stored on a file or something and functions must be resolved before
+    // execution
+    void load_core_functions(); // if core functions are needed must be called before every compilation call
+    bool compile_to_bytecode(const char* source, ic_program* program);
+    void free();
 
     // implementation
+    // lex
+    std::vector<ic_token> _tokens;
+    std::vector<char*> _string_literals;
+    int _string_literals_byte_size;
+    // compile
+    int _global_size;
     ic_deque<ic_stmt, 1000> _stmt_deque; // memory must be not invalidated when adding new statements
     ic_deque<ic_expr, 1000> _expr_deque; // same
-    std::vector<ic_token> _tokens;
     std::vector<ic_function> _functions;
     std::vector<ic_struct> _structs;
     std::vector<ic_var> _global_vars;
-    std::vector<char*> _string_literals;
-    int _string_literals_byte_size;
-    int _global_size;
 
     ic_function* get_function(ic_string name);
     ic_struct* get_struct(ic_string name);
@@ -690,7 +703,10 @@ bool is_void(ic_type type);
 ic_type non_pointer_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type, bool at_const = false);
 void compile(ic_function& function, ic_runtime& runtime);
-void run_bytecode(ic_vm& vm);
+
+void vm_init(ic_vm& vm, ic_program& program); // if vm runs only one program can be done once before many runs
+void vm_run(ic_vm& vm, ic_program& program);
+
 //void disassemble_bytecode(unsigned char* bytecode, int size); // todo after cleaning up runtime interfaces
 
 struct ic_compiler

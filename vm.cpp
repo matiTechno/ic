@@ -1,5 +1,12 @@
 #include "ic.h"
 
+void vm_init(ic_vm& vm, ic_program& program)
+{
+    vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
+    memcpy(vm.call_stack, program.strings, program.strings_byte_size); // string data doesn't change across program runs
+    vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
+}
+
 void ic_vm::push_stack_frame(unsigned char* bytecode, int stack_size, int return_size)
 {
     ic_stack_frame frame;
@@ -35,8 +42,17 @@ int read_s32_operand(unsigned char** ip)
     return operand;
 }
 
-void run_bytecode(ic_vm& vm)
+void vm_run(ic_vm& vm, ic_program& program)
 {
+    vm.call_stack_size = program.global_size; // this is important
+    vm.operand_stack_size = 0;
+    {
+        ic_vm_function& function = program.functions[program.entry_point];
+        vm.push_stack_frame(function.bytecode, function.stack_size, function.return_size);
+    }
+    // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
+    // clear global non string data
+    memset(vm.call_stack + program.strings_byte_size, 0, program.global_size * sizeof(ic_data) - program.strings_byte_size);
     assert(vm.stack_frames.size() == 1);
     ic_stack_frame* frame = &vm.stack_frames[0];
 
@@ -102,7 +118,7 @@ void run_bytecode(ic_vm& vm)
         case IC_OPC_CALL:
         {
             int fun_idx = read_s32_operand(&frame->ip);
-            ic_function& function = vm.functions[fun_idx];
+            ic_vm_function& function = program.functions[fun_idx];
             int param_size = function.param_size;
 
             if (function.type == IC_FUN_HOST)
