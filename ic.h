@@ -12,19 +12,21 @@
 
 // ic - interpreted C
 // todo
-// use common prefix for all declaration names
-// comma, ternary, bitwise operators
+// use common prefix for all declarations (at least for interface)
+// comma, ternary, bitwise operators, switch, else if
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, simple #define, enum, union
-// host structures; struct alignment, packing; exposing ast
+// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, preprocessor, enum, union
+// , structures and unions can be anonymous inside other structures and unions (I very like this feature)
+// host structures; struct alignment, packing; exposing ast - seamless data structure sharing between host and VM
 // not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of stack (operand / variable) - this is important
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
-// auto generate code for registering host functions (parse target function, generate warapper, register wrapper)
 // tail call optimization
 // imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
 // exit instruction
-// do some benchmarks against jvm and python vm and lua
-// ptr = 1 + ptr; ptr = 1[ptr]; - both of these are legal in C, in ic pointer must be on the lhs of the expression
+// do some benchmarks against jvm, python and lua
+// I could just use double, float, etc. instead of f64, f32, s32..., for no good reason I'm making this project not portable
+// bytecode endianness
+// I would like to support simple generics and struct functions (no operator overloading and stuff like this)
 
 template<typename T, int N>
 struct ic_deque
@@ -368,8 +370,6 @@ struct ic_param
 
 using ic_host_function = ic_data(*)(ic_data* argv);
 
-struct ic_instr;
-
 struct ic_function
 {
     ic_function_type type;
@@ -387,7 +387,7 @@ struct ic_function
         struct
         {
             ic_stmt* body;
-            ic_instr* bytecode;
+            unsigned char* bytecode;
             int bytecode_size;
             int stack_size;
         };
@@ -431,11 +431,16 @@ struct ic_exception_parsing {}; // todo, we can probably do without exceptions, 
 #define IC_CALL_STACK_SIZE (1024 * 1024)
 #define IC_OPERAND_STACK_SIZE 1024
 
+// important: compare and logical_not push s32 not bool
 enum ic_opcode
 {
-    // important: compare and logical_not push s32 not bool
+    IC_OPC_PUSH_S8,
+    IC_OPC_PUSH_U8,
+    IC_OPC_PUSH_S32,
+    IC_OPC_PUSH_F32,
+    IC_OPC_PUSH_F64,
+    IC_OPC_PUSH_NULLPTR,
 
-    IC_OPC_PUSH, // todo, add PUSH_S32, PUSH_S8, etc., so bytecode can be human readable and more easly converted to other targets
     IC_OPC_POP,
     IC_OPC_POP_MANY,
     IC_OPC_SWAP,
@@ -544,30 +549,6 @@ enum ic_opcode
     IC_OPC_F64_U8,
     IC_OPC_F64_S32,
     IC_OPC_F64_F32,
-
-    // these are resolved during compilation
-    IC_OPC_JUMP_CONDITION_FAIL,
-    IC_OPC_JUMP_START,
-    IC_OPC_JUMP_END,
-};
-
-// todo, use byte stream instead of this gigantic structure
-// use memcopy to retrive types larger than 1 byte from a byte stream
-struct ic_instr
-{
-    unsigned char opcode;
-
-    union
-    {
-        ic_data op_push;
-
-        struct
-        {
-            int op1;
-            int op2;
-            int op3;
-        };
-    };
 };
 
 struct ic_stack_frame
@@ -576,8 +557,8 @@ struct ic_stack_frame
     int size;
     int return_size;
     ic_data* bp; // base pointer
-    ic_instr* ip; // instruction pointer
-    ic_instr* bytecode; // needed for jumps
+    unsigned char* ip; // instruction pointer
+    unsigned char* bytecode; // needed for jumps
 };
 
 struct ic_vm
@@ -590,7 +571,7 @@ struct ic_vm
     int call_stack_size;
     int operand_stack_size;
 
-    void push_stack_frame(ic_instr* bytecode, int stack_size, int return_size);
+    void push_stack_frame(unsigned char* bytecode, int stack_size, int return_size);
     void pop_stack_frame();
 
     void push_op(ic_data data)
@@ -688,11 +669,11 @@ ic_type non_pointer_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type, bool at_const = false);
 void compile(ic_function& function, ic_runtime& runtime);
 void run_bytecode(ic_vm& vm);
-void dump_bytecode(ic_instr* bytecode, int size);
+//void disassemble_bytecode(unsigned char* bytecode, int size); // todo after cleaning up runtime interfaces
 
 struct ic_compiler
 {
-    std::vector<ic_instr> bytecode;
+    std::vector<unsigned char> bytecode;
     std::vector<ic_scope> scopes;
     std::vector<ic_var> vars;
     ic_runtime* runtime;
@@ -701,6 +682,8 @@ struct ic_compiler
     int max_stack_size;
     int loop_count;
     bool generate_bytecode;
+    std::vector<int> resolve_break;
+    std::vector<int> resolve_continue;
 
     void push_scope()
     {
@@ -717,28 +700,59 @@ struct ic_compiler
         scopes.pop_back();
     }
 
-    void add_instr_push(ic_data data)
+    void add_opcode(ic_opcode opcode)
     {
+        assert(opcode >= 0 && opcode <= 255);
         if (!generate_bytecode)
             return;
-
-        ic_instr instr;
-        instr.opcode = IC_OPC_PUSH;
-        instr.op_push = data;
-        bytecode.push_back(instr);
+        bytecode.push_back(opcode);
     }
 
-    void add_instr(unsigned char opcode, int num1 = 0, int num2 = 0, int num3 = 0)
+    void add_s8(char data)
     {
         if (!generate_bytecode)
             return;
+        bytecode.emplace_back();
+        *(char*)&bytecode.back() = data;
+    }
 
-        ic_instr instr;
-        instr.opcode = opcode;
-        instr.op1 = num1;
-        instr.op2 = num2;
-        instr.op3 = num3;
-        bytecode.push_back(instr);
+    void add_u8(unsigned char data)
+    {
+        if (!generate_bytecode)
+            return;
+        bytecode.push_back(data);
+    }
+
+    void add_s32(int data)
+    {
+        if (!generate_bytecode)
+            return;
+        bytecode.resize(bytecode.size() + 4);
+        memcpy(&bytecode.back() - 3, &data, 4);
+    }
+    void add_f32(float data)
+    {
+        if (!generate_bytecode)
+            return;
+        bytecode.resize(bytecode.size() + 4);
+        memcpy(&bytecode.back() - 3, &data, 4);
+    }
+
+    void add_f64(double data)
+    {
+        if (!generate_bytecode)
+            return;
+        bytecode.resize(bytecode.size() + 8);
+        memcpy(&bytecode.back() - 7, &data, 8);
+    }
+
+    // todo, this is very temporary
+    void add_ptr(void* ptr)
+    {
+        if (!generate_bytecode)
+            return;
+        bytecode.resize(bytecode.size() + 8);
+        memcpy(&bytecode.back() - 7, &ptr, 8);
     }
 
     ic_var declare_var(ic_type type, ic_string name)
@@ -818,7 +832,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
-ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, int opc, ic_compiler& compiler);
+ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, ic_opcode opc, ic_compiler& compiler);
 ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue);
 
 // compile_auxiliary.cpp

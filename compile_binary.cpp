@@ -1,12 +1,13 @@
 #include "ic.h"
 
-ic_expr_result compile_compound_assignment(ic_expr* expr, int opc_s32, int opc_f32, int opc_f64, ic_compiler& compiler)
+// todo; ptr += / -=
+ic_expr_result compile_compound_assignment(ic_expr* expr, ic_opcode opc_s32, ic_opcode opc_f32, ic_opcode opc_f64, ic_compiler& compiler)
 {
     ic_expr_result lhs = compile_expr(expr->_binary.lhs, compiler, false);
     assert_modifiable_lvalue(lhs);
     ic_type rhs_type = get_expr_result_type(expr->_binary.rhs, compiler);
     ic_type atype = arithmetic_expr_type(lhs.type, rhs_type);
-    compiler.add_instr(IC_OPC_CLONE);
+    compiler.add_opcode(IC_OPC_CLONE);
     compile_load(lhs.type, compiler);
     compile_implicit_conversion(atype, lhs.type, compiler);
     compile_expr(expr->_binary.rhs, compiler);
@@ -15,22 +16,22 @@ ic_expr_result compile_compound_assignment(ic_expr* expr, int opc_s32, int opc_f
     switch (atype.basic_type)
     {
     case IC_TYPE_S32:
-        compiler.add_instr(opc_s32);
+        compiler.add_opcode(opc_s32);
         break;
     case IC_TYPE_F32:
-        compiler.add_instr(opc_f32);
+        compiler.add_opcode(opc_f32);
         break;
     case IC_TYPE_F64:
-        compiler.add_instr(opc_f64);
+        compiler.add_opcode(opc_f64);
         break;
     }
     compile_implicit_conversion(lhs.type, atype, compiler);
-    compiler.add_instr(IC_OPC_SWAP);
+    compiler.add_opcode(IC_OPC_SWAP);
     compile_store(lhs.type, compiler);
     return { lhs.type, false };
 }
 
-ic_expr_result compile_comparison(ic_expr* expr, int opc_s32, int opc_f32, int opc_f64, int opc_ptr, ic_compiler& compiler)
+ic_expr_result compile_comparison(ic_expr* expr, ic_opcode opc_s32, ic_opcode opc_f32, ic_opcode opc_f64, ic_opcode opc_ptr, ic_compiler& compiler)
 {
     ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
 
@@ -38,7 +39,7 @@ ic_expr_result compile_comparison(ic_expr* expr, int opc_s32, int opc_f32, int o
     {
         ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
         assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
-        compiler.add_instr(opc_ptr);
+        compiler.add_opcode(opc_ptr);
     }
     else
     {
@@ -51,13 +52,13 @@ ic_expr_result compile_comparison(ic_expr* expr, int opc_s32, int opc_f32, int o
         switch (atype.basic_type)
         {
         case IC_TYPE_S32:
-            compiler.add_instr(opc_s32);
+            compiler.add_opcode(opc_s32);
             break;
         case IC_TYPE_F32:
-            compiler.add_instr(opc_f32);
+            compiler.add_opcode(opc_f32);
             break;
         case IC_TYPE_F64:
-            compiler.add_instr(opc_f64);
+            compiler.add_opcode(opc_f64);
             break;
         }
     }
@@ -65,7 +66,7 @@ ic_expr_result compile_comparison(ic_expr* expr, int opc_s32, int opc_f32, int o
 }
 
 // lhs expr should be compiled before calling this function
-ic_expr_result compile_binary_arithmetic(ic_type lhs_type, ic_expr* rhs_expr, int opc_s32, int opc_f32, int opc_f64, ic_compiler& compiler)
+ic_expr_result compile_binary_arithmetic(ic_type lhs_type, ic_expr* rhs_expr, ic_opcode opc_s32, ic_opcode opc_f32, ic_opcode opc_f64, ic_compiler& compiler)
 {
     ic_type rhs_type = get_expr_result_type(rhs_expr, compiler);
     ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
@@ -76,20 +77,46 @@ ic_expr_result compile_binary_arithmetic(ic_type lhs_type, ic_expr* rhs_expr, in
     switch (atype.basic_type)
     {
     case IC_TYPE_S32:
-        compiler.add_instr(opc_s32);
+        compiler.add_opcode(opc_s32);
         break;
     case IC_TYPE_F32:
-        compiler.add_instr(opc_f32);
+        compiler.add_opcode(opc_f32);
         break;
     case IC_TYPE_F64:
-        compiler.add_instr(opc_f64);
+        compiler.add_opcode(opc_f64);
         break;
     }
     return { atype, false };
 }
 
+ic_expr_result compile_binary_logical(ic_expr* expr, ic_opcode opc_jump, int value_early_jump, ic_compiler& compiler)
+{
+    // lhs condition
+    ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
+    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
+    compiler.add_opcode(opc_jump);
+    int idx_resolve_true = compiler.bytecode.size();
+    compiler.add_s32({});
+    // rhs condition
+    ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
+    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
+    compiler.add_opcode(IC_OPC_JUMP);
+    int idx_resolve_end = compiler.bytecode.size();
+    compiler.add_s32({});
+    // if (lhs)
+    int idx_true = compiler.bytecode.size();
+    memcpy(&compiler.bytecode[idx_resolve_true], &idx_true, sizeof(int));
+    compiler.add_opcode(IC_OPC_PUSH_S32);
+    compiler.add_s32(value_early_jump);
+
+    int idx_end = compiler.bytecode.size();
+    memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int));
+
+    return { non_pointer_type(IC_TYPE_S32), false };
+}
+
 // lhs expr should be compiled before calling this function
-ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, int opc, ic_compiler& compiler)
+ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr, ic_opcode opc, ic_compiler& compiler)
 {
     assert(lhs_type.indirection_level);
     ic_type rhs_type = compile_expr(rhs_expr, compiler).type;
@@ -98,7 +125,8 @@ ic_expr_result compile_pointer_additive_expr(ic_type lhs_type, ic_expr* rhs_expr
     compile_implicit_conversion(atype, rhs_type, compiler);
     int size = pointed_type_byte_size(lhs_type, compiler);
     assert(size);
-    compiler.add_instr(opc, size);
+    compiler.add_opcode(opc);
+    compiler.add_s32(size);
     return { lhs_type, false };
 }
 
@@ -127,31 +155,9 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         return compile_compound_assignment(expr, IC_OPC_DIV_S32, IC_OPC_DIV_F32, IC_OPC_DIV_F64, compiler);
 
     case IC_TOK_VBAR_VBAR:
-    {
-        ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
-        int idx_jump_true = compiler.bytecode.size();
-        compiler.add_instr(IC_OPC_JUMP_TRUE);
-        ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
-        compiler.add_instr(IC_OPC_JUMP, compiler.bytecode.size() + 2);
-        compiler.bytecode[idx_jump_true].op1 = compiler.bytecode.size();
-        compiler.add_instr_push({ .s32 = 1 });
-        return { non_pointer_type(IC_TYPE_S32), false };
-    }
+        return compile_binary_logical(expr, IC_OPC_JUMP_TRUE, 1, compiler);
     case IC_TOK_AMPERSAND_AMPERSAND:
-    {
-        ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
-        int idx_jump_false = compiler.bytecode.size();
-        compiler.add_instr(IC_OPC_JUMP_FALSE);
-        ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
-        compiler.add_instr(IC_OPC_JUMP, compiler.bytecode.size() + 2);
-        compiler.bytecode[idx_jump_false].op1 = compiler.bytecode.size();
-        compiler.add_instr_push({ .s32 = 0 });
-        return { non_pointer_type(IC_TYPE_S32), false };
-    }
+        return compile_binary_logical(expr, IC_OPC_JUMP_FALSE, 0, compiler);
 
     case IC_TOK_EQUAL_EQUAL:
         return compile_comparison(expr, IC_OPC_COMPARE_E_S32, IC_OPC_COMPARE_E_F32, IC_OPC_COMPARE_E_F64, IC_OPC_COMPARE_E_PTR, compiler);
@@ -199,7 +205,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         compile_implicit_conversion(atype, lhs_type, compiler);
         compile_expr(expr->_binary.rhs, compiler);
         compile_implicit_conversion(atype, rhs_type, compiler);
-        compiler.add_instr(IC_OPC_MODULO_S32);
+        compiler.add_opcode(IC_OPC_MODULO_S32);
         return { atype, false };
     }
     default:

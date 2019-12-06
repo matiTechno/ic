@@ -33,19 +33,19 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
         switch (from.basic_type)
         {
         case IC_TYPE_S8:
-            compiler.add_instr(IC_OPC_B_S8);
+            compiler.add_opcode(IC_OPC_B_S8);
             return;
         case IC_TYPE_U8:
-            compiler.add_instr(IC_OPC_B_U8);
+            compiler.add_opcode(IC_OPC_B_U8);
             return;
         case IC_TYPE_S32:
-            compiler.add_instr(IC_OPC_B_S32);
+            compiler.add_opcode(IC_OPC_B_S32);
             return;
         case IC_TYPE_F32:
-            compiler.add_instr(IC_OPC_B_F32);
+            compiler.add_opcode(IC_OPC_B_F32);
             return;
         case IC_TYPE_F64:
-            compiler.add_instr(IC_OPC_B_F64);
+            compiler.add_opcode(IC_OPC_B_F64);
             return;
         }
         assert(false);
@@ -55,16 +55,16 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
         case IC_TYPE_BOOL:
             return;
         case IC_TYPE_U8:
-            compiler.add_instr(IC_OPC_S8_U8);
+            compiler.add_opcode(IC_OPC_S8_U8);
             return;
         case IC_TYPE_S32:
-            compiler.add_instr(IC_OPC_S8_S32);
+            compiler.add_opcode(IC_OPC_S8_S32);
             return;
         case IC_TYPE_F32:
-            compiler.add_instr(IC_OPC_S8_F32);
+            compiler.add_opcode(IC_OPC_S8_F32);
             return;
         case IC_TYPE_F64:
-            compiler.add_instr(IC_OPC_S8_F64);
+            compiler.add_opcode(IC_OPC_S8_F64);
             return;
         }
         assert(false);
@@ -73,16 +73,16 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
         {
         case IC_TYPE_BOOL:
         case IC_TYPE_S8:
-            compiler.add_instr(IC_OPC_U8_S8);
+            compiler.add_opcode(IC_OPC_U8_S8);
             return;
         case IC_TYPE_S32:
-            compiler.add_instr(IC_OPC_U8_S32);
+            compiler.add_opcode(IC_OPC_U8_S32);
             return;
         case IC_TYPE_F32:
-            compiler.add_instr(IC_OPC_U8_F32);
+            compiler.add_opcode(IC_OPC_U8_F32);
             return;
         case IC_TYPE_F64:
-            compiler.add_instr(IC_OPC_U8_F64);
+            compiler.add_opcode(IC_OPC_U8_F64);
             return;
         }
         assert(false);
@@ -91,16 +91,16 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
         {
         case IC_TYPE_BOOL:
         case IC_TYPE_S8:
-            compiler.add_instr(IC_OPC_S32_S8);
+            compiler.add_opcode(IC_OPC_S32_S8);
             return;
         case IC_TYPE_U8:
-            compiler.add_instr(IC_OPC_S32_U8);
+            compiler.add_opcode(IC_OPC_S32_U8);
             return;
         case IC_TYPE_F32:
-            compiler.add_instr(IC_OPC_S32_F32);
+            compiler.add_opcode(IC_OPC_S32_F32);
             return;
         case IC_TYPE_F64:
-            compiler.add_instr(IC_OPC_S32_F64);
+            compiler.add_opcode(IC_OPC_S32_F64);
             return;
         }
         assert(false);
@@ -109,16 +109,16 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
         {
         case IC_TYPE_BOOL:
         case IC_TYPE_S8:
-            compiler.add_instr(IC_OPC_F32_S8);
+            compiler.add_opcode(IC_OPC_F32_S8);
             return;
         case IC_TYPE_U8:
-            compiler.add_instr(IC_OPC_F32_U8);
+            compiler.add_opcode(IC_OPC_F32_U8);
             return;
         case IC_TYPE_S32:
-            compiler.add_instr(IC_OPC_F32_S32);
+            compiler.add_opcode(IC_OPC_F32_S32);
             return;
         case IC_TYPE_F64:
-            compiler.add_instr(IC_OPC_F32_F64);
+            compiler.add_opcode(IC_OPC_F32_F64);
             return;
         }
         assert(false);
@@ -127,16 +127,16 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
         {
         case IC_TYPE_BOOL:
         case IC_TYPE_S8:
-            compiler.add_instr(IC_OPC_F64_S8);
+            compiler.add_opcode(IC_OPC_F64_S8);
             return;
         case IC_TYPE_U8:
-            compiler.add_instr(IC_OPC_F64_U8);
+            compiler.add_opcode(IC_OPC_F64_U8);
             return;
         case IC_TYPE_S32:
-            compiler.add_instr(IC_OPC_F64_S32);
+            compiler.add_opcode(IC_OPC_F64_S32);
             return;
         case IC_TYPE_F32:
-            compiler.add_instr(IC_OPC_F64_F32);
+            compiler.add_opcode(IC_OPC_F64_F32);
             return;
         }
         assert(false);
@@ -207,7 +207,7 @@ void compile_load(ic_type type, ic_compiler& compiler)
 {
     if (type.indirection_level)
     {
-        compiler.add_instr(IC_OPC_LOAD_8);
+        compiler.add_opcode(IC_OPC_LOAD_8);
         return;
     }
 
@@ -216,17 +216,18 @@ void compile_load(ic_type type, ic_compiler& compiler)
     case IC_TYPE_BOOL:
     case IC_TYPE_S8:
     case IC_TYPE_U8:
-        compiler.add_instr(IC_OPC_LOAD_1);
+        compiler.add_opcode(IC_OPC_LOAD_1);
         return;
     case IC_TYPE_S32:
     case IC_TYPE_F32:
-        compiler.add_instr(IC_OPC_LOAD_4);
+        compiler.add_opcode(IC_OPC_LOAD_4);
         return;
     case IC_TYPE_F64:
-        compiler.add_instr(IC_OPC_LOAD_8);
+        compiler.add_opcode(IC_OPC_LOAD_8);
         return;
     case IC_TYPE_STRUCT:
-        compiler.add_instr(IC_OPC_LOAD_STRUCT, compiler.get_struct(type.struct_name)->num_data);
+        compiler.add_opcode(IC_OPC_LOAD_STRUCT);
+        compiler.add_s32(compiler.get_struct(type.struct_name)->num_data);
         return;
     }
     assert(false);
@@ -236,7 +237,7 @@ void compile_store(ic_type type, ic_compiler& compiler)
 {
     if (type.indirection_level)
     {
-        compiler.add_instr(IC_OPC_STORE_8);
+        compiler.add_opcode(IC_OPC_STORE_8);
         return;
     }
 
@@ -245,17 +246,18 @@ void compile_store(ic_type type, ic_compiler& compiler)
     case IC_TYPE_BOOL:
     case IC_TYPE_S8:
     case IC_TYPE_U8:
-        compiler.add_instr(IC_OPC_STORE_1);
+        compiler.add_opcode(IC_OPC_STORE_1);
         return;
     case IC_TYPE_S32:
     case IC_TYPE_F32:
-        compiler.add_instr(IC_OPC_STORE_4);
+        compiler.add_opcode(IC_OPC_STORE_4);
         return;
     case IC_TYPE_F64:
-        compiler.add_instr(IC_OPC_STORE_8);
+        compiler.add_opcode(IC_OPC_STORE_8);
         return;
     case IC_TYPE_STRUCT:
-        compiler.add_instr(IC_OPC_STORE_STRUCT, compiler.get_struct(type.struct_name)->num_data);
+        compiler.add_opcode(IC_OPC_STORE_STRUCT);
+        compiler.add_s32(compiler.get_struct(type.struct_name)->num_data);
         return;
     }
     assert(false);
@@ -271,7 +273,7 @@ void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
 
     if (result.type.indirection_level)
     {
-        compiler.add_instr(IC_OPC_POP);
+        compiler.add_opcode(IC_OPC_POP);
         return;
     }
 
@@ -283,10 +285,11 @@ void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
     case IC_TYPE_S32:
     case IC_TYPE_F32:
     case IC_TYPE_F64:
-        compiler.add_instr(IC_OPC_POP);
+        compiler.add_opcode(IC_OPC_POP);
         return;
     case IC_TYPE_STRUCT:
-        compiler.add_instr(IC_OPC_POP_MANY, compiler.get_struct(result.type.struct_name)->num_data);
+        compiler.add_opcode(IC_OPC_POP_MANY);
+        compiler.add_s32(compiler.get_struct(result.type.struct_name)->num_data);
         return;
     }
     assert(false);

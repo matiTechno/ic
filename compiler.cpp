@@ -22,11 +22,11 @@ void compile(ic_function& function, ic_runtime& runtime)
     if(!is_void(function.return_type))
         assert(returned);
     else if(!returned)
-        compiler.add_instr(IC_OPC_RETURN);
+        compiler.add_opcode(IC_OPC_RETURN);
 
     int size = compiler.bytecode.size();
-    function.bytecode = (ic_instr*)malloc(size * sizeof(ic_instr));
-    memcpy(function.bytecode, compiler.bytecode.data(), size * sizeof(ic_instr));
+    function.bytecode = (unsigned char*)malloc(size);
+    memcpy(function.bytecode, compiler.bytecode.data(), size);
     function.bytecode_size = size;
     function.stack_size = compiler.max_stack_size;
 }
@@ -69,14 +69,17 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_for.header1)
             compile_stmt(stmt->_for.header1, compiler);
 
-        int loop_start_idx = compiler.bytecode.size();
+        int idx_begin = compiler.bytecode.size();
+        int idx_resolve_end;
 
         if (stmt->_for.header2)
         {
             // no need to pop result, JUMP_FALSE instr pops it
             ic_expr_result result = compile_expr(stmt->_for.header2, compiler);
             compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
-            compiler.add_instr(IC_OPC_JUMP_CONDITION_FAIL);
+            compiler.add_opcode(IC_OPC_JUMP_FALSE);
+            idx_resolve_end = compiler.bytecode.size();
+            compiler.add_s32({});
         }
 
         compile_stmt(stmt->_for.body, compiler);
@@ -87,30 +90,21 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             compile_pop_expr_result(result, compiler);
         }
 
-        compiler.add_instr(IC_OPC_JUMP, loop_start_idx);
+        compiler.add_opcode(IC_OPC_JUMP);
+        compiler.add_s32(idx_begin);
+        int idx_end = compiler.bytecode.size();
 
-        // resolve jumps
-        for (int i = loop_start_idx; i < compiler.bytecode.size(); ++i)
-        {
-            ic_instr& instr = compiler.bytecode[i];
+        if (stmt->_for.header2)
+            memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int));
 
-            switch (instr.opcode)
-            {
-            case IC_OPC_JUMP_CONDITION_FAIL:
-                instr.opcode = IC_OPC_JUMP_FALSE;
-                instr.op1 = compiler.bytecode.size();
-                break;
-            case IC_OPC_JUMP_START: // continue stmt
-                instr.opcode = IC_OPC_JUMP;
-                instr.op1 = loop_start_idx;
-                break;
-            case IC_OPC_JUMP_END:
-                instr.opcode = IC_OPC_JUMP; // break stmt
-                instr.op1 = compiler.bytecode.size();
-                break;
-            }
-        }
+        for(int i = 0; i < compiler.resolve_break.size(); ++i)
+            memcpy(&compiler.bytecode[i], &idx_end, sizeof(int));
 
+        for(int i = 0; i < compiler.resolve_continue.size(); ++i)
+            memcpy(&compiler.bytecode[i], &idx_begin, sizeof(int));
+
+        compiler.resolve_break.clear();
+        compiler.resolve_continue.clear();
         compiler.pop_scope();
         compiler.loop_count -= 1;
         break;
@@ -122,8 +116,9 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         // no need to pop result, JUMP_FALSE instr pops it
         ic_expr_result result = compile_expr(stmt->_if.header, compiler); // no need to push a scope here, expr can't declare a new variable
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
-        int idx_start = compiler.bytecode.size();
-        compiler.add_instr(IC_OPC_JUMP_CONDITION_FAIL);
+        compiler.add_opcode(IC_OPC_JUMP_FALSE);
+        int idx_resolve_else = compiler.bytecode.size();
+        compiler.add_s32({});
         compiler.push_scope();
         returned_if = compile_stmt(stmt->_if.body_if, compiler);
         compiler.pop_scope();
@@ -131,32 +126,20 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->_if.body_else)
         {
-            compiler.add_instr(IC_OPC_JUMP_END);
+            compiler.add_opcode(IC_OPC_JUMP);
+            int idx_resolve_end = compiler.bytecode.size();
+            compiler.add_s32({});
             idx_else = compiler.bytecode.size();
             compiler.push_scope();
             returned_else = compile_stmt(stmt->_if.body_else, compiler);
             compiler.pop_scope();
+            int idx_end = compiler.bytecode.size();
+            memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int)); // memcopy is used to not violate alignment
         }
         else
             idx_else = compiler.bytecode.size();
 
-        // resolve jumps
-        for (int i = idx_start; i < compiler.bytecode.size(); ++i)
-        {
-            ic_instr& instr = compiler.bytecode[i];
-
-            switch (instr.opcode)
-            {
-            case IC_OPC_JUMP_CONDITION_FAIL:
-                instr.opcode = IC_OPC_JUMP_FALSE;
-                instr.op1 = idx_else;
-                break;
-            case IC_OPC_JUMP_END:
-                instr.opcode = IC_OPC_JUMP;
-                instr.op1 = compiler.bytecode.size();
-                break;
-            }
-        }
+        memcpy(&compiler.bytecode[idx_resolve_else], &idx_else, sizeof(int));
         returned = returned_if && returned_else; // both branches must return, if there is no else branch return false
         break;
     }
@@ -168,12 +151,16 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             ic_expr_result result = compile_expr(stmt->_var_declaration.expr, compiler);
             compile_implicit_conversion(var.type, result.type, compiler);
-            compiler.add_instr(IC_OPC_ADDRESS, var.idx);
+            compiler.add_opcode(IC_OPC_ADDRESS);
+            compiler.add_s32(var.idx);
 
             if (is_struct(var.type))
-                compiler.add_instr(IC_OPC_STORE_STRUCT, compiler.get_struct(var.type.struct_name)->num_data);
+            {
+                compiler.add_opcode(IC_OPC_STORE_STRUCT);
+                compiler.add_s32(compiler.get_struct(var.type.struct_name)->num_data);
+            }
             else
-                compiler.add_instr(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
+                compiler.add_opcode(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
 
             // STORE poppes an address, data is still left on the operand stack
             compile_pop_expr_result(result, compiler);
@@ -197,19 +184,23 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         else
             assert(is_void(return_type));
 
-        compiler.add_instr(IC_OPC_RETURN);
+        compiler.add_opcode(IC_OPC_RETURN);
         break;
     }
     case IC_STMT_BREAK:
     {
         assert(compiler.loop_count);
-        compiler.add_instr(IC_OPC_JUMP_END);
+        compiler.add_opcode(IC_OPC_JUMP);
+        compiler.resolve_break.push_back(compiler.bytecode.size());
+        compiler.add_s32({});
         break;
     }
     case IC_STMT_CONTINUE:
     {
         assert(compiler.loop_count);
-        compiler.add_instr(IC_OPC_JUMP_START);
+        compiler.add_opcode(IC_OPC_JUMP);
+        compiler.resolve_continue.push_back(compiler.bytecode.size());
+        compiler.add_s32({});
         break;
     }
     case IC_STMT_EXPR:
@@ -246,7 +237,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         type.indirection_level += 1; // this is quite a hack
         int size = pointed_type_byte_size(type, compiler);
         assert(size); // incomplete type is not allowed
-        compiler.add_instr_push({ .s32 = size });
+        compiler.add_opcode(IC_OPC_PUSH_S32);
+        compiler.add_s32(size);
         return { non_pointer_type(IC_TYPE_S32), false };
     }
     case IC_EXPR_CAST_OPERATOR:
@@ -313,8 +305,10 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         
         if (result.lvalue)
         {
-            compiler.add_instr_push({ .s32 = data_offset });
-            compiler.add_instr(IC_OPC_ADD_PTR_S32, sizeof(ic_data));
+            compiler.add_opcode(IC_OPC_PUSH_S32);
+            compiler.add_s32(data_offset);
+            compiler.add_opcode(IC_OPC_ADD_PTR_S32);
+            compiler.add_s32(sizeof(ic_data));
 
             if (!load_lvalue)
             {
@@ -329,8 +323,12 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         }
 
         int size = is_struct(target_type) ? compiler.get_struct(target_type.struct_name)->num_data : 1;
-        compiler.add_instr(IC_OPC_MEMMOVE, _struct->num_data, _struct->num_data - data_offset, size);
-        compiler.add_instr(IC_OPC_POP_MANY, _struct->num_data - size);
+        compiler.add_opcode(IC_OPC_MEMMOVE);
+        compiler.add_s32(_struct->num_data);
+        compiler.add_s32(_struct->num_data - data_offset);
+        compiler.add_s32(size);
+        compiler.add_opcode(IC_OPC_POP_MANY);
+        compiler.add_s32(_struct->num_data - size);
         return { target_type, false };
     }
     case IC_EXPR_PARENTHESES:
@@ -353,7 +351,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         }
 
         assert(argc == function->param_count);
-        compiler.add_instr(IC_OPC_CALL, idx);
+        compiler.add_opcode(IC_OPC_CALL);
+        compiler.add_s32(idx);
         return { function->return_type, false };
     }
     case IC_EXPR_PRIMARY:
@@ -366,7 +365,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         {
             bool is_global;
             ic_var var = compiler.get_var(token.string, &is_global);
-            compiler.add_instr(is_global ? IC_OPC_ADDRESS_GLOBAL : IC_OPC_ADDRESS, var.idx);
+            compiler.add_opcode(is_global ? IC_OPC_ADDRESS_GLOBAL : IC_OPC_ADDRESS);
+            compiler.add_s32(var.idx);
 
             if (!load_lvalue)
                 return { var.type, true };
@@ -375,28 +375,30 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { var.type, false };
         }
         case IC_TOK_TRUE:
-            compiler.add_instr_push({ .s32 = 1 });
-            return { non_pointer_type(IC_TYPE_S32), false };
-
         case IC_TOK_FALSE:
-            compiler.add_instr_push({ .s32 = 0 });
+            compiler.add_opcode(IC_OPC_PUSH_S32);
+            compiler.add_s32(token.type == IC_TOK_TRUE ? 1 : 0);
             return { non_pointer_type(IC_TYPE_S32), false };
 
         case IC_TOK_NULLPTR:
-            compiler.add_instr_push({ .pointer = nullptr });
+            compiler.add_opcode(IC_OPC_PUSH_NULLPTR);
             return { pointer1_type(IC_TYPE_NULLPTR), false };
 
         case IC_TOK_INT_NUMBER_LITERAL:
         case IC_TOK_CHARACTER_LITERAL:
-            compiler.add_instr_push({ .s32 = (int)token.number });
+            compiler.add_opcode(IC_OPC_PUSH_S32);
+            compiler.add_s32(token.number);
             return { non_pointer_type(IC_TYPE_S32), false };
 
         case IC_TOK_FLOAT_NUMBER_LITERAL:
-            compiler.add_instr_push({ .f64 = token.number });
+            compiler.add_opcode(IC_OPC_PUSH_F64);
+            compiler.add_f64(token.number);
             return { non_pointer_type(IC_TYPE_F64), false };
 
         case IC_TOK_STRING_LITERAL:
-            compiler.add_instr_push({ .pointer = (void*)token.string.data });
+            // todo
+            compiler.add_opcode(IC_OPC_PUSH_F64);
+            compiler.add_ptr((void*)token.string.data);
             return { pointer1_type(IC_TYPE_S8, true), false };
 
         default:

@@ -441,13 +441,9 @@ bool ic_runtime::run(const char* source_code)
     for (ic_function& function : _functions)
     {
         if (function.type == IC_FUN_SOURCE)
-        {
             compile(function, *this);
-            //printf("\n\nfunction: %.*s\nstack_size: %d\n", function.token.string.len, function.token.string.data, function.stack_size);
-            //dump_bytecode(function.bytecode, function.bytecode_size);
-        }
 
-        // calculate return and param size for vm
+        // calculate return and param sizes for vm
         function.param_size = 0;
 
         for (int j = 0; j < function.param_count; ++j)
