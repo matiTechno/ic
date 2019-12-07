@@ -1,5 +1,19 @@
 #include "ic.h"
 
+bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int size)
+{
+    for (int i = 0; i < size; ++i)
+    {
+        uint64_t hash = hash_string(host_functions[i].declaration);
+        if (fun->hash == hash)
+        {
+            fun->callback = host_functions[i].callback;
+            return true;
+        }
+    }
+    return false;
+}
+
 void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size)
 {
     for (int i = 0; i < program.functions_size; ++i)
@@ -9,7 +23,19 @@ void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, i
         if (fun.host_impl && !fun.callback)
         {
             // try to find this function in program.libs and in host_functions
-            assert(false);
+
+            if (IC_LIB_CORE & fun.lib)
+            {
+                ic_host_function* lib;
+                int lib_size;
+                get_core_lib(&lib, &lib_size);
+                assert(resolve_function(&fun, lib, lib_size));
+            }
+            else
+            {
+                assert(IC_LIB_USER & fun.lib);
+                assert(resolve_function(&fun, host_functions, host_functions_size));
+            }
         }
     }
 

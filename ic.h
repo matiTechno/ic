@@ -386,7 +386,12 @@ struct ic_function
 
     union
     {
-        ic_host_function_ptr callback;
+        struct
+        {
+            ic_host_function_ptr callback;
+            uint64_t hash;
+            int lib;
+        };
 
         struct
         {
@@ -398,16 +403,10 @@ struct ic_function
     };
 };
 
-struct ic_struct_member
-{
-    ic_type type;
-    ic_string name;
-};
-
 struct ic_struct
 {
     ic_token token;
-    ic_struct_member* members;
+    ic_param* members;
     int num_members;
     int num_data;
 };
@@ -555,7 +554,16 @@ enum ic_opcode
     IC_OPC_F64_F32,
 };
 
-// todo, some better naming would be nice
+enum ic_lib_type
+{
+    IC_LIB_CORE = 1 << 0,
+
+
+    // implementation detail
+    IC_LIB_USER = 1 << 30,
+};
+
+// todo, some better naming would be nice (ic_function, and current ic_function rename to ic_function_desc)
 struct ic_vm_function
 {
     bool host_impl;
@@ -571,35 +579,22 @@ struct ic_vm_function
         };
         struct
         {
-            uint64_t signature_hash;
             ic_host_function_ptr callback;
+            uint64_t hash;
+            int lib;
         };
-        // signature to compare to
-        // probably 64bit hash; tokens will be converted to strings (useless const removed) and hashed
-        // storing unhashed type info here would be cumbersome
     };
 };
 
-// todo VM in init will try to resolve all forward declarations, first from
-// selected libs and then from 
-
 struct ic_host_function
 {
-    const char* signature; // should not contain any redundant const qualifiers - if this signature is used to resolve
-    // a function declared in a source file and it contains redundant consts then hashes will not match because parsed signatures
-    // are stripped of these redundant const qualifier.
+    const char* declaration;
     ic_host_function_ptr callback;
-};
-
-enum ic_lib_type
-{
-    IC_LIB_CORE,
 };
 
 // function to dump this to a file and load it from a file
 struct ic_program
 {
-    int libs;
     ic_vm_function* functions;
     int functions_size;
     char* strings;
@@ -693,11 +688,9 @@ struct ic_expr_result
 // this structure will be totally redesigned
 struct ic_runtime
 {
-    void init();
     // vm, should have similar function - in case bytecode was stored on a file or something and functions must be resolved before
     // execution
     bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size);
-    void free();
 
     // implementation
     // lex
@@ -717,8 +710,6 @@ struct ic_runtime
     ic_struct* get_struct(ic_string name);
     ic_stmt* allocate_stmt(ic_stmt_type type);
     ic_expr* allocate_expr(ic_expr_type type, ic_token token);
-private:
-    void load_core_functions(); // if core functions are needed must be called before every compilation call
 };
 
 bool ic_string_compare(ic_string str1, ic_string str2);
@@ -729,6 +720,8 @@ ic_type pointer1_type(ic_basic_type type, bool at_const = false);
 void compile(ic_function& function, ic_runtime& runtime);
 
 // host_functions need to be passed if program was initialized by load_program() and not compile()
+void get_core_lib(ic_host_function** ptr, int* size);
+uint64_t hash_string(const char* str);
 void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size); // if vm runs only one program can be done once before many runs
 void vm_run(ic_vm& vm, ic_program& program);
 
@@ -818,9 +811,20 @@ struct ic_compiler
         memcpy(&bytecode.back() - 7, &ptr, 8);
     }
 
+    void declare_unused_param(ic_type type)
+    {
+        if (is_struct(type))
+            stack_size += get_struct(type.struct_name)->num_data;
+        else
+            stack_size += 1;
+
+        max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
+    }
+
     ic_var declare_var(ic_type type, ic_string name)
     {
         assert(scopes.size());
+
         bool present = false;
 
         for (int i = vars.size() - 1; i >= scopes.back().prev_var_count; --i)

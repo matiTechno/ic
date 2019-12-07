@@ -13,7 +13,15 @@ void compile(ic_function& function, ic_runtime& runtime)
     compiler.push_scope();
 
     for (int i = 0; i < function.param_count; ++i)
-        compiler.declare_var(function.params[i].type, function.params[i].name);
+    {
+        if(function.params[i].name.data)
+            compiler.declare_var(function.params[i].type, function.params[i].name);
+        else
+        {
+            printf("warning unused param\n");
+            compiler.declare_unused_param(function.params[i].type);
+        }
+    }
 
     bool returned = compile_stmt(function.body, compiler);
     assert(compiler.scopes.size() == 1);
@@ -293,7 +301,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
         for (int i = 0; i < _struct->num_members; ++i)
         {
-            const ic_struct_member& member = _struct->members[i];
+            const ic_param& member = _struct->members[i];
 
             if (ic_string_compare(target_name, member.name))
             {

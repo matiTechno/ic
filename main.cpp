@@ -1,5 +1,33 @@
 #include "ic.h"
 
+ic_data ic_host_random01(ic_data*)
+{
+    ic_data data;
+    data.f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
+    return data;
+}
+
+ic_data ic_host_write_ppm6(ic_data* argv)
+{
+    FILE* file = fopen((char*)argv[0].pointer, "wb");
+    char buf[1024];
+    int width = argv[1].s32;
+    int height = argv[2].s32;
+    snprintf(buf, sizeof(buf), "P6 %d %d 255 ", width, height);
+    int len = strlen(buf);
+    fwrite(buf, 1, len, file);
+    fwrite(argv[3].pointer, 1, width * height * 3, file);
+    fclose(file);
+    return {};
+}
+
+// rename to user 
+ic_host_function host_functions[] =
+{
+    {"void write_ppm6(const s8*, s32, s32, const u8*)", ic_host_write_ppm6},
+    {"f64 random01()", ic_host_random01},
+};
+
 int main(int argc, const char** argv)
 {
     assert(argc == 2);
@@ -17,21 +45,20 @@ int main(int argc, const char** argv)
     source_code.back() = '\0';
     fclose(file);
     ic_runtime runtime; // todo, runtime structure is not needed at all right now
-    runtime.init();
     ic_program program;
     ic_vm vm;
     // I hate chrono api, but it is easy to use and there is no portable C version for high resolution timers
     auto t1 = std::chrono::high_resolution_clock::now();
     {
         auto t1 = std::chrono::high_resolution_clock::now();
-        bool success = runtime.compile_to_bytecode(source_code.data(), &program, IC_LIB_CORE, nullptr, 0);
+        bool success = runtime.compile_to_bytecode(source_code.data(), &program, IC_LIB_CORE, host_functions, 2);
         assert(success);
         auto t2 = std::chrono::high_resolution_clock::now();
         printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     }
     {
-        auto t1 = std::chrono::high_resolution_clock::now();
         vm_init(vm, program, nullptr, 0);
+        auto t1 = std::chrono::high_resolution_clock::now();
         vm_run(vm, program);
         auto t2 = std::chrono::high_resolution_clock::now();
         printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
@@ -126,20 +153,6 @@ ic_data ic_host_malloc(ic_data* argv)
     return data;
 }
 
-ic_data ic_host_write_ppm6(ic_data* argv)
-{
-    FILE* file = fopen((char*)argv[0].pointer, "wb");
-    char buf[1024];
-    int width = argv[1].s32;
-    int height = argv[2].s32;
-    snprintf(buf, sizeof(buf), "P6 %d %d 255 ", width, height);
-    int len = strlen(buf);
-    fwrite(buf, 1, len, file);
-    fwrite(argv[3].pointer, 1, width * height * 3, file);
-    fclose(file);
-    return {};
-}
-
 ic_data ic_host_tan(ic_data* argv)
 {
     ic_data data;
@@ -161,12 +174,6 @@ ic_data ic_host_pow(ic_data* argv)
     return data;
 }
 
-ic_data ic_host_random01(ic_data*)
-{
-    ic_data data;
-    data.f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
-    return data;
-}
 
 ic_data ic_host_exit(ic_data*)
 {
@@ -181,196 +188,89 @@ bool ic_string_compare(ic_string str1, ic_string str2)
     return (strncmp(str1.data, str2.data, str1.len) == 0);
 }
 
-bool ic_tokenize(ic_runtime& runtime, const char* source_code);
-ic_global produce_global(const ic_token** it, ic_runtime& runtime);
-
-void resolve_function(ic_function& function, ic_runtime& runtime)
-{
-}
-
-void ic_runtime::init()
-{
-    // todo, this sucks ass, after replacing vectors initialize all fucking members,
-    // but anyway, it will be massive redesign
-    _stmt_deque.size = 0;
-    _expr_deque.size = 0;
-}
-
-void ic_runtime::load_core_functions()
-{
-    {
-        const char* str = "prints";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_VOID);
-        function.param_count = 1;
-        function.params[0].type = pointer1_type(IC_TYPE_S8, true);
-        function.callback = ic_host_prints;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "printf";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_VOID);
-        function.param_count = 1;
-        function.params[0].type = non_pointer_type(IC_TYPE_F64);
-        function.callback = ic_host_printf;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "printp";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_VOID);
-        function.param_count = 1;
-        function.params[0].type = pointer1_type(IC_TYPE_VOID, true);
-        function.callback = ic_host_printp;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "malloc";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = pointer1_type(IC_TYPE_VOID);
-        function.param_count = 1;
-        function.params[0].type = non_pointer_type(IC_TYPE_S32);
-        function.callback = ic_host_malloc;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "write_ppm6";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_VOID);
-        function.param_count = 4;
-        function.params[0].type = pointer1_type(IC_TYPE_S8, true);
-        function.params[1].type = non_pointer_type(IC_TYPE_S32);
-        function.params[2].type = non_pointer_type(IC_TYPE_S32);
-        function.params[3].type = pointer1_type(IC_TYPE_U8);
-        function.callback = ic_host_write_ppm6;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "tan";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_F64);
-        function.param_count = 1;
-        function.params[0].type = non_pointer_type(IC_TYPE_F64);
-        function.callback = ic_host_tan;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "sqrt";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_F64);
-        function.param_count = 1;
-        function.params[0].type = non_pointer_type(IC_TYPE_F64);
-        function.callback = ic_host_sqrt;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "pow";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_F64);
-        function.param_count = 2;
-        function.params[0].type = non_pointer_type(IC_TYPE_F64);
-        function.params[1].type = non_pointer_type(IC_TYPE_F64);
-        function.callback = ic_host_pow;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "random01";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_F64);
-        function.param_count = 0;
-        function.callback = ic_host_random01;
-        _functions.push_back(function);
-    }
-    {
-        const char* str = "exit";
-        ic_string name = { str, strlen(str) };
-        ic_function function;
-        function.type = IC_FUN_HOST;
-        function.token.string = name;
-        function.return_type = non_pointer_type(IC_TYPE_VOID);
-        function.param_count = 0;
-        function.callback = ic_host_exit;
-        _functions.push_back(function);
-    }
-}
-
-void compile_cleanup(ic_runtime& runtime)
-{
-    runtime._tokens.clear();
-    runtime._string_literals.clear();
-    runtime._string_literals.clear();
-    runtime._global_size = 0;
-    runtime._stmt_deque.size = 0;
-    runtime._expr_deque.size = 0;
-    runtime._functions.clear();
-
-    for (ic_struct& _struct : runtime._structs)
-        ::free(_struct.members);
-
-    runtime._structs.clear();
-    runtime._global_vars.clear();
-}
+bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<char>& _string_data);
+ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_declaration);
 
 static ic_host_function ic_core_lib[] =
 {
-    {"prints", ic_host_exit},
-    {"exit", ic_host_exit},
+    {"void prints(const s8*)", ic_host_prints},
+    {"void printf(f64)", ic_host_printf},
+    {"void printp(const void*)", ic_host_printp},
+    {"void* malloc(s32)", ic_host_malloc},
+    {"f64 tan(f64)", ic_host_tan},
+    {"f64 sqrt(f64)", ic_host_sqrt},
+    {"f64 pow(f64, f64)", ic_host_pow},
+    {"void exit()", ic_host_exit},
 };
 
-
-uint64_t get_signature_hash(const char* str)
+// this is so ic_core_lib can be accessed from other files
+void get_core_lib(ic_host_function** ptr, int* size)
 {
+    *ptr = ic_core_lib;
+    *size = sizeof(ic_core_lib) / sizeof(ic_host_function);
+}
+uint64_t hash_string (const char* str)
+{
+    uint64_t hash = 5381;
+    int c;
 
+    while (c = *str++)
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+
+    return hash;
 }
 
-ic_function get_function_from_signature_str(const char* str)
+// todo, rename produce to parse
+ic_function produce_function_from_host(ic_host_function& host_function, ic_runtime& runtime)
 {
+    std::vector<ic_token> tokens;
+    std::vector<char> string_data;
+    bool success = ic_tokenize(host_function.declaration, tokens, string_data);
+    assert(success);
+    assert(string_data.size() == 0);
 
+    const ic_token* tok_ptr = tokens.data();
+    ic_global global = produce_global(&tok_ptr, runtime, true);
+    assert(global.type == IC_GLOBAL_FUNCTION);
+    global.function.callback = host_function.callback;
+    global.function.hash = hash_string(host_function.declaration);
+    return global.function;
 }
 
 bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size)
 {
+    _stmt_deque.size = 0;
+    _expr_deque.size = 0;
+
     assert(source);
     bool success = true;
     const ic_token* token_it;
 
-    if (!ic_tokenize(*this, source))
-    {
-        compile_cleanup(*this);
+    if (!ic_tokenize(source, _tokens, _string_literals))
         return false;
+
+    // add lib and host_functions
+    if (libs & IC_LIB_CORE)
+    {
+        ic_host_function* host_fun;
+        int size;
+        get_core_lib(&host_fun, &size);
+
+        for(int i = 0; i < size; ++i)
+        {
+            ic_function fun = produce_function_from_host(host_fun[i], *this);
+            fun.lib = IC_LIB_CORE;
+            _functions.push_back(fun);
+        }
     }
 
-    // add lib and host functions to _functions
-    // tokenize and parse string, and produce ic_function from it
-    load_core_functions(); // remove this
+    for (int i = 0; i < host_functions_size; ++i)
+    {
+        assert(host_functions);
+        ic_function fun = produce_function_from_host(host_functions[i], *this);
+        fun.lib = IC_LIB_USER;
+        _functions.push_back(fun);
+    }
 
     _global_size = _string_literals.size() / sizeof(ic_data) + 1;
     token_it = _tokens.data();
@@ -382,11 +282,10 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
 
         try
         {
-            global = produce_global(&token_it, *this);
+            global = produce_global(&token_it, *this, false);
         }
         catch (ic_exception_parsing)
         {
-            compile_cleanup(*this);
             return false;
         }
 
@@ -404,7 +303,6 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
                 else
                     ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
 
-                compile_cleanup(*this);
                 return false;
             }
             assert(!existing_fun);
@@ -418,7 +316,6 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
             if (get_struct(token.string))
             {
                 ic_print_error(IC_ERR_PARSING, token.line, token.col, "struct with such name already exists");
-                compile_cleanup(*this);
                 return false;
             }
 
@@ -536,9 +433,7 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
         {
             vmfun.host_impl = true;
             vmfun.callback = function.callback;
-            // todo, create hash
-            // produce string from return_type, name, parameter types  - drop non important const stuff
-            // hash it
+            vmfun.hash = function.hash;
         }
         else
         {
@@ -554,15 +449,7 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
     memcpy(program->functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
     program->functions_size = vm_functions.size();
 
-    compile_cleanup(*this);
     return true;
-}
-
-void ic_runtime::free()
-{
-    _functions.clear();
-    _stmt_deque.free();
-    _expr_deque.free();
 }
 
 // todo, this is very temporary
@@ -682,10 +569,10 @@ bool is_identifier_char(char c)
     return is_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c == '_');
 }
 
-bool ic_tokenize(ic_runtime& runtime, const char* source_code)
+bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<char>& _string_data)
 {
-    ic_lexer lexer{ runtime._tokens };
-    lexer._source_it = source_code;
+    ic_lexer lexer{ _tokens };
+    lexer._source_it = source;
 
     while (!lexer.end())
     {
@@ -794,13 +681,13 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             }
 
             // todo, if the same string literal already exists, reuse it
-            int idx_begin = runtime._string_literals.size();
+            int idx_begin = _string_data.size();
             lexer.add_token_number(IC_TOK_STRING_LITERAL, idx_begin);
             const char* string_begin = token_begin + 1; // skip first "
             int len = lexer.pos() - string_begin; // this doesn't count last "
-            runtime._string_literals.resize(runtime._string_literals.size() + len + 1);
-            memcpy(&runtime._string_literals[idx_begin], string_begin, len);
-            runtime._string_literals.back() = '\0';
+            _string_data.resize(_string_data.size() + len + 1);
+            memcpy(&_string_data[idx_begin], string_begin, len);
+            _string_data.back() = '\0';
             break;
         }
         case '\'':
@@ -906,6 +793,7 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
     token.line = lexer._line;
     token.col = lexer._col;
     lexer._tokens.push_back(token);
+
     return true;
 }
 
@@ -922,7 +810,7 @@ enum ic_op_precedence
 
 // grammar, production rules hierarchy
 
-ic_global produce_global(const ic_token** it, ic_runtime& runtime);
+ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_declaration);
 ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime);
 ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime);
 ic_expr* produce_expr_stmt(const ic_token** it, ic_runtime& runtime);
@@ -961,7 +849,7 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
     throw ic_exception_parsing{};
 }
 
-bool produce_type(const ic_token** it, ic_runtime& runtime, ic_type& type)
+bool produce_type(const ic_token** it, ic_type& type, ic_runtime& runtime)
 {
     bool init = false;
     type.indirection_level = 0;
@@ -1003,7 +891,6 @@ bool produce_type(const ic_token** it, ic_runtime& runtime, ic_type& type)
             type.struct_name = (**it).string;
             break;
         }
-        // todo; warning that a type name is possibly misspelled
         // fall through
     default:
         if (init)
@@ -1030,7 +917,7 @@ bool produce_type(const ic_token** it, ic_runtime& runtime, ic_type& type)
 
 #define IC_MAX_MEMBERS 20
 
-ic_global produce_global(const ic_token** it, ic_runtime& runtime)
+ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_declaration)
 {
     if (token_consume(it, IC_TOK_STRUCT))
     {
@@ -1040,12 +927,12 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         _struct.token = **it;
         token_consume(it, IC_TOK_IDENTIFIER, "expected struct name");
         token_consume(it, IC_TOK_LEFT_BRACE, "expected '{'");
-        ic_struct_member members[IC_MAX_MEMBERS]; // todo; this is only temp solution
+        ic_param members[IC_MAX_MEMBERS]; // todo; this is only temp solution
         _struct.num_members = 0;
         _struct.num_data = 0;
         ic_type type;
 
-        while (produce_type(it, runtime, type))
+        while (produce_type(it, type, runtime))
         {
             assert(_struct.num_members < IC_MAX_MEMBERS);
 
@@ -1065,7 +952,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
             else
                 _struct.num_data += 1;
 
-            ic_struct_member& member = members[_struct.num_members];
+            ic_param& member = members[_struct.num_members];
             member.type = type;
             member.name = (**it).string;
             _struct.num_members += 1;
@@ -1073,8 +960,8 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
             token_consume(it, IC_TOK_SEMICOLON, "expected ';' after struct member name");
         }
 
-        int bytes = sizeof(ic_struct_member) * _struct.num_members;
-        _struct.members = (ic_struct_member*)malloc(bytes);
+        int bytes = sizeof(ic_param) * _struct.num_members;
+        _struct.members = (ic_param*)malloc(bytes);
         memcpy(_struct.members, members, bytes);
         token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}'");
         token_consume(it, IC_TOK_SEMICOLON, "expected ';'");
@@ -1084,7 +971,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
     // else produce a function or a global variable declaration
     ic_type type;
 
-    if (!produce_type(it, runtime, type))
+    if (!produce_type(it, type, runtime))
         exit_parsing(it, "expected: a type of a global variable / return type of a function / 'struct' keyword");
 
     ic_token token_id = **it;
@@ -1096,7 +983,6 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         ic_global global;
         global.type = IC_GLOBAL_FUNCTION;
         ic_function& function = global.function;
-        function.type = IC_FUN_SOURCE;
         function.token = token_id;
         function.return_type = type;
         function.param_count = 0;
@@ -1110,15 +996,21 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 
                 ic_type param_type;
 
-                if (!produce_type(it, runtime, param_type))
+                if (!produce_type(it, param_type, runtime))
                     exit_parsing(it, "expected parameter type");
 
                 if (is_void(param_type))
                     exit_parsing(it, "parameter can't be of type void");
 
                 function.params[function.param_count].type = param_type;
-                function.params[function.param_count].name = (**it).string;
-                token_consume(it, IC_TOK_IDENTIFIER, "expected parameter name");
+                const ic_token* id_token = *it;
+
+                if(token_consume(it, IC_TOK_IDENTIFIER))
+                    function.params[function.param_count].name = id_token->string;
+                else
+                    function.params[function.param_count].name = { nullptr };
+
+
                 function.param_count += 1;
 
                 if (token_consume(it, IC_TOK_RIGHT_PAREN))
@@ -1126,6 +1018,13 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 
                 token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument");
             }
+        }
+
+        if (host_declaration)
+        {
+            function.type = IC_FUN_HOST;
+            assert((**it).type == IC_TOK_EOF);
+            return global;
         }
 
         function.type = IC_FUN_SOURCE;
@@ -1258,7 +1157,7 @@ ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
 {
     ic_type type;
 
-    if (produce_type(it, runtime, type))
+    if (produce_type(it, type, runtime))
     {
         if (is_void(type))
             exit_parsing(it, "variables can't be of type void");
@@ -1423,7 +1322,7 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         ic_type type;
 
-        if (produce_type(it, runtime, type))
+        if (produce_type(it, type, runtime))
         {
             token_consume(it, IC_TOK_RIGHT_PAREN, "expected ) at the end of a cast operator");
             ic_expr* expr = runtime.allocate_expr(IC_EXPR_CAST_OPERATOR, **it);
@@ -1441,7 +1340,7 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after sizeof operator");
         
-        if (!produce_type(it, runtime, expr->_sizeof.type))
+        if (!produce_type(it, expr->_sizeof.type, runtime))
             exit_parsing(it, "expected type");
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after type");
