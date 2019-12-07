@@ -583,7 +583,7 @@ struct ic_vm_function
         {
             ic_host_function_ptr callback;
             uint64_t hash;
-            int lib;
+            int lib; // rename to origin?
         };
     };
 };

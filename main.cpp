@@ -8,6 +8,22 @@ int read_int(unsigned char** buf_it)
     return v;
 }
 
+float read_float(unsigned char** buf_it)
+{
+    float v;
+    memcpy(&v, *buf_it, sizeof(float));
+    *buf_it += sizeof(float);
+    return v;
+}
+
+double read_double(unsigned char** buf_it)
+{
+    double v;
+    memcpy(&v, *buf_it, sizeof(double));
+    *buf_it += sizeof(double);
+    return v;
+}
+
 // well, I could have a template function for this, that would be good use of templates
 uint64_t read_uint64(unsigned char** buf_it)
 {
@@ -166,6 +182,8 @@ std::vector<unsigned char> load_file(const char* name)
     return data;
 }
 
+void disassmble(ic_program& program);
+
 int main(int argc, const char** argv)
 {
     assert(argc == 3);
@@ -220,7 +238,9 @@ int main(int argc, const char** argv)
     }
     else if (strcmp(argv[1], "disassemble") == 0)
     {
-        assert(false);
+        auto file_data = load_file(argv[2]);
+        ic_program program = load_program(file_data.data());
+        disassmble(program);
         return 0;
     }
     else

@@ -129,6 +129,7 @@
     <ClCompile Include="compile_auxiliary.cpp" />
     <ClCompile Include="compile_binary.cpp" />
     <ClCompile Include="compile_unary.cpp" />
+    <ClCompile Include="disassemble.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="vm.cpp" />
   </ItemGroup>
