@@ -1,7 +1,18 @@
 #include "ic.h"
 
-void vm_init(ic_vm& vm, ic_program& program)
+void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size)
 {
+    for (int i = 0; i < program.functions_size; ++i)
+    {
+        ic_vm_function& fun = program.functions[i];
+
+        if (fun.host_impl && !fun.callback)
+        {
+            // try to find this function in program.libs and in host_functions
+            assert(false);
+        }
+    }
+
     vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
     memcpy(vm.call_stack, program.strings, program.strings_byte_size); // string data doesn't change across program runs
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
@@ -44,15 +55,15 @@ int read_s32_operand(unsigned char** ip)
 
 void vm_run(ic_vm& vm, ic_program& program)
 {
-    vm.call_stack_size = program.global_size; // this is important
+    vm.call_stack_size = program.global_data_size; // this is important
     vm.operand_stack_size = 0;
     {
-        ic_vm_function& function = program.functions[program.entry_point];
+        ic_vm_function& function = program.functions[0];
         vm.push_stack_frame(function.bytecode, function.stack_size, function.return_size);
     }
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
     // clear global non string data
-    memset(vm.call_stack + program.strings_byte_size, 0, program.global_size * sizeof(ic_data) - program.strings_byte_size);
+    memset(vm.call_stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
     assert(vm.stack_frames.size() == 1);
     ic_stack_frame* frame = &vm.stack_frames[0];
 
@@ -121,7 +132,7 @@ void vm_run(ic_vm& vm, ic_program& program)
             ic_vm_function& function = program.functions[fun_idx];
             int param_size = function.param_size;
 
-            if (function.type == IC_FUN_HOST)
+            if (function.host_impl)
             {
                 ic_data return_data = function.callback(vm.end_op() - param_size);
                 vm.pop_op_many(function.param_size);

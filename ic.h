@@ -172,6 +172,7 @@ enum ic_function_type
 {
     IC_FUN_HOST,
     IC_FUN_SOURCE,
+    IC_FUN_SOURCE_FORWARD_DECL,
 };
 
 // todo; union, enum
@@ -372,8 +373,9 @@ struct ic_param
 };
 
 // add pointer to void*, so host can change its internal state without using global variables
-using ic_host_function = ic_data(*)(ic_data* argv);
+using ic_host_function_ptr = ic_data(*)(ic_data* argv);
 
+// todo, ic_function_desc
 struct ic_function
 {
     ic_function_type type;
@@ -384,10 +386,11 @@ struct ic_function
 
     union
     {
-        ic_host_function callback;
+        ic_host_function_ptr callback;
 
         struct
         {
+            bool active;
             ic_stmt* body;
             unsigned char* bytecode;
             int bytecode_size;
@@ -556,7 +559,7 @@ enum ic_opcode
 // todo, some better naming would be nice
 struct ic_vm_function
 {
-    ic_function_type type;
+    bool host_impl;
     int return_size;
     int param_size;
 
@@ -569,20 +572,40 @@ struct ic_vm_function
         };
         struct
         {
-            ic_host_function callback; // may be set to null - must be resolved before execution;
-            // signature - functions will be checked against it when resolving
+            uint64_t signature_hash;
+            ic_host_function_ptr callback;
         };
+        // signature to compare to
+        // probably 64bit hash; tokens will be converted to strings (useless const removed) and hashed
+        // storing unhashed type info here would be cumbersome
     };
 };
 
+// todo VM in init will try to resolve all forward declarations, first from
+// selected libs and then from 
+
+struct ic_host_function
+{
+    const char* signature; // should not contain any redundant const qualifiers - if this signature is used to resolve
+    // a function declared in a source file and it contains redundant consts then hashes will not match because parsed signatures
+    // are stripped of these redundant const qualifier.
+    ic_host_function_ptr callback;
+};
+
+enum ic_lib_type
+{
+    IC_LIB_CORE,
+};
+
+// function to dump this to a file and load it from a file
 struct ic_program
 {
+    int libs;
     ic_vm_function* functions;
     int functions_size;
-    int entry_point;
     char* strings;
     int strings_byte_size;
-    int global_size;
+    int global_data_size;
 };
 
 struct ic_stack_frame
@@ -674,15 +697,13 @@ struct ic_runtime
     void init();
     // vm, should have similar function - in case bytecode was stored on a file or something and functions must be resolved before
     // execution
-    void load_core_functions(); // if core functions are needed must be called before every compilation call
-    bool compile_to_bytecode(const char* source, ic_program* program);
+    bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size);
     void free();
 
     // implementation
     // lex
     std::vector<ic_token> _tokens;
-    std::vector<char*> _string_literals;
-    int _string_literals_byte_size;
+    std::vector<char> _string_literals;
     // compile
     int _global_size;
     ic_deque<ic_stmt, 1000> _stmt_deque; // memory must be not invalidated when adding new statements
@@ -690,11 +711,15 @@ struct ic_runtime
     std::vector<ic_function> _functions;
     std::vector<ic_struct> _structs;
     std::vector<ic_var> _global_vars;
+    std::vector<ic_function*> _active_functions;
+    bool _add_to_active;
 
-    ic_function* get_function(ic_string name);
+    ic_function* get_function(ic_string name, int* idx);
     ic_struct* get_struct(ic_string name);
     ic_stmt* allocate_stmt(ic_stmt_type type);
     ic_expr* allocate_expr(ic_expr_type type, ic_token token);
+private:
+    void load_core_functions(); // if core functions are needed must be called before every compilation call
 };
 
 bool ic_string_compare(ic_string str1, ic_string str2);
@@ -704,7 +729,8 @@ ic_type non_pointer_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type, bool at_const = false);
 void compile(ic_function& function, ic_runtime& runtime);
 
-void vm_init(ic_vm& vm, ic_program& program); // if vm runs only one program can be done once before many runs
+// host_functions need to be passed if program was initialized by load_program() and not compile()
+void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size); // if vm runs only one program can be done once before many runs
 void vm_run(ic_vm& vm, ic_program& program);
 
 //void disassemble_bytecode(unsigned char* bytecode, int size); // todo after cleaning up runtime interfaces
@@ -849,12 +875,10 @@ struct ic_compiler
         return {};
     }
 
+    // todo, this should add target function to active functions during compilation, to cut off unused functions
     ic_function* get_fun(ic_string name, int* idx)
     {
-        ic_function* function = runtime->get_function(name);
-        assert(function);
-        *idx = function - &runtime->_functions[0];
-        return function;
+        return runtime->get_function(name, idx);
     }
 
     ic_struct* get_struct(ic_string name)

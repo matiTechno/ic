@@ -18,21 +18,20 @@ int main(int argc, const char** argv)
     fclose(file);
     ic_runtime runtime; // todo, runtime structure is not needed at all right now
     runtime.init();
-    runtime.load_core_functions();
     ic_program program;
     ic_vm vm;
     // I hate chrono api, but it is easy to use and there is no portable C version for high resolution timers
     auto t1 = std::chrono::high_resolution_clock::now();
     {
         auto t1 = std::chrono::high_resolution_clock::now();
-        bool success = runtime.compile_to_bytecode(source_code.data(), &program);
+        bool success = runtime.compile_to_bytecode(source_code.data(), &program, IC_LIB_CORE, nullptr, 0);
         assert(success);
         auto t2 = std::chrono::high_resolution_clock::now();
         printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
     }
     {
         auto t1 = std::chrono::high_resolution_clock::now();
-        vm_init(vm, program);
+        vm_init(vm, program, nullptr, 0);
         vm_run(vm, program);
         auto t2 = std::chrono::high_resolution_clock::now();
         printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
@@ -193,7 +192,6 @@ void ic_runtime::init()
 {
     // todo, this sucks ass, after replacing vectors initialize all fucking members,
     // but anyway, it will be massive redesign
-    _string_literals_byte_size = 0;
     _stmt_deque.size = 0;
     _expr_deque.size = 0;
 }
@@ -327,12 +325,8 @@ void ic_runtime::load_core_functions()
 void compile_cleanup(ic_runtime& runtime)
 {
     runtime._tokens.clear();
-
-    for (char* str : runtime._string_literals)
-        ::free(str);
-
     runtime._string_literals.clear();
-    runtime._string_literals_byte_size = 0;
+    runtime._string_literals.clear();
     runtime._global_size = 0;
     runtime._stmt_deque.size = 0;
     runtime._expr_deque.size = 0;
@@ -345,7 +339,27 @@ void compile_cleanup(ic_runtime& runtime)
     runtime._global_vars.clear();
 }
 
-bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
+bool compare_types_drop_level_0_const(ic_type l, ic_type r)
+{
+    if (l.indirection_level != r.indirection_level)
+        return false;
+
+    if ((l.const_mask >> 1) != (r.const_mask >> 1))
+        return false;
+
+    if (l.basic_type != r.basic_type)
+        return false;
+
+    if (l.basic_type == IC_TYPE_STRUCT)
+    {
+        if (!ic_string_compare(l.struct_name, r.struct_name))
+            return false;
+    }
+
+    return true;
+}
+
+bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size)
 {
     assert(source);
     bool success = true;
@@ -357,9 +371,13 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
         return false;
     }
 
-    _global_size = _string_literals_byte_size / sizeof(ic_data) + 1;
+    // add lib and host functions to _functions
+    load_core_functions(); // this is temporary
+
+    _global_size = _string_literals.size() / sizeof(ic_data) + 1;
     token_it = _tokens.data();
 
+    // parsing...
     while (token_it->type != IC_TOK_EOF)
     {
         ic_global global;
@@ -380,13 +398,43 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
         {
             ic_token token = global.function.token;
 
-            if (get_function(token.string))
+            ic_function* existing_fun = get_function(token.string, nullptr);
+            if (existing_fun)
             {
-                ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
+                bool sig_match = true;
+                sig_match = sig_match && compare_types_drop_level_0_const(existing_fun->return_type, global.function.return_type);
+                sig_match = sig_match && existing_fun->param_count == global.function.param_count;
+                for (int i = 0; i < existing_fun->param_count; ++i)
+                    sig_match = sig_match && compare_types_drop_level_0_const(existing_fun->params[i].type, global.function.params[i].type);
+
+                if (!sig_match)
+                {
+                    ic_print_error(IC_ERR_PARSING, token.line, token.col, "functions with the same name must have matching types");
+                    if (existing_fun->type == IC_FUN_HOST)
+                        printf("previous function was declared by host, not visible in a source file\n");
+                    return false;
+                }
+
+                if (global.function.type == IC_FUN_SOURCE_FORWARD_DECL)
+                    break;
+
+                if (existing_fun->type == IC_FUN_SOURCE_FORWARD_DECL)
+                {
+                    *existing_fun = global.function;
+                    break;
+                }
+
+                // function can be only defined once
+
+                if(existing_fun->type == IC_FUN_HOST)
+                    ic_print_error(IC_ERR_PARSING, token.line, token.col, "function (provided by host) with such name already exists");
+                else
+                    ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
+
                 compile_cleanup(*this);
                 return false;
             }
-
+            assert(!existing_fun);
             _functions.push_back(global.function);
             break;
         }
@@ -433,42 +481,64 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
             assert(false);
         }
     }
-
-    // set program structure
-    program->strings_byte_size = 0;
-
-    for (char* str : _string_literals)
-        program->strings_byte_size += strlen(str) + 1;
-
-    program->strings = (char*)malloc(program->strings_byte_size);
-
-    int offset = 0;
-    for (char* str : _string_literals)
-    {
-        int size = strlen(str) + 1;
-        memcpy(program->strings + offset, str, size);
-        offset += size;
-    }
-
-    program->global_size = _global_size;
-    program->entry_point = -1;
-    // todo, optimize out unused functions
-    std::vector<ic_vm_function> vm_functions;
+    // compiling ...
 
     for (ic_function& function : _functions)
     {
         if (function.type == IC_FUN_SOURCE)
         {
-            compile(function, *this);
-
             if (ic_string_compare(function.token.string, { "main", 4 }))
             {
-                // todo, remove asserts
                 assert(function.param_count == 0);
                 assert(is_void(function.return_type));
-                program->entry_point = &function - _functions.data();
+                _active_functions.push_back(&function);
+                function.active = true;
+                break;
             }
         }
+    }
+
+    assert(_active_functions.size());
+    _add_to_active = true;
+
+    for (int i = 0; i < _active_functions.size(); ++i) // size will increase as function currently compiled will pull more functions
+    {
+        // be careful because active_functions will be invalidated as new functions come in
+        // non source functions are added to
+        if (_active_functions[i]->type == IC_FUN_SOURCE)
+            compile(*_active_functions[i], *this);
+    }
+
+    // now compile rest of the functions - to check if program is correct but these will not be included in final program structure
+    // host functions are not checked for activness
+    _add_to_active = false;
+
+    for (ic_function& function : _functions)
+    {
+        if (function.type == IC_FUN_HOST || function.active)
+            continue;
+
+        if (function.type == IC_FUN_SOURCE)
+        {
+            printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
+            compile(function, *this);
+        }
+        else if (function.type == IC_FUN_SOURCE_FORWARD_DECL)
+            printf("warning: function '%.*s' not used but forward declared\n", function.token.string.len, function.token.string.data);
+        else
+            assert(false);
+    }
+
+    // set program structure
+    program->strings_byte_size = _string_literals.size();
+    program->strings = (char*)malloc(program->strings_byte_size);
+    memcpy(program->strings, _string_literals.data(), program->strings_byte_size);
+    program->global_data_size = _global_size;
+    std::vector<ic_vm_function> vm_functions;
+
+    for (ic_function* fun_ptr : _active_functions)
+    {
+        ic_function& function = *fun_ptr;
 
         ic_vm_function vmfun;
         vmfun.param_size = 0;
@@ -496,12 +566,22 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
         else
             vmfun.return_size = 0;
 
-        vmfun.type = function.type;
-
-        if (vmfun.type == IC_FUN_HOST)
+        if (function.type == IC_FUN_HOST)
+        {
+            vmfun.host_impl = true;
             vmfun.callback = function.callback;
+            // todo, create hash
+        }
+        else if (function.type == IC_FUN_SOURCE_FORWARD_DECL)
+        {
+            vmfun.host_impl = true;
+            vmfun.callback = nullptr;
+            // create hash
+        }
         else
         {
+            assert(function.type == IC_FUN_SOURCE);
+            vmfun.host_impl = false;
             vmfun.bytecode = function.bytecode;
             vmfun.stack_size = function.stack_size;
         }
@@ -509,7 +589,6 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program)
         vm_functions.push_back(vmfun);
     }
 
-    assert(program->entry_point != -1);
     program->functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
     memcpy(program->functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
     program->functions_size = vm_functions.size();
@@ -525,14 +604,44 @@ void ic_runtime::free()
     _expr_deque.free();
 }
 
-ic_function* ic_runtime::get_function(ic_string name)
+// todo, this is very temporary
+// this must be more readable... this idx stuff is lolz
+ic_function* ic_runtime::get_function(ic_string name, int* idx)
 {
+    ic_function* target_fun = nullptr;
     for (ic_function& function : _functions)
     {
         if (ic_string_compare(function.token.string, name))
-            return &function;
+            target_fun = &function;
     }
-    return nullptr;
+
+    if (!idx)
+        return target_fun;
+
+
+
+    // part used during compilation
+
+    assert(target_fun);
+
+    if (!_add_to_active)
+        return target_fun;
+
+    for (int i = 0; i < _active_functions.size(); ++i)
+    {
+        if (target_fun == _active_functions[i])
+        {
+            *idx = i;
+            return target_fun;
+        }
+    }
+
+    if (target_fun->type != IC_FUN_HOST)
+        target_fun->active = true;
+
+    _active_functions.push_back(target_fun);
+    *idx = _active_functions.size() - 1;
+    return target_fun;
 }
 
 ic_struct* ic_runtime::get_struct(ic_string name)
@@ -729,14 +838,13 @@ bool ic_tokenize(ic_runtime& runtime, const char* source_code)
             }
 
             // todo, if the same string literal already exists, reuse it
-            lexer.add_token_number(IC_TOK_STRING_LITERAL, runtime._string_literals_byte_size);
+            int idx_begin = runtime._string_literals.size();
+            lexer.add_token_number(IC_TOK_STRING_LITERAL, idx_begin);
             const char* string_begin = token_begin + 1; // skip first "
             int len = lexer.pos() - string_begin; // this doesn't count last "
-            char* data = (char*)malloc(len + 1); // one more for \0
-            memcpy(data, string_begin, len);
-            data[len] = '\0';
-            runtime._string_literals.push_back(data);
-            runtime._string_literals_byte_size += len + 1;
+            runtime._string_literals.resize(runtime._string_literals.size() + len + 1);
+            memcpy(&runtime._string_literals[idx_begin], string_begin, len);
+            runtime._string_literals.back() = '\0';
             break;
         }
         case '\'':
@@ -1032,7 +1140,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         ic_global global;
         global.type = IC_GLOBAL_FUNCTION;
         ic_function& function = global.function;
-        function.type = IC_FUN_SOURCE;
+        function.active = false;
         function.token = token_id;
         function.return_type = type;
         function.param_count = 0;
@@ -1064,6 +1172,13 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
             }
         }
 
+        if (token_consume(it, IC_TOK_SEMICOLON))
+        {
+            function.type = IC_FUN_SOURCE_FORWARD_DECL;
+            return global;
+        }
+
+        function.type = IC_FUN_SOURCE;
         function.body = produce_stmt(it, runtime);
 
         if (function.body->type != IC_STMT_COMPOUND)

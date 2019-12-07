@@ -52,6 +52,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             // print warning
             //if (returned)
                 //break;
+            // todo do detect unreachable code with break and continue statements
             returned = returned || compile_stmt(body_stmt, compiler);
             body_stmt = body_stmt->next;
         }
@@ -135,7 +136,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             returned_else = compile_stmt(stmt->_if.body_else, compiler);
             compiler.pop_scope();
             int idx_end = compiler.bytecode.size();
-            memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int)); // memcopy is used to not violate alignment
+            memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int)); // memcpy is used to not violate alignment
         }
         else
             idx_else = compiler.bytecode.size();
