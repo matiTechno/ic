@@ -30,6 +30,7 @@
 // self-hosting
 // naming convention - size (number of elements), byte_size (number of bytes)
 // option to read bytecode instead of source file - this application - to test the loading of bytecode
+// uchar typedef so I don't have to write usigned char
 
 template<typename T, int N>
 struct ic_deque
@@ -575,6 +576,7 @@ struct ic_vm_function
         struct
         {
             unsigned char* bytecode;
+            int bytecode_size;
             int stack_size;
         };
         struct
@@ -586,13 +588,7 @@ struct ic_vm_function
     };
 };
 
-struct ic_host_function
-{
-    const char* declaration;
-    ic_host_function_ptr callback;
-};
-
-// function to dump this to a file and load it from a file
+// todo keep one buffer for all functions bytecode
 struct ic_program
 {
     ic_vm_function* functions;
@@ -663,6 +659,13 @@ struct ic_vm
     {
         return operand_stack + operand_stack_size;
     }
+};
+
+// todo, rename to ic_host_declaration
+struct ic_host_function
+{
+    const char* declaration;
+    ic_host_function_ptr callback;
 };
 
 struct ic_var

@@ -1,5 +1,118 @@
 #include "ic.h"
 
+int read_int(unsigned char** buf_it)
+{
+    int v;
+    memcpy(&v, *buf_it, sizeof(int));
+    *buf_it += sizeof(int);
+    return v;
+}
+
+// well, I could have a template function for this, that would be good use of templates
+uint64_t read_uint64(unsigned char** buf_it)
+{
+    uint64_t v;
+    memcpy(&v, *buf_it, sizeof(uint64_t));
+    *buf_it += sizeof(uint64_t);
+    return v;
+}
+
+void* read_bytes(unsigned char** buf, int size)
+{
+    void* ptr = malloc(size);
+    memcpy(ptr, *buf, size);
+    *buf += size;
+    return ptr;
+}
+
+void write_int(std::vector<unsigned char>& buf, int v)
+{
+    int size = buf.size();
+    buf.resize(size + sizeof(int));
+    memcpy(buf.data() + size, &v, sizeof(int));
+}
+
+void write_uint64(std::vector<unsigned char>& buf, uint64_t v)
+{
+    int size = buf.size();
+    buf.resize(size + sizeof(uint64_t));
+    memcpy(buf.data() + size, &v, sizeof(uint64_t));
+}
+
+void write_bytes(std::vector<unsigned char>& buf, unsigned char* bytes, int size)
+{
+    int idx = buf.size();
+    buf.resize(idx + size);
+    memcpy(buf.data() + idx, bytes, size);
+}
+
+// todo, bounds checking
+ic_program load_program(unsigned char* buf)
+{
+    assert(buf);
+    ic_program program;
+    program.functions_size = read_int(&buf);
+    program.strings_byte_size = read_int(&buf);
+    program.global_data_size = read_int(&buf);
+    program.strings = (char*)read_bytes(&buf, program.strings_byte_size);
+    program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
+
+    for (int i = 0; i < program.functions_size; ++i)
+    {
+        ic_vm_function& function = program.functions[i];
+
+        function.host_impl = read_int(&buf);
+        function.return_size = read_int(&buf);
+        function.param_size = read_int(&buf);
+
+        if (function.host_impl)
+        {
+            function.hash = read_uint64(&buf);
+            function.lib = read_int(&buf);
+            function.callback = nullptr;
+        }
+        else
+        {
+            function.bytecode_size = read_int(&buf);
+            function.stack_size = read_int(&buf);
+            function.bytecode = (unsigned char*)read_bytes(&buf, function.bytecode_size);
+        }
+    }
+
+    return program;
+}
+
+void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
+{
+    write_int(buf, program.functions_size);
+    write_int(buf, program.strings_byte_size);
+    write_int(buf, program.global_data_size);
+    write_bytes(buf, (unsigned char*)program.strings, program.strings_byte_size);
+
+    for (int i = 0; i < program.functions_size; ++i)
+    {
+        ic_vm_function& function = program.functions[i];
+
+        write_int(buf, function.host_impl);
+        write_int(buf, function.return_size);
+        write_int(buf, function.param_size);
+
+        if (function.host_impl)
+        {
+            write_uint64(buf, function.hash);
+            write_int(buf, function.lib);
+        }
+        else
+        {
+            write_int(buf, function.bytecode_size);
+            write_int(buf, function.stack_size);
+            write_bytes(buf, function.bytecode, function.bytecode_size);
+        }
+    }
+}
+
+// todo, ic_buf , void* data, int size
+
 ic_data ic_host_random01(ic_data*)
 {
     ic_data data;
@@ -21,6 +134,13 @@ ic_data ic_host_write_ppm6(ic_data* argv)
     return {};
 }
 
+void write_to_file(unsigned char* data, int size, const char* filename)
+{
+    FILE* file = fopen(filename, "wb");
+    fwrite(data, 1, size, file);
+    fclose(file);
+}
+
 // rename to user 
 ic_host_function host_functions[] =
 {
@@ -28,10 +148,9 @@ ic_host_function host_functions[] =
     {"f64 random01()", ic_host_random01},
 };
 
-int main(int argc, const char** argv)
+std::vector<unsigned char> load_file(const char* name)
 {
-    assert(argc == 2);
-    FILE* file = fopen(argv[1], "rb"); // oh my dear Windows, you have to make life harder
+    FILE* file = fopen(name, "rb"); // oh my dear Windows, you have to make life harder
     assert(file);
     int rc = fseek(file, 0, SEEK_END);
     assert(rc == 0);
@@ -39,33 +158,75 @@ int main(int argc, const char** argv)
     assert(size != EOF);
     assert(size != 0);
     rewind(file);
-    std::vector<char> source_code;
-    source_code.resize(size + 1);
-    fread(source_code.data(), 1, size, file);
-    source_code.back() = '\0';
+    std::vector<unsigned char> data;
+    data.resize(size + 1);
+    fread(data.data(), 1, size, file);
+    data.back() = '\0';
     fclose(file);
-    ic_runtime runtime; // todo, runtime structure is not needed at all right now
-    ic_program program;
-    ic_vm vm;
-    // I hate chrono api, but it is easy to use and there is no portable C version for high resolution timers
-    auto t1 = std::chrono::high_resolution_clock::now();
+    return data;
+}
+
+int main(int argc, const char** argv)
+{
+    assert(argc == 3);
+
+    if (strcmp(argv[1], "run_source") == 0)
     {
         auto t1 = std::chrono::high_resolution_clock::now();
-        bool success = runtime.compile_to_bytecode(source_code.data(), &program, IC_LIB_CORE, host_functions, 2);
-        assert(success);
+        {
+            auto file_data = load_file(argv[2]);
+            ic_runtime runtime;
+            ic_program program;
+            {
+                auto t1 = std::chrono::high_resolution_clock::now();
+                bool success = runtime.compile_to_bytecode((char*)file_data.data(), &program, IC_LIB_CORE, host_functions, 2);
+                assert(success);
+                auto t2 = std::chrono::high_resolution_clock::now();
+                printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+            }
+            {
+                ic_vm vm;
+                vm_init(vm, program, host_functions, 2);
+                auto t1 = std::chrono::high_resolution_clock::now();
+                vm_run(vm, program);
+                auto t2 = std::chrono::high_resolution_clock::now();
+                printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+            }
+        }
         auto t2 = std::chrono::high_resolution_clock::now();
-        printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+        printf("total time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+        return 0;
     }
+    else if (strcmp(argv[1], "run_bytecode") == 0)
     {
-        vm_init(vm, program, nullptr, 0);
-        auto t1 = std::chrono::high_resolution_clock::now();
+        auto file_data = load_file(argv[2]);
+        ic_program program = load_program(file_data.data());
+        ic_vm vm;
+        vm_init(vm, program, host_functions, 2);
         vm_run(vm, program);
-        auto t2 = std::chrono::high_resolution_clock::now();
-        printf("execution time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
+        return 0;
     }
-    auto t2 = std::chrono::high_resolution_clock::now();
-    printf("total time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
-    return 0;
+    else if (strcmp(argv[1], "compile") == 0)
+    {
+        auto file_data = load_file(argv[2]);
+        ic_runtime runtime;
+        ic_program program;
+        bool success = runtime.compile_to_bytecode((char*)file_data.data(), &program, IC_LIB_CORE, host_functions, 2);
+        assert(success);
+        std::vector<unsigned char> buf;
+        serialize_program(buf, program);
+        write_to_file(buf.data(), buf.size(), "bytecode.bc");
+        return 0;
+    }
+    else if (strcmp(argv[1], "disassemble") == 0)
+    {
+        assert(false);
+        return 0;
+    }
+    else
+        assert(false);
+
+    return -1;
 }
 
 // these type functions exist to avoid bugs in value.type initialization
@@ -434,11 +595,13 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
             vmfun.host_impl = true;
             vmfun.callback = function.callback;
             vmfun.hash = function.hash;
+            vmfun.lib = function.lib;
         }
         else
         {
             vmfun.host_impl = false;
             vmfun.bytecode = function.bytecode;
+            vmfun.bytecode_size = function.bytecode_size;
             vmfun.stack_size = function.stack_size;
         }
 
