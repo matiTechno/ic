@@ -29,6 +29,7 @@
 // I would like to support simple generics and struct functions (no operator overloading and stuff like this)
 // self-hosting
 // naming convention - size (number of elements), byte_size (number of bytes)
+// option to read bytecode instead of source file - this application - to test the loading of bytecode
 
 template<typename T, int N>
 struct ic_deque
@@ -172,7 +173,6 @@ enum ic_function_type
 {
     IC_FUN_HOST,
     IC_FUN_SOURCE,
-    IC_FUN_SOURCE_FORWARD_DECL,
 };
 
 // todo; union, enum
@@ -390,7 +390,6 @@ struct ic_function
 
         struct
         {
-            bool active;
             ic_stmt* body;
             unsigned char* bytecode;
             int bytecode_size;

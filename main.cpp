@@ -339,24 +339,21 @@ void compile_cleanup(ic_runtime& runtime)
     runtime._global_vars.clear();
 }
 
-bool compare_types_drop_level_0_const(ic_type l, ic_type r)
+static ic_host_function ic_core_lib[] =
 {
-    if (l.indirection_level != r.indirection_level)
-        return false;
+    {"prints", ic_host_exit},
+    {"exit", ic_host_exit},
+};
 
-    if ((l.const_mask >> 1) != (r.const_mask >> 1))
-        return false;
 
-    if (l.basic_type != r.basic_type)
-        return false;
+uint64_t get_signature_hash(const char* str)
+{
 
-    if (l.basic_type == IC_TYPE_STRUCT)
-    {
-        if (!ic_string_compare(l.struct_name, r.struct_name))
-            return false;
-    }
+}
 
-    return true;
+ic_function get_function_from_signature_str(const char* str)
+{
+
 }
 
 bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size)
@@ -372,7 +369,8 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
     }
 
     // add lib and host functions to _functions
-    load_core_functions(); // this is temporary
+    // tokenize and parse string, and produce ic_function from it
+    load_core_functions(); // remove this
 
     _global_size = _string_literals.size() / sizeof(ic_data) + 1;
     token_it = _tokens.data();
@@ -401,31 +399,6 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
             ic_function* existing_fun = get_function(token.string, nullptr);
             if (existing_fun)
             {
-                bool sig_match = true;
-                sig_match = sig_match && compare_types_drop_level_0_const(existing_fun->return_type, global.function.return_type);
-                sig_match = sig_match && existing_fun->param_count == global.function.param_count;
-                for (int i = 0; i < existing_fun->param_count; ++i)
-                    sig_match = sig_match && compare_types_drop_level_0_const(existing_fun->params[i].type, global.function.params[i].type);
-
-                if (!sig_match)
-                {
-                    ic_print_error(IC_ERR_PARSING, token.line, token.col, "functions with the same name must have matching types");
-                    if (existing_fun->type == IC_FUN_HOST)
-                        printf("previous function was declared by host, not visible in a source file\n");
-                    return false;
-                }
-
-                if (global.function.type == IC_FUN_SOURCE_FORWARD_DECL)
-                    break;
-
-                if (existing_fun->type == IC_FUN_SOURCE_FORWARD_DECL)
-                {
-                    *existing_fun = global.function;
-                    break;
-                }
-
-                // function can be only defined once
-
                 if(existing_fun->type == IC_FUN_HOST)
                     ic_print_error(IC_ERR_PARSING, token.line, token.col, "function (provided by host) with such name already exists");
                 else
@@ -483,6 +456,7 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
     }
     // compiling ...
 
+
     for (ic_function& function : _functions)
     {
         if (function.type == IC_FUN_SOURCE)
@@ -492,9 +466,9 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
                 assert(function.param_count == 0);
                 assert(is_void(function.return_type));
                 _active_functions.push_back(&function);
-                function.active = true;
-                break;
             }
+
+            function.bytecode = nullptr; // important
         }
     }
 
@@ -515,18 +489,10 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
 
     for (ic_function& function : _functions)
     {
-        if (function.type == IC_FUN_HOST || function.active)
+        if (function.type == IC_FUN_HOST || function.bytecode)
             continue;
-
-        if (function.type == IC_FUN_SOURCE)
-        {
-            printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
-            compile(function, *this);
-        }
-        else if (function.type == IC_FUN_SOURCE_FORWARD_DECL)
-            printf("warning: function '%.*s' not used but forward declared\n", function.token.string.len, function.token.string.data);
-        else
-            assert(false);
+        printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
+        compile(function, *this);
     }
 
     // set program structure
@@ -571,16 +537,11 @@ bool ic_runtime::compile_to_bytecode(const char* source, ic_program* program, in
             vmfun.host_impl = true;
             vmfun.callback = function.callback;
             // todo, create hash
-        }
-        else if (function.type == IC_FUN_SOURCE_FORWARD_DECL)
-        {
-            vmfun.host_impl = true;
-            vmfun.callback = nullptr;
-            // create hash
+            // produce string from return_type, name, parameter types  - drop non important const stuff
+            // hash it
         }
         else
         {
-            assert(function.type == IC_FUN_SOURCE);
             vmfun.host_impl = false;
             vmfun.bytecode = function.bytecode;
             vmfun.stack_size = function.stack_size;
@@ -618,8 +579,6 @@ ic_function* ic_runtime::get_function(ic_string name, int* idx)
     if (!idx)
         return target_fun;
 
-
-
     // part used during compilation
 
     assert(target_fun);
@@ -635,9 +594,6 @@ ic_function* ic_runtime::get_function(ic_string name, int* idx)
             return target_fun;
         }
     }
-
-    if (target_fun->type != IC_FUN_HOST)
-        target_fun->active = true;
 
     _active_functions.push_back(target_fun);
     *idx = _active_functions.size() - 1;
@@ -1140,7 +1096,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
         ic_global global;
         global.type = IC_GLOBAL_FUNCTION;
         ic_function& function = global.function;
-        function.active = false;
+        function.type = IC_FUN_SOURCE;
         function.token = token_id;
         function.return_type = type;
         function.param_count = 0;
@@ -1170,12 +1126,6 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime)
 
                 token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument");
             }
-        }
-
-        if (token_consume(it, IC_TOK_SEMICOLON))
-        {
-            function.type = IC_FUN_SOURCE_FORWARD_DECL;
-            return global;
         }
 
         function.type = IC_FUN_SOURCE;
