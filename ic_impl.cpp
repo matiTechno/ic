@@ -75,7 +75,6 @@ ic_program load_program(unsigned char* buf)
     for (int i = 0; i < program.functions_size; ++i)
     {
         ic_vm_function& function = program.functions[i];
-
         function.host_impl = read_int(&buf);
         function.return_size = read_int(&buf);
         function.param_size = read_int(&buf);
@@ -93,7 +92,6 @@ ic_program load_program(unsigned char* buf)
             function.bytecode = (unsigned char*)read_bytes(&buf, function.bytecode_size);
         }
     }
-
     return program;
 }
 
@@ -107,7 +105,6 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
     for (int i = 0; i < program.functions_size; ++i)
     {
         ic_vm_function& function = program.functions[i];
-
         write_int(buf, function.host_impl);
         write_int(buf, function.return_size);
         write_int(buf, function.param_size);
@@ -126,17 +123,19 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
     }
 }
 
-// these type functions exist to avoid bugs in value.type initialization
-
 ic_type non_pointer_type(ic_basic_type type)
 {
     return { type, 0, 0 };
 }
 
-// todo; I don't like bool arguments like this one, it is not obvious what it does from a function call
-ic_type pointer1_type(ic_basic_type type, bool at_const)
+ic_type const_pointer1_type(ic_basic_type type)
 {
-    return { type, 1, (unsigned)(at_const ? 2 : 0) };
+    return { type, 1, 1 << 2 };
+}
+
+ic_type pointer1_type(ic_basic_type type)
+{
+    return { type, 1, 0 };
 }
 
 bool is_struct(ic_type type)
@@ -149,40 +148,14 @@ bool is_void(ic_type type)
     return !type.indirection_level && type.basic_type == IC_TYPE_VOID;
 }
 
-void ic_print_error(ic_error_type error_type, int line, int col, const char* fmt, ...)
+void ic_print_error(int line, int col, const char* fmt, ...)
 {
-    const char* str_err_type = nullptr;
-
-    if (error_type == IC_ERR_LEXING)
-        str_err_type = "lexing";
-    else if (error_type == IC_ERR_PARSING)
-        str_err_type = "parsing";
-
-    assert(str_err_type);
-
-    printf("%s error; line: %d; col: %d; ", str_err_type, line, col);
+    printf("error; line: %d; col: %d; ", line, col);
     va_list list;
     va_start(list, fmt);
     vprintf(fmt, list);
     va_end(list);
     printf("\n");
-}
-
-ic_stmt* ic_runtime::allocate_stmt(ic_stmt_type type)
-{
-    ic_stmt* stmt = _stmt_deque.allocate();
-    memset(stmt, 0, sizeof(ic_stmt));
-    stmt->type = type;
-    return stmt;
-}
-
-ic_expr* ic_runtime::allocate_expr(ic_expr_type type, ic_token token)
-{
-    ic_expr* expr = _expr_deque.allocate();
-    memset(expr, 0, sizeof(ic_expr));
-    expr->type = type;
-    expr->token = token;
-    return expr;
 }
 
 ic_data ic_host_prints(ic_data* argv)
@@ -232,7 +205,6 @@ ic_data ic_host_pow(ic_data* argv)
     return data;
 }
 
-
 ic_data ic_host_exit(ic_data*)
 {
     exit(0);
@@ -246,9 +218,6 @@ bool ic_string_compare(ic_string str1, ic_string str2)
     return (strncmp(str1.data, str2.data, str1.len) == 0);
 }
 
-bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<char>& _string_data);
-ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_declaration);
-
 static ic_host_function ic_core_lib[] =
 {
     {"void prints(const s8*)", ic_host_prints},
@@ -261,12 +230,12 @@ static ic_host_function ic_core_lib[] =
     {"void exit()", ic_host_exit},
 };
 
-// this is so ic_core_lib can be accessed from other files
-void get_core_lib(ic_host_function** ptr, int* size)
+void get_core_lib(ic_host_function** lib_ptr, int* size)
 {
-    *ptr = ic_core_lib;
+    *lib_ptr = ic_core_lib;
     *size = sizeof(ic_core_lib) / sizeof(ic_host_function);
 }
+
  unsigned int hash_string (const char* str)
 {
     unsigned int hash = 5381;
@@ -278,8 +247,12 @@ void get_core_lib(ic_host_function** ptr, int* size)
     return hash;
 }
 
-// todo, rename produce to parse
-ic_function produce_function_from_host(ic_host_function& host_function, ic_runtime& runtime)
+bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<char>& _string_data);
+// create new function produce_host_decl, and don't use bool flag
+ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration);
+
+ // todo, better name
+ic_function produce_function_from_host(ic_host_function& host_function, ic_parser& parser)
 {
     std::vector<ic_token> tokens;
     std::vector<char> string_data;
@@ -288,27 +261,32 @@ ic_function produce_function_from_host(ic_host_function& host_function, ic_runti
     assert(string_data.size() == 0);
 
     const ic_token* tok_ptr = tokens.data();
-    ic_global global = produce_global(&tok_ptr, runtime, true);
+    ic_global global = produce_global(&tok_ptr, parser, true);
     assert(global.type == IC_GLOBAL_FUNCTION);
     global.function.callback = host_function.callback;
     global.function.hash = hash_string(host_function.declaration);
     return global.function;
 }
 
+// todo cleanup on early return
 bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size)
 {
-    ic_runtime rt;
-    rt._stmt_deque.size = 0;
-    rt._expr_deque.size = 0;
-
     assert(source);
-    bool success = true;
-    const ic_token* token_it;
 
-    if (!ic_tokenize(source, rt._tokens, rt._string_literals))
+    std::vector<ic_token> tokens;
+    std::vector<char> strings;
+
+    if (!ic_tokenize(source, tokens, strings))
         return false;
 
-    // add lib and host_functions
+    program->strings_byte_size = strings.size();
+    program->strings = (char*)malloc(program->strings_byte_size);
+    memcpy(program->strings, strings.data(), program->strings_byte_size);
+
+    program->global_data_size = strings.size() / sizeof(ic_data) + 1;
+    ic_parser parser;
+    parser.init();
+
     if (libs & IC_LIB_CORE)
     {
         ic_host_function* host_fun;
@@ -317,31 +295,29 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
 
         for(int i = 0; i < size; ++i)
         {
-            ic_function fun = produce_function_from_host(host_fun[i], rt);
+            ic_function fun = produce_function_from_host(host_fun[i], parser);
             fun.lib = IC_LIB_CORE;
-            rt._functions.push_back(fun);
+            parser.functions.push_back(fun);
         }
     }
 
     for (int i = 0; i < host_functions_size; ++i)
     {
         assert(host_functions);
-        ic_function fun = produce_function_from_host(host_functions[i], rt);
+        ic_function fun = produce_function_from_host(host_functions[i], parser);
         fun.lib = IC_LIB_USER;
-        rt._functions.push_back(fun);
+        parser.functions.push_back(fun);
     }
 
-    rt._global_size = rt._string_literals.size() / sizeof(ic_data) + 1;
-    token_it = rt._tokens.data();
+    const ic_token* token_it = tokens.data();
 
-    // parsing...
     while (token_it->type != IC_TOK_EOF)
     {
         ic_global global;
 
         try
         {
-            global = produce_global(&token_it, rt, false);
+            global = produce_global(&token_it, parser, false);
         }
         catch (ic_exception_parsing)
         {
@@ -353,67 +329,66 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
         case IC_GLOBAL_FUNCTION:
         {
             ic_token token = global.function.token;
+            ic_function* prev_function = parser.get_function(token.string);
 
-            ic_function* existing_fun = rt.get_function(token.string, nullptr);
-            if (existing_fun)
+            if (prev_function)
             {
-                if(existing_fun->type == IC_FUN_HOST)
-                    ic_print_error(IC_ERR_PARSING, token.line, token.col, "function (provided by host) with such name already exists");
+                if(prev_function->type == IC_FUN_HOST)
+                    ic_print_error(token.line, token.col, "function (provided by host) with such name already exists");
                 else
-                    ic_print_error(IC_ERR_PARSING, token.line, token.col, "function with such name already exists");
+                    ic_print_error(token.line, token.col, "function with such name already exists");
 
                 return false;
             }
-            assert(!existing_fun);
-            rt._functions.push_back(global.function);
+            parser.functions.push_back(global.function);
             break;
         }
         case IC_GLOBAL_STRUCT:
         {
             ic_token token = global._struct.token;
 
-            if (rt.get_struct(token.string))
+            if (parser.get_struct(token.string))
             {
-                ic_print_error(IC_ERR_PARSING, token.line, token.col, "struct with such name already exists");
+                ic_print_error(token.line, token.col, "struct with such name already exists");
                 return false;
             }
-
-            rt._structs.push_back(global._struct);
+            parser.structs.push_back(global._struct);
             break;
         }
         case IC_GLOBAL_VAR_DECLARATION:
         {
-            for (ic_var& var : rt._global_vars)
-            {
-                if (ic_string_compare(var.name, global.var.token.string))
-                    assert(false); // todo print nice error
-            }
+            ic_token token = global.var.token;
 
+            if (parser.get_global_var(token.string))
+            {
+                ic_print_error(token.line, token.col, "global variable with such name already exists");
+                return false;
+            }
             ic_var var;
-            var.idx = rt._global_size * sizeof(ic_data);
+            var.idx = program->global_data_size * sizeof(ic_data);
             var.type = global.var.type;
-            var.name = global.var.token.string;
+            var.name = token.string;
 
             if (is_struct(var.type))
             {
-                ic_struct* _struct = rt.get_struct(var.type.struct_name);
-                assert(_struct); //  todo
-                rt._global_size += _struct->num_data;
+                ic_struct* _struct = parser.get_struct(var.type.struct_name);
+                assert(_struct);
+                program->global_data_size += _struct->num_data;
             }
             else
-                rt._global_size += 1;
+                program->global_data_size += 1;
 
-            rt._global_vars.push_back(var);
+            parser.global_vars.push_back(var);
             break;
         }
         default:
             assert(false);
         }
     }
-    // compiling ...
 
+    std::vector<ic_function*> active_functions;
 
-    for (ic_function& function : rt._functions)
+    for (ic_function& function : parser.functions)
     {
         if (function.type == IC_FUN_SOURCE)
         {
@@ -421,47 +396,34 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
             {
                 assert(function.param_count == 0);
                 assert(is_void(function.return_type));
-                rt._active_functions.push_back(&function);
+                active_functions.push_back(&function);
             }
-
             function.bytecode = nullptr; // important
         }
     }
 
-    assert(rt._active_functions.size());
-    rt._add_to_active = true;
-
-    for (int i = 0; i < rt._active_functions.size(); ++i) // size will increase as function currently compiled will pull more functions
+    assert(active_functions.size());
+    // important, active_functions.size() changes during loop execution
+    for (int i = 0; i < active_functions.size(); ++i)
     {
-        // be careful because active_functions will be invalidated as new functions come in
-        // non source functions are added to
-        if (rt._active_functions[i]->type == IC_FUN_SOURCE)
-            compile(*rt._active_functions[i], rt);
+        if (active_functions[i]->type == IC_FUN_SOURCE)
+            compile_function(*active_functions[i], &parser, &active_functions, true);
     }
 
-    // now compile rest of the functions - to check if program is correct but these will not be included in final program structure
-    // host functions are not checked for activness
-    rt._add_to_active = false;
-
-    for (ic_function& function : rt._functions)
+    // compile inactive function for code corectness, these will not be included in returned program
+    for (ic_function& function : parser.functions)
     {
         if (function.type == IC_FUN_HOST || function.bytecode)
             continue;
         printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
-        compile(function, rt);
+        compile_function(function, &parser, nullptr, true);
     }
 
-    // set program structure
-    program->strings_byte_size = rt._string_literals.size();
-    program->strings = (char*)malloc(program->strings_byte_size);
-    memcpy(program->strings, rt._string_literals.data(), program->strings_byte_size);
-    program->global_data_size = rt._global_size;
     std::vector<ic_vm_function> vm_functions;
 
-    for (ic_function* fun_ptr : rt._active_functions)
+    for (ic_function* _ptr : active_functions)
     {
-        ic_function& function = *fun_ptr;
-
+        ic_function& function = *_ptr;
         ic_vm_function vmfun;
         vmfun.param_size = 0;
 
@@ -469,8 +431,8 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
         {
             if (is_struct(function.params[j].type))
             {
-                ic_struct* _struct = rt.get_struct(function.params[j].type.struct_name);
-                assert(_struct); // todo; nice error
+                ic_struct* _struct = parser.get_struct(function.params[j].type.struct_name);
+                assert(_struct);
                 vmfun.param_size += _struct->num_data;
             }
             else
@@ -479,9 +441,9 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
 
         if (is_struct(function.return_type))
         {
-            ic_struct* _struct = rt.get_struct(function.return_type.struct_name);
+            ic_struct* _struct = parser.get_struct(function.return_type.struct_name);
             assert(_struct);
-            vmfun.return_size = _struct->num_data; // todo, have a function that returns a data size of a type
+            vmfun.return_size = _struct->num_data; // todo, use function to determine type size
         }
         else if(!is_void(function.return_type))
             vmfun.return_size = 1;
@@ -505,67 +467,10 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
 
         vm_functions.push_back(vmfun);
     }
-
     program->functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
     memcpy(program->functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
     program->functions_size = vm_functions.size();
-
     return true;
-}
-
-// todo, this is very temporary
-// this must be more readable... this idx stuff is lolz
-ic_function* ic_runtime::get_function(ic_string name, int* idx)
-{
-    ic_function* target_fun = nullptr;
-    for (ic_function& function : _functions)
-    {
-        if (ic_string_compare(function.token.string, name))
-            target_fun = &function;
-    }
-
-    if (!idx)
-        return target_fun;
-
-    // part used during compilation
-
-    assert(target_fun);
-
-    if (!_add_to_active)
-        return target_fun;
-
-    for (int i = 0; i < _active_functions.size(); ++i)
-    {
-        if (target_fun == _active_functions[i])
-        {
-            *idx = i;
-            return target_fun;
-        }
-    }
-
-    // check for hash collisions
-    if (target_fun->type == IC_FUN_HOST)
-    {
-        for (int i = 0; i < _active_functions.size(); ++i)
-        {
-            if (_active_functions[i]->type == IC_FUN_HOST)
-                assert(target_fun->hash != _active_functions[i]->hash);
-        }
-    }
-
-    _active_functions.push_back(target_fun);
-    *idx = _active_functions.size() - 1;
-    return target_fun;
-}
-
-ic_struct* ic_runtime::get_struct(ic_string name)
-{
-    for (ic_struct& _struct : _structs)
-    {
-        if (ic_string_compare(_struct.token.string, name))
-            return &_struct;
-    }
-    return nullptr;
 }
 
 struct ic_lexer
@@ -720,7 +625,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
                 lexer.add_token(IC_TOK_VBAR_VBAR);
             else // single | is not allowed in the source code
             {
-                ic_print_error(IC_ERR_LEXING, lexer._line, lexer._col, "unexpected character '%c'", c);
+                ic_print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
                 return false;
             }
 
@@ -747,7 +652,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
             if (lexer.end() && *lexer.pos() != '"')
             {
-                ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col, "unterminated string literal");
+                ic_print_error(lexer._token_line, lexer._token_col, "unterminated string literal");
                 return false;
             }
 
@@ -768,7 +673,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
             if (lexer.end() && *lexer.pos() != '\'')
             {
-                ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col, "unterminated character literal");
+                ic_print_error(lexer._token_line, lexer._token_col, "unterminated character literal");
                 return false;
             }
 
@@ -793,7 +698,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
             if (code == -1)
             {
-                ic_print_error(IC_ERR_LEXING, lexer._token_line, lexer._token_col,
+                ic_print_error(lexer._token_line, lexer._token_col,
                     "invalid character literal; only printable, \\n and \\0 characters are supported");
                 return false;
             }
@@ -852,19 +757,17 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
             }
             else
             {
-                ic_print_error(IC_ERR_LEXING, lexer._line, lexer._col, "unexpected character '%c'", c);
+                ic_print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
                 return false;
             }
         }
         } // switch
     }
-
     ic_token token;
     token.type = IC_TOK_EOF;
     token.line = lexer._line;
     token.col = lexer._col;
     lexer._tokens.push_back(token);
-
     return true;
 }
 
@@ -881,16 +784,16 @@ enum ic_op_precedence
 
 // grammar, production rules hierarchy
 
-ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_declaration);
-ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime);
-ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime);
-ic_expr* produce_expr_stmt(const ic_token** it, ic_runtime& runtime);
-ic_expr* produce_expr(const ic_token** it, ic_runtime& runtime);
-ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime);
-ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime);
-ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime);
-ic_expr* produce_expr_subscript(const ic_token** it, ic_runtime& runtime);
-ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime);
+ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration);
+ic_stmt* produce_stmt(const ic_token** it, ic_parser& parser);
+ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_parser& parser);
+ic_expr* produce_expr_stmt(const ic_token** it, ic_parser& parser);
+ic_expr* produce_expr(const ic_token** it, ic_parser& parser);
+ic_expr* produce_expr_assignment(const ic_token** it, ic_parser& parser);
+ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_parser& parser);
+ic_expr* produce_expr_unary(const ic_token** it, ic_parser& parser);
+ic_expr* produce_expr_subscript(const ic_token** it, ic_parser& parser);
+ic_expr* produce_expr_primary(const ic_token** it, ic_parser& parser);
 
 void token_advance(const ic_token** it) { ++(*it); }
 
@@ -904,7 +807,7 @@ bool token_consume(const ic_token** it, ic_token_type type, const char* err_msg 
 
     if (err_msg)
     {
-        ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, err_msg);
+        ic_print_error((**it).line, (**it).col, err_msg);
         throw ic_exception_parsing{};
     }
 
@@ -915,12 +818,12 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
 {
     va_list list;
     va_start(list, err_msg);
-    ic_print_error(IC_ERR_PARSING, (**it).line, (**it).col, err_msg, list);
+    ic_print_error((**it).line, (**it).col, err_msg, list);
     va_end(list);
     throw ic_exception_parsing{};
 }
 
-bool produce_type(const ic_token** it, ic_type& type, ic_runtime& runtime)
+bool produce_type(const ic_token** it, ic_type& type, ic_parser& parser)
 {
     bool init = false;
     type.indirection_level = 0;
@@ -956,7 +859,7 @@ bool produce_type(const ic_token** it, ic_type& type, ic_runtime& runtime)
         type.basic_type = IC_TYPE_VOID;
         break;
     case IC_TOK_IDENTIFIER:
-        if (runtime.get_struct((**it).string))
+        if ( parser.get_struct((**it).string))
         {
             type.basic_type = IC_TYPE_STRUCT;
             type.struct_name = (**it).string;
@@ -986,9 +889,9 @@ bool produce_type(const ic_token** it, ic_type& type, ic_runtime& runtime)
     return true;
 }
 
-#define IC_MAX_MEMBERS 20
+#define IC_MAX_MEMBERS 50
 
-ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_declaration)
+ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration)
 {
     if (token_consume(it, IC_TOK_STRUCT))
     {
@@ -1003,7 +906,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_dec
         _struct.num_data = 0;
         ic_type type;
 
-        while (produce_type(it, type, runtime))
+        while (produce_type(it, type, parser))
         {
             assert(_struct.num_members < IC_MAX_MEMBERS);
 
@@ -1016,7 +919,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_dec
 
             if (is_struct(type))
             {
-                ic_struct* sub_struct = runtime.get_struct(type.struct_name);
+                ic_struct* sub_struct = parser.get_struct(type.struct_name);
                 assert(sub_struct); //  todo, print nice error here
                 _struct.num_data += sub_struct->num_data;
             }
@@ -1042,7 +945,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_dec
     // else produce a function or a global variable declaration
     ic_type type;
 
-    if (!produce_type(it, type, runtime))
+    if (!produce_type(it, type, parser))
         exit_parsing(it, "expected: a type of a global variable / return type of a function / 'struct' keyword");
 
     ic_token token_id = **it;
@@ -1067,7 +970,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_dec
 
                 ic_type param_type;
 
-                if (!produce_type(it, param_type, runtime))
+                if (!produce_type(it, param_type, parser))
                     exit_parsing(it, "expected parameter type");
 
                 if (is_void(param_type))
@@ -1099,7 +1002,7 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_dec
         }
 
         function.type = IC_FUN_SOURCE;
-        function.body = produce_stmt(it, runtime);
+        function.body = produce_stmt(it, parser);
 
         if (function.body->type != IC_STMT_COMPOUND)
             exit_parsing(it, "expected compound stmt after function parameter list");
@@ -1125,20 +1028,20 @@ ic_global produce_global(const ic_token** it, ic_runtime& runtime, bool host_dec
     return global;
 }
 
-ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
+ic_stmt* produce_stmt(const ic_token** it, ic_parser& parser)
 {
     switch ((**it).type)
     {
     case IC_TOK_LEFT_BRACE:
     {
         token_advance(it);
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_COMPOUND);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_COMPOUND);
         stmt->_compound.push_scope = true;
         ic_stmt** body_tail  = &(stmt->_compound.body);
 
         while ((**it).type != IC_TOK_RIGHT_BRACE && (**it).type != IC_TOK_EOF)
         {
-            *body_tail = produce_stmt(it, runtime);
+            *body_tail = produce_stmt(it, parser);
             body_tail = &((*body_tail)->next);
         }
 
@@ -1148,11 +1051,11 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_WHILE:
     {
         token_advance(it);
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_FOR);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_FOR);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after while keyword");
-        stmt->_for.header2 = produce_expr(it, runtime);
+        stmt->_for.header2 = produce_expr(it, parser);
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition");
-        stmt->_for.body = produce_stmt(it, runtime);
+        stmt->_for.body = produce_stmt(it, parser);
 
         // be consistent with IC_TOK_FOR
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
@@ -1163,16 +1066,16 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_FOR:
     {
         token_advance(it);
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_FOR);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_FOR);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword");
-        stmt->_for.header1 = produce_stmt_var_declaration(it, runtime); // only in header1 var declaration is allowed
-        stmt->_for.header2 = produce_expr_stmt(it, runtime);
+        stmt->_for.header1 = produce_stmt_var_declaration(it, parser); // only in header1 var declaration is allowed
+        stmt->_for.header2 = produce_expr_stmt(it, parser);
 
         if ((**it).type != IC_TOK_RIGHT_PAREN)
-            stmt->_for.header3 = produce_expr(it, runtime); // this one should not end with ';', that's why we don't use produce_stmt_expr()
+            stmt->_for.header3 = produce_expr(it, parser); // this one should not end with ';', that's why we don't use produce_stmt_expr()
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header");
-        stmt->_for.body = produce_stmt(it, runtime);
+        stmt->_for.body = produce_stmt(it, parser);
 
         // prevent shadowing of header variable
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
@@ -1183,64 +1086,64 @@ ic_stmt* produce_stmt(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_IF:
     {
         token_advance(it);
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_IF);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_IF);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword");
-        stmt->_if.header = produce_expr(it, runtime);
+        stmt->_if.header = produce_expr(it, parser);
 
         if (stmt->_if.header->token.type == IC_TOK_EQUAL)
             exit_parsing(it, "assignment expression can't be used directly in if header, encolse it with ()");
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition");
-        stmt->_if.body_if = produce_stmt(it, runtime);
+        stmt->_if.body_if = produce_stmt(it, parser);
 
         if (token_consume(it, IC_TOK_ELSE))
-            stmt->_if.body_else = produce_stmt(it, runtime);
+            stmt->_if.body_else = produce_stmt(it, parser);
 
         return stmt;
     }
     case IC_TOK_RETURN:
     {
         token_advance(it);
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_RETURN);
-        stmt->_return.expr = produce_expr_stmt(it, runtime);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_RETURN);
+        stmt->_return.expr = produce_expr_stmt(it, parser);
         return stmt;
     }
     case IC_TOK_BREAK:
     {
         token_advance(it);
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' after break keyword");
-        return runtime.allocate_stmt(IC_STMT_BREAK);
+        return parser.allocate_stmt(IC_STMT_BREAK);
     }
     case IC_TOK_CONTINUE:
     {
         token_advance(it);
         token_consume(it, IC_TOK_SEMICOLON, "expected ';' after continue keyword");
-        return runtime.allocate_stmt(IC_STMT_CONTINUE);
+        return parser.allocate_stmt(IC_STMT_CONTINUE);
     }
     } // switch
 
-    return produce_stmt_var_declaration(it, runtime);
+    return produce_stmt_var_declaration(it, parser);
 }
 
 // this function is seperate from produce_expr_assignment so we don't allow(): var x = var y = 5;
 // and: while(var x = 6);
-ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
+ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_parser& parser)
 {
     ic_type type;
 
-    if (produce_type(it, type, runtime))
+    if (produce_type(it, type, parser))
     {
         if (is_void(type))
             exit_parsing(it, "variables can't be of type void");
 
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_VAR_DECLARATION);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_VAR_DECLARATION);
         stmt->_var_declaration.type = type;
         stmt->_var_declaration.token = **it;
         token_consume(it, IC_TOK_IDENTIFIER, "expected variable name");
 
         if (token_consume(it, IC_TOK_EQUAL))
         {
-            stmt->_var_declaration.expr = produce_expr_stmt(it, runtime);
+            stmt->_var_declaration.expr = produce_expr_stmt(it, parser);
             return stmt;
         }
 
@@ -1249,33 +1152,33 @@ ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_runtime& runtime)
     }
     else
     {
-        ic_stmt* stmt = runtime.allocate_stmt(IC_STMT_EXPR);
-        stmt->_expr = produce_expr_stmt(it, runtime);
+        ic_stmt* stmt = parser.allocate_stmt(IC_STMT_EXPR);
+        stmt->_expr = produce_expr_stmt(it, parser);
         return stmt;
     }
 }
 
-ic_expr* produce_expr_stmt(const ic_token** it, ic_runtime& runtime)
+ic_expr* produce_expr_stmt(const ic_token** it, ic_parser& parser)
 {
     if (token_consume(it, IC_TOK_SEMICOLON))
         return nullptr;
 
-    ic_expr* expr = produce_expr(it, runtime);
+    ic_expr* expr = produce_expr(it, parser);
     token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression");
     return expr;
 }
 
-ic_expr* produce_expr(const ic_token** it, ic_runtime& runtime)
+ic_expr* produce_expr(const ic_token** it, ic_parser& parser)
 {
-    return produce_expr_assignment(it, runtime);
+    return produce_expr_assignment(it, parser);
 }
 
 // produce_expr_assignment() - grows down and right
 // produce_expr_binary() - grows up and right (given operators with the same precedence)
 
-ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
+ic_expr* produce_expr_assignment(const ic_token** it, ic_parser& parser)
 {
-    ic_expr* expr_lhs = produce_expr_binary(it, IC_PRECEDENCE_LOGICAL_OR, runtime);
+    ic_expr* expr_lhs = produce_expr_binary(it, IC_PRECEDENCE_LOGICAL_OR, parser);
 
     switch ((**it).type)
     {
@@ -1284,9 +1187,9 @@ ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_MINUS_EQUAL:
     case IC_TOK_STAR_EQUAL:
     case IC_TOK_SLASH_EQUAL:
-        ic_expr* expr = runtime.allocate_expr(IC_EXPR_BINARY, **it);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_BINARY, **it);
         token_advance(it);
-        expr->_binary.rhs = produce_expr(it, runtime);
+        expr->_binary.rhs = produce_expr(it, parser);
         expr->_binary.lhs = expr_lhs;
         return expr;
     }
@@ -1294,7 +1197,7 @@ ic_expr* produce_expr_assignment(const ic_token** it, ic_runtime& runtime)
     return expr_lhs;
 }
 
-ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_runtime& runtime)
+ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, ic_parser& parser)
 {
     ic_token_type target_token_types[5] = {}; // this is important, initialize all elements to IC_TOK_EOF
 
@@ -1338,10 +1241,10 @@ ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, i
         break;
     }
     case IC_PRECEDENCE_UNARY:
-        return produce_expr_unary(it, runtime);
+        return produce_expr_unary(it, parser);
     }
 
-    ic_expr* expr = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), runtime);
+    ic_expr* expr = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), parser);
 
     for (;;)
     {
@@ -1362,9 +1265,9 @@ ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, i
             break;
 
         // operator matches given precedence
-        ic_expr* expr_parent = runtime.allocate_expr(IC_EXPR_BINARY, **it);
+        ic_expr* expr_parent = parser.allocate_expr(IC_EXPR_BINARY, **it);
         token_advance(it);
-        expr_parent->_binary.rhs = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), runtime);
+        expr_parent->_binary.rhs = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), parser);
         expr_parent->_binary.lhs = expr;
         expr = expr_parent;
     }
@@ -1372,7 +1275,7 @@ ic_expr* produce_expr_binary(const ic_token** it, ic_op_precedence precedence, i
     return expr;
 }
 
-ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
+ic_expr* produce_expr_unary(const ic_token** it, ic_parser& parser)
 {
     switch ((**it).type)
     {
@@ -1383,9 +1286,9 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_AMPERSAND:
     case IC_TOK_STAR:
     {
-        ic_expr* expr = runtime.allocate_expr(IC_EXPR_UNARY, **it);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_UNARY, **it);
         token_advance(it);
-        expr->_unary.expr = produce_expr_unary(it, runtime);
+        expr->_unary.expr = produce_expr_unary(it, parser);
         return expr;
     }
     case IC_TOK_LEFT_PAREN:
@@ -1393,12 +1296,12 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
         token_advance(it);
         ic_type type;
 
-        if (produce_type(it, type, runtime))
+        if (produce_type(it, type, parser))
         {
             token_consume(it, IC_TOK_RIGHT_PAREN, "expected ) at the end of a cast operator");
-            ic_expr* expr = runtime.allocate_expr(IC_EXPR_CAST_OPERATOR, **it);
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_CAST_OPERATOR, **it);
             expr->_cast_operator.type = type;
-            expr->_cast_operator.expr = produce_expr_unary(it, runtime);
+            expr->_cast_operator.expr = produce_expr_unary(it, parser);
             return expr;
         }
 
@@ -1407,11 +1310,11 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
     }
     case IC_TOK_SIZEOF:
     {
-        ic_expr* expr = runtime.allocate_expr(IC_EXPR_SIZEOF, **it);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_SIZEOF, **it);
         token_advance(it);
         token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after sizeof operator");
         
-        if (!produce_type(it, expr->_sizeof.type, runtime))
+        if (!produce_type(it, expr->_sizeof.type, parser))
             exit_parsing(it, "expected type");
 
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after type");
@@ -1419,27 +1322,27 @@ ic_expr* produce_expr_unary(const ic_token** it, ic_runtime& runtime)
     }
     } // switch
 
-    return produce_expr_subscript(it, runtime);
+    return produce_expr_subscript(it, parser);
 }
 
-ic_expr* produce_expr_subscript(const ic_token** it, ic_runtime& runtime)
+ic_expr* produce_expr_subscript(const ic_token** it, ic_parser& parser)
 {
-    ic_expr* lhs = produce_expr_primary(it, runtime);
+    ic_expr* lhs = produce_expr_primary(it, parser);
 
     for (;;)
     {
         if ((**it).type == IC_TOK_LEFT_BRACKET)
         {
-            ic_expr* expr = runtime.allocate_expr(IC_EXPR_SUBSCRIPT, **it);
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_SUBSCRIPT, **it);
             token_advance(it);
             expr->_subscript.lhs = lhs;
-            expr->_subscript.rhs = produce_expr(it, runtime);
+            expr->_subscript.rhs = produce_expr(it, parser);
             token_consume(it, IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator");
             lhs = expr;
         }
         else if ((**it).type == IC_TOK_DOT || (**it).type == IC_TOK_ARROW)
         {
-            ic_expr* expr = runtime.allocate_expr(IC_EXPR_MEMBER_ACCESS, **it);
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_MEMBER_ACCESS, **it);
             token_advance(it);
             expr->_member_access.lhs = lhs;
             expr->_member_access.rhs_token = **it;
@@ -1453,7 +1356,7 @@ ic_expr* produce_expr_subscript(const ic_token** it, ic_runtime& runtime)
     return lhs;
 }
 
-ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
+ic_expr* produce_expr_primary(const ic_token** it, ic_parser& parser)
 {
     switch ((**it).type)
     {
@@ -1465,7 +1368,7 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
     case IC_TOK_FALSE:
     case IC_TOK_NULLPTR:
     {
-        ic_expr* expr = runtime.allocate_expr(IC_EXPR_PRIMARY, **it);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_PRIMARY, **it);
         token_advance(it);
         return expr;
     }
@@ -1477,7 +1380,7 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
 
         if (token_consume(it, IC_TOK_LEFT_PAREN))
         {
-            ic_expr* expr = runtime.allocate_expr(IC_EXPR_FUNCTION_CALL, token_id);
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_FUNCTION_CALL, token_id);
 
             if (token_consume(it, IC_TOK_RIGHT_PAREN))
                 return expr;
@@ -1487,7 +1390,7 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
 
             for(;;)
             {
-                *arg_tail = produce_expr(it, runtime);
+                *arg_tail = produce_expr(it, parser);
                 arg_tail = &((*arg_tail)->next);
                 ++argc;
 
@@ -1503,13 +1406,13 @@ ic_expr* produce_expr_primary(const ic_token** it, ic_runtime& runtime)
             return expr;
         }
 
-        return runtime.allocate_expr(IC_EXPR_PRIMARY, token_id);
+        return parser.allocate_expr(IC_EXPR_PRIMARY, token_id);
     }
     case IC_TOK_LEFT_PAREN:
     {
-        ic_expr* expr = runtime.allocate_expr(IC_EXPR_PARENTHESES, **it);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_PARENTHESES, **it);
         token_advance(it);
-        expr->_parentheses.expr = produce_expr(it, runtime);
+        expr->_parentheses.expr = produce_expr(it, parser);
         token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after expression");
         return expr;
     }

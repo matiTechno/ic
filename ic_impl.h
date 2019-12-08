@@ -7,7 +7,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
-
 #include "ic.h"
 
 // ic - interpreted C
@@ -29,14 +28,17 @@
 // I would like to support simple generics and struct functions (no operator overloading and stuff like this)
 // self-hosting
 // naming convention - size (number of elements), byte_size (number of bytes)
-// option to read bytecode instead of source file - this application - to test the loading of bytecode
-// uchar typedef so I don't have to write usigned char
 
 template<typename T, int N>
 struct ic_deque
 {
     std::vector<T*> pools;
-    int size = 0; // todo; after replacing vector initialize externally
+    int size;
+
+    void init()
+    {
+        size = 0;
+    }
 
     void free()
     {
@@ -162,12 +164,6 @@ enum ic_expr_type
     IC_EXPR_PARENTHESES,
     IC_EXPR_FUNCTION_CALL,
     IC_EXPR_PRIMARY,
-};
-
-enum ic_error_type
-{
-    IC_ERR_LEXING,
-    IC_ERR_PARSING,
 };
 
 enum ic_function_type
@@ -416,9 +412,95 @@ struct ic_global
     };
 };
 
+struct ic_var
+{
+    ic_type type;
+    ic_string name;
+    int idx;
+};
+
 struct ic_exception_parsing {}; // todo, we can probably do without exceptions, just point a token iterator at the last
 // element and set a flag in runtime to not print further parsing errors when exiting the call stack
 
+bool ic_string_compare(ic_string str1, ic_string str2);
+bool is_struct(ic_type type);
+bool is_void(ic_type type);
+ic_type non_pointer_type(ic_basic_type type);
+ic_type const_pointer1_type(ic_basic_type type);
+ic_type pointer1_type(ic_basic_type type);
+void get_core_lib(ic_host_function** lib_ptr, int* size);
+unsigned int hash_string(const char* str);
+int read_int(unsigned char** buf_it);
+float read_float(unsigned char** buf_it);
+double read_double(unsigned char** buf_it);
+
+struct ic_parser
+{
+    ic_deque<ic_expr, 1000> expressions;
+    ic_deque<ic_stmt, 1000> statements;
+    std::vector<ic_struct> structs;
+    std::vector<ic_function> functions;
+    std::vector<ic_var> global_vars;
+
+    void init()
+    {
+        expressions.init();
+        statements.init();
+    }
+
+    void free()
+    {
+        expressions.free();
+        statements.free();
+    }
+
+    ic_stmt* allocate_stmt(ic_stmt_type type)
+    {
+        ic_stmt* stmt = statements.allocate();
+        memset(stmt, 0, sizeof(ic_stmt));
+        stmt->type = type;
+        return stmt;
+    }
+
+    ic_expr* allocate_expr(ic_expr_type type, ic_token token)
+    {
+        ic_expr* expr = expressions.allocate();
+        memset(expr, 0, sizeof(ic_expr));
+        expr->type = type;
+        expr->token = token;
+        return expr;
+    }
+
+    ic_struct* get_struct(ic_string name)
+    {
+        for (ic_struct& _struct : structs)
+        {
+            if (ic_string_compare(_struct.token.string, name))
+                return &_struct;
+        }
+        return nullptr;
+    }
+
+    ic_function* get_function(ic_string name)
+    {
+        for (ic_function& function : functions)
+        {
+            if (ic_string_compare(function.token.string, name))
+                return &function;
+        }
+        return nullptr;
+    }
+
+    ic_var* get_global_var(ic_string name)
+    {
+        for (ic_var& var : global_vars)
+        {
+            if (ic_string_compare(var.name, name))
+                return &var;
+        }
+        return nullptr;
+    }
+};
 
 // important: compare and logical_not push s32 not bool
 enum ic_opcode
@@ -540,13 +622,6 @@ enum ic_opcode
     IC_OPC_F64_F32,
 };
 
-struct ic_var
-{
-    ic_type type;
-    ic_string name;
-    int idx;
-};
-
 struct ic_scope
 {
     int prev_stack_size;
@@ -559,57 +634,20 @@ struct ic_expr_result
     bool lvalue;
 };
 
-// todo
-// this structure will be totally redesigned
-struct ic_runtime
-{
-    // vm, should have similar function - in case bytecode was stored on a file or something and functions must be resolved before
-    // execution
-
-    // implementation
-    // lex
-    std::vector<ic_token> _tokens;
-    std::vector<char> _string_literals;
-    // compile
-    int _global_size;
-    ic_deque<ic_stmt, 1000> _stmt_deque; // memory must be not invalidated when adding new statements
-    ic_deque<ic_expr, 1000> _expr_deque; // same
-    std::vector<ic_function> _functions;
-    std::vector<ic_struct> _structs;
-    std::vector<ic_var> _global_vars;
-    std::vector<ic_function*> _active_functions;
-    bool _add_to_active;
-
-    ic_function* get_function(ic_string name, int* idx);
-    ic_struct* get_struct(ic_string name);
-    ic_stmt* allocate_stmt(ic_stmt_type type);
-    ic_expr* allocate_expr(ic_expr_type type, ic_token token);
-};
-
-bool ic_string_compare(ic_string str1, ic_string str2);
-bool is_struct(ic_type type);
-bool is_void(ic_type type);
-ic_type non_pointer_type(ic_basic_type type);
-ic_type pointer1_type(ic_basic_type type, bool at_const = false);
-void compile(ic_function& function, ic_runtime& runtime);
-
-// host_functions need to be passed if program was initialized by load_program() and not compile()
-void get_core_lib(ic_host_function** ptr, int* size);
-unsigned int hash_string(const char* str);
-
 struct ic_compiler
 {
+    ic_function* function;
+    ic_parser* parser;
+    std::vector<ic_function*>* active_functions;
+    bool generate_bytecode;
     std::vector<unsigned char> bytecode;
     std::vector<ic_scope> scopes;
     std::vector<ic_var> vars;
-    ic_runtime* runtime;
-    ic_function* function;
+    std::vector<int> resolve_break;
+    std::vector<int> resolve_continue;
     int stack_size;
     int max_stack_size;
     int loop_count;
-    bool generate_bytecode;
-    std::vector<int> resolve_break;
-    std::vector<int> resolve_continue;
 
     void push_scope()
     {
@@ -672,22 +710,9 @@ struct ic_compiler
         memcpy(&bytecode.back() - 7, &data, 8);
     }
 
-    // todo, this is very temporary
-    void add_ptr(void* ptr)
-    {
-        if (!generate_bytecode)
-            return;
-        bytecode.resize(bytecode.size() + 8);
-        memcpy(&bytecode.back() - 7, &ptr, 8);
-    }
-
     void declare_unused_param(ic_type type)
     {
-        if (is_struct(type))
-            stack_size += get_struct(type.struct_name)->num_data;
-        else
-            stack_size += 1;
-
+        stack_size += is_struct(type) ? get_struct(type.struct_name)->num_data : 1;
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
     }
 
@@ -695,27 +720,14 @@ struct ic_compiler
     {
         assert(scopes.size());
 
-        bool present = false;
-
         for (int i = vars.size() - 1; i >= scopes.back().prev_var_count; --i)
         {
             if (ic_string_compare(vars[i].name, name))
-            {
-                present = true;
-                break;
-            }
+                assert(false);
         }
 
-        if (present)
-            assert(false);
-
         int byte_idx = stack_size * sizeof(ic_data);
-
-        if (is_struct(type))
-            stack_size += get_struct(type.struct_name)->num_data;
-        else
-            stack_size += 1;
-
+        stack_size += is_struct(type) ? get_struct(type.struct_name)->num_data : 1;
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
         ic_var var;
         var.idx = byte_idx;
@@ -723,6 +735,41 @@ struct ic_compiler
         var.type = type;
         vars.push_back(var);
         return var;
+    }
+
+    ic_struct* get_struct(ic_string name)
+    {
+        ic_struct* _struct = parser->get_struct(name);
+        assert(_struct);
+        return _struct;
+    }
+
+    ic_function* get_function(ic_string name, int* idx)
+    {
+        assert(idx);
+        ic_function* function = parser->get_function(name);
+        assert(function);
+
+        if (!generate_bytecode)
+            return function;
+        assert(active_functions);
+
+        for(int i = 0; i < active_functions->size(); ++i)
+        {
+            ic_function* active = (*active_functions)[i];
+
+            if (active == function)
+            {
+                *idx = i;
+                return function;
+            }
+            // hash collision check
+            if (function->type == IC_FUN_HOST && active->type == IC_FUN_HOST)
+                assert(function->hash != active->hash);
+        }
+        *idx = active_functions->size();
+        active_functions->push_back(function);
+        return function;
     }
 
     ic_var get_var(ic_string name, bool* is_global)
@@ -735,33 +782,16 @@ struct ic_compiler
                 return vars[i];
             }
         }
-        for (ic_var& var : runtime->_global_vars)
-        {
-            if (ic_string_compare(var.name, name))
-            {
-                *is_global = true;
-                return var;
-            }
-        }
 
-        assert(false);
-        return {};
-    }
-
-    // todo, this should add target function to active functions during compilation, to cut off unused functions
-    ic_function* get_fun(ic_string name, int* idx)
-    {
-        return runtime->get_function(name, idx);
-    }
-
-    ic_struct* get_struct(ic_string name)
-    {
-        ic_struct* _struct = runtime->get_struct(name);
-        assert(_struct);
-        return _struct;
+        ic_var* global_var = parser->get_global_var(name);
+        assert(global_var);
+        *is_global = true;
+        return *global_var;
     }
 };
 
+// todo, return false on error
+void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions, bool generate_bytecode);
 // returnes true if all branches have a return statements
 bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);

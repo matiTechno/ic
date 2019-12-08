@@ -1,9 +1,5 @@
 #include "ic_impl.h"
 
-int read_int(unsigned char** buf_it);
-float read_float(unsigned char** buf_it);
-double read_double(unsigned char** buf_it);
-
 void print_bc(unsigned char* bytecode, int size);
 
 // todo, bounds checking

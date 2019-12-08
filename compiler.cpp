@@ -1,15 +1,16 @@
 #include "ic_impl.h"
 
-void compile(ic_function& function, ic_runtime& runtime)
+void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions, bool generate_bytecode)
 {
     assert(function.type == IC_FUN_SOURCE);
     ic_compiler compiler;
-    compiler.runtime = &runtime;
     compiler.function = &function;
+    compiler.parser = parser;
+    compiler.active_functions = active_functions;
+    compiler.generate_bytecode = generate_bytecode;
     compiler.stack_size = 0;
     compiler.max_stack_size = 0;
     compiler.loop_count = 0;
-    compiler.generate_bytecode = true;
     compiler.push_scope();
 
     for (int i = 0; i < function.param_count; ++i)
@@ -355,7 +356,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     {
         int argc = 0;
         int idx;
-        ic_function* function = compiler.get_fun(expr->token.string, &idx);
+        ic_function* function = compiler.get_function(expr->token.string, &idx);
         ic_expr* expr_arg = expr->_function_call.arg;
 
         while (expr_arg)
@@ -414,7 +415,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         case IC_TOK_STRING_LITERAL:
             compiler.add_opcode(IC_OPC_ADDRESS_GLOBAL);
             compiler.add_s32(token.number);
-            return { pointer1_type(IC_TYPE_S8, true), false };
+            return { const_pointer1_type(IC_TYPE_S8), false };
 
         default:
             assert(false);
