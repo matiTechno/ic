@@ -1,5 +1,8 @@
 #include "ic_impl.h"
 
+#define IC_CALL_STACK_SIZE (1024 * 1024)
+#define IC_OPERAND_STACK_SIZE 1024
+
 bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int size)
 {
     for (int i = 0; i < size; ++i)
@@ -69,6 +72,46 @@ void ic_vm::pop_stack_frame()
     operand_stack_size = prev_operand_stack_size + return_size;
     call_stack_size -= stack_frames.back().size;
     stack_frames.pop_back();
+}
+
+void ic_vm::push_op(ic_data data)
+{
+    assert(operand_stack_size < IC_OPERAND_STACK_SIZE);
+    operand_stack[operand_stack_size] = data;
+    operand_stack_size += 1;
+}
+
+void ic_vm::push_op()
+{
+    assert(operand_stack_size < IC_OPERAND_STACK_SIZE);
+    operand_stack_size += 1;
+}
+
+void ic_vm::push_op_many(int size)
+{
+    operand_stack_size += size;
+    assert(operand_stack_size <= IC_OPERAND_STACK_SIZE);
+}
+
+ic_data ic_vm::pop_op()
+{
+    operand_stack_size -= 1;
+    return operand_stack[operand_stack_size];
+}
+
+void ic_vm::pop_op_many(int size)
+{
+    operand_stack_size -= size;
+}
+
+ic_data& ic_vm::top_op()
+{
+    return operand_stack[operand_stack_size - 1];
+}
+
+ic_data* ic_vm::end_op()
+{
+    return operand_stack + operand_stack_size;
 }
 
 void vm_run(ic_vm& vm, ic_program& program)

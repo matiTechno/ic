@@ -19,12 +19,14 @@ union ic_data
     void* pointer;
 };
 
-// todo, remove
-#define IC_CALL_STACK_SIZE (1024 * 1024)
-#define IC_OPERAND_STACK_SIZE 1024
-
 // add pointer to void*, so host can change its internal state without using global variables
 using ic_host_function_ptr = ic_data(*)(ic_data* argv);
+
+struct ic_host_function
+{
+    const char* declaration;
+    ic_host_function_ptr callback;
+};
 
 // todo, some better naming would be nice (ic_function, and current ic_function rename to ic_function_desc)
 struct ic_vm_function
@@ -72,62 +74,21 @@ struct ic_stack_frame
 
 struct ic_vm
 {
-    // important, ic_data buffers must not be invalidated during execution
     std::vector<ic_stack_frame> stack_frames;
-    ic_data* call_stack;
+    ic_data* call_stack; // must not be invalidated during execution
     ic_data* operand_stack;
     int call_stack_size;
     int operand_stack_size;
 
     void push_stack_frame(unsigned char* bytecode, int stack_size, int return_size);
     void pop_stack_frame();
-
-    void push_op(ic_data data)
-    {
-        assert(operand_stack_size < IC_OPERAND_STACK_SIZE);
-        operand_stack[operand_stack_size] = data;
-        operand_stack_size += 1;
-    }
-
-    void push_op()
-    {
-        assert(operand_stack_size < IC_OPERAND_STACK_SIZE);
-        operand_stack_size += 1;
-    }
-
-    void push_op_many(int size)
-    {
-        operand_stack_size += size;
-        assert(operand_stack_size <= IC_OPERAND_STACK_SIZE);
-    }
-
-    ic_data pop_op()
-    {
-        operand_stack_size -= 1;
-        return operand_stack[operand_stack_size];
-    }
-
-    void pop_op_many(int size)
-    {
-        operand_stack_size -= size;
-    }
-
-    ic_data& top_op()
-    {
-        return operand_stack[operand_stack_size - 1];
-    }
-
-    ic_data* end_op()
-    {
-        return operand_stack + operand_stack_size;
-    }
-};
-
-// todo, rename to ic_host_declaration
-struct ic_host_function
-{
-    const char* declaration;
-    ic_host_function_ptr callback;
+    void push_op(ic_data data);
+    void push_op();
+    void push_op_many(int size);
+    ic_data pop_op();
+    void pop_op_many(int size);
+    ic_data& top_op();
+    ic_data* end_op();
 };
 
 ic_program load_program(unsigned char* buf);
