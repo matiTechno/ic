@@ -1,4 +1,4 @@
-#include "ic.h"
+#include "ic_impl.h"
 
 ic_expr_result compile_compound_assignment_mul_div(ic_expr* expr, ic_opcode opc_s32, ic_opcode opc_f32, ic_opcode opc_f64, ic_compiler& compiler)
 {

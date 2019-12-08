@@ -1,4 +1,4 @@
-#include "ic.h"
+#include "ic_impl.h"
 
 ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue)
 {

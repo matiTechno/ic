@@ -1,4 +1,4 @@
-#include "ic.h"
+#include "ic_impl.h"
 
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler)
 {

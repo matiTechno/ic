@@ -130,11 +130,13 @@
     <ClCompile Include="compile_binary.cpp" />
     <ClCompile Include="compile_unary.cpp" />
     <ClCompile Include="disassemble.cpp" />
+    <ClCompile Include="ic_impl.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="vm.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ic.h" />
+    <ClInclude Include="ic_impl.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

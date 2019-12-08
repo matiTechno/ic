@@ -1,4 +1,4 @@
-#include "ic.h"
+#include "ic_impl.h"
 
 bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int size)
 {

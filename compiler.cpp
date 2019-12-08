@@ -1,4 +1,4 @@
-#include "ic.h"
+#include "ic_impl.h"
 
 void compile(ic_function& function, ic_runtime& runtime)
 {
