@@ -8,6 +8,14 @@ int read_int(unsigned char** buf_it)
     return v;
 }
 
+unsigned int read_uint(unsigned char** buf_it)
+{
+    unsigned int v;
+    memcpy(&v, *buf_it, sizeof(unsigned int));
+    *buf_it += sizeof(unsigned int);
+    return v;
+}
+
 float read_float(unsigned char** buf_it)
 {
     float v;
@@ -21,15 +29,6 @@ double read_double(unsigned char** buf_it)
     double v;
     memcpy(&v, *buf_it, sizeof(double));
     *buf_it += sizeof(double);
-    return v;
-}
-
-// well, I could have a template function for this, that would be good use of templates
-uint64_t read_uint64(unsigned char** buf_it)
-{
-    uint64_t v;
-    memcpy(&v, *buf_it, sizeof(uint64_t));
-    *buf_it += sizeof(uint64_t);
     return v;
 }
 
@@ -48,11 +47,11 @@ void write_int(std::vector<unsigned char>& buf, int v)
     memcpy(buf.data() + size, &v, sizeof(int));
 }
 
-void write_uint64(std::vector<unsigned char>& buf, uint64_t v)
+void write_uint(std::vector<unsigned char>& buf, unsigned int v)
 {
     int size = buf.size();
-    buf.resize(size + sizeof(uint64_t));
-    memcpy(buf.data() + size, &v, sizeof(uint64_t));
+    buf.resize(size + sizeof(unsigned int));
+    memcpy(buf.data() + size, &v, sizeof(unsigned int));
 }
 
 void write_bytes(std::vector<unsigned char>& buf, unsigned char* bytes, int size)
@@ -83,7 +82,7 @@ ic_program load_program(unsigned char* buf)
 
         if (function.host_impl)
         {
-            function.hash = read_uint64(&buf);
+            function.hash = read_uint(&buf);
             function.lib = read_int(&buf);
             function.callback = nullptr;
         }
@@ -115,7 +114,7 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
 
         if (function.host_impl)
         {
-            write_uint64(buf, function.hash);
+            write_uint(buf, function.hash);
             write_int(buf, function.lib);
         }
         else
@@ -390,13 +389,13 @@ void get_core_lib(ic_host_function** ptr, int* size)
     *ptr = ic_core_lib;
     *size = sizeof(ic_core_lib) / sizeof(ic_host_function);
 }
-uint64_t hash_string (const char* str)
+ unsigned int hash_string (const char* str)
 {
-    uint64_t hash = 5381;
+    unsigned int hash = 5381;
     int c;
 
     while (c = *str++)
-        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+        hash = ((hash << 5) + hash) + c;
 
     return hash;
 }

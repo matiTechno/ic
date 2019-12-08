@@ -56,6 +56,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         while (body_stmt)
         {
+            // disable code gen in compiler, that will do
             // dead code elimination, but still needs to be compiled to check corectness
             // print warning
             //if (returned)

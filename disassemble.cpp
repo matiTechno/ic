@@ -1,5 +1,4 @@
 #include "ic.h"
-#include "inttypes.h"
 
 int read_int(unsigned char** buf_it);
 float read_float(unsigned char** buf_it);
@@ -14,6 +13,7 @@ void disassmble(ic_program& program)
     printf("functions_size: %d\n", program.functions_size);
     printf("strings_byte_size: %d\n", program.strings_byte_size);
     printf("global_data_size: %d\n", program.global_data_size);
+    // todo, this will not print all the strings because of nulls, print strings one by one
     printf("strings: %.*s\n", program.strings_byte_size, program.strings);
     printf("\n");
 
@@ -27,7 +27,7 @@ void disassmble(ic_program& program)
 
         if (fun.host_impl)
         {
-            printf("hash: %" PRIu64 "\n", fun.hash);
+            printf("hash: %x\n", fun.hash);
             printf("lib: %d\n", fun.lib);
         }
         else

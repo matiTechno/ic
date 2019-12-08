@@ -4,7 +4,7 @@ bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int
 {
     for (int i = 0; i < size; ++i)
     {
-        uint64_t hash = hash_string(host_functions[i].declaration);
+        unsigned int hash = hash_string(host_functions[i].declaration);
         if (fun->hash == hash)
         {
             fun->callback = host_functions[i].callback;

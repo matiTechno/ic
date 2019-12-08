@@ -390,7 +390,7 @@ struct ic_function
         struct
         {
             ic_host_function_ptr callback;
-            uint64_t hash;
+            unsigned int hash;
             int lib;
         };
 
@@ -582,7 +582,7 @@ struct ic_vm_function
         struct
         {
             ic_host_function_ptr callback;
-            uint64_t hash;
+            unsigned int hash;
             int lib; // rename to origin?
         };
     };
@@ -724,7 +724,7 @@ void compile(ic_function& function, ic_runtime& runtime);
 
 // host_functions need to be passed if program was initialized by load_program() and not compile()
 void get_core_lib(ic_host_function** ptr, int* size);
-uint64_t hash_string(const char* str);
+unsigned int hash_string(const char* str);
 void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size); // if vm runs only one program can be done once before many runs
 void vm_run(ic_vm& vm, ic_program& program);
 
