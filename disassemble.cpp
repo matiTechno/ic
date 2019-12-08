@@ -13,8 +13,16 @@ void disassmble(ic_program& program)
     printf("functions_size: %d\n", program.functions_size);
     printf("strings_byte_size: %d\n", program.strings_byte_size);
     printf("global_data_size: %d\n", program.global_data_size);
-    // todo, this will not print all the strings because of nulls, print strings one by one
-    printf("strings: %.*s\n", program.strings_byte_size, program.strings);
+    printf("strings: ");
+    int str_idx = 0;
+
+    while (str_idx < program.strings_byte_size)
+    {
+        str_idx += printf("%s", program.strings + str_idx);
+        str_idx += 1; // skip null character
+        printf(" ");
+    }
+
     printf("\n");
 
     for (int i = 0; i < program.functions_size; ++i)
