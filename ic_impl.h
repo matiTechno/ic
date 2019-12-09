@@ -72,6 +72,7 @@ static_assert(sizeof(double) == 8, "sizeof(double) == 8");
 static_assert(sizeof(double) == sizeof(void*), "sizeof(double) == sizeof(void*)");
 
 #define IC_MAX_ARGC 10
+#define IC_USER_FUNCTION -1
 
 enum ic_token_type
 {

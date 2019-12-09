@@ -1,6 +1,7 @@
 #include "ic_impl.h"
 #define IC_CALL_STACK_SIZE (1024 * 1024)
 #define IC_OPERAND_STACK_SIZE 1024
+#define IC_STACK_FRAMES_SIZE 512
 
 bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int size)
 {
@@ -26,7 +27,7 @@ void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, i
         {
             // try to find this function in program.libs and in host_functions
 
-            if (IC_LIB_CORE & fun.lib)
+            if (fun.lib == IC_LIB_CORE)
             {
                 ic_host_function* lib;
                 int lib_size;
@@ -35,12 +36,13 @@ void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, i
             }
             else
             {
-                assert(IC_LIB_USER & fun.lib);
+                assert(fun.lib == IC_USER_FUNCTION);
                 assert(resolve_function(&fun, host_functions, host_functions_size));
             }
         }
     }
 
+    vm.stack_frames = (ic_stack_frame*)malloc(IC_STACK_FRAMES_SIZE * sizeof(ic_stack_frame));
     vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
     memcpy(vm.call_stack, program.strings, program.strings_byte_size); // string data doesn't change across program runs
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
@@ -48,19 +50,20 @@ void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, i
 
 void ic_vm::push_stack_frame(unsigned char* bytecode, int stack_size)
 {
-    ic_stack_frame frame;
+    assert(stack_frames_size < IC_STACK_FRAMES_SIZE);
+    stack_frames_size += 1;
+    ic_stack_frame& frame = top_frame();
     frame.size = stack_size;
     frame.bp = call_stack_size;
     frame.ip = bytecode;
-    stack_frames.push_back(frame);
     call_stack_size += stack_size;
     assert(call_stack_size <= IC_CALL_STACK_SIZE);
 }
 
 void ic_vm::pop_stack_frame()
 {
-    call_stack_size -= stack_frames.back().size;
-    stack_frames.pop_back();
+    call_stack_size -= top_frame().size;
+    stack_frames_size -= 1;
 }
 
 void ic_vm::push_op(ic_data data)
@@ -103,8 +106,14 @@ ic_data* ic_vm::end_op()
     return operand_stack + operand_stack_size;
 }
 
+ic_stack_frame& ic_vm::top_frame()
+{
+    return stack_frames[stack_frames_size - 1];
+}
+
 void vm_run(ic_vm& vm, ic_program& program)
 {
+    vm.stack_frames_size = 0;
     vm.call_stack_size = program.global_data_size; // this is important
     vm.operand_stack_size = 0;
     {
@@ -114,7 +123,7 @@ void vm_run(ic_vm& vm, ic_program& program)
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
     // clear global non string data
     memset(vm.call_stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
-    assert(vm.stack_frames.size() == 1);
+    assert(vm.stack_frames_size == 1);
     ic_stack_frame* frame = &vm.stack_frames[0];
 
     for(;;)
@@ -193,7 +202,7 @@ void vm_run(ic_vm& vm, ic_program& program)
             else
             {
                 vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size);
-                frame = &vm.stack_frames.back();
+                frame = &vm.top_frame();
                 memcpy(vm.call_stack + frame->bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
                 vm.pop_op_many(param_size);
             }
@@ -202,9 +211,9 @@ void vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_RETURN:
         {
             vm.pop_stack_frame();
-            if (!vm.stack_frames.size())
+            if (!vm.stack_frames_size)
                 return;
-            frame = &vm.stack_frames.back();
+            frame = &vm.top_frame();
             break;
         }
         case IC_OPC_JUMP_TRUE:

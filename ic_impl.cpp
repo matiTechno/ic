@@ -307,7 +307,7 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
     {
         assert(host_functions);
         ic_function fun = produce_function_from_host(host_functions[i], parser);
-        fun.lib = IC_LIB_USER;
+        fun.lib = IC_USER_FUNCTION;
         parser.functions.push_back(fun);
     }
 

@@ -4,8 +4,6 @@
 enum ic_lib_type
 {
     IC_LIB_CORE = 1 << 0,
-    // reserved
-    IC_LIB_USER = 1 << 30,
 };
 
 // todo, rename to _char, _uchar, _int, _ptr etc.
@@ -73,10 +71,11 @@ struct ic_stack_frame
 
 struct ic_vm
 {
-    std::vector<ic_stack_frame> stack_frames; // I don't like to pull vector in api header, strechy buffer might be good for this
+    ic_stack_frame* stack_frames;
     // stack_frame is now so small that we can allocate just one buffer for it with bounds checking
     ic_data* call_stack; // must not be invalidated during execution
     ic_data* operand_stack;
+    int stack_frames_size;
     int call_stack_size;
     int operand_stack_size;
 
@@ -90,11 +89,13 @@ struct ic_vm
     void pop_op_many(int size);
     ic_data& top_op();
     ic_data* end_op();
+    ic_stack_frame& top_frame();
 };
 
 // todo, polish these functions
 ic_program load_program(unsigned char* buf);
-void serialize_program(std::vector<unsigned char>& buf, ic_program& program);
+// read entire struct and not member by member
+void serialize_program(std::vector<unsigned char>& buf, ic_program& program); // remove vector
 void disassmble(ic_program& program);
 bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size);
 void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size); // if vm runs only one program can be done once before many runs
