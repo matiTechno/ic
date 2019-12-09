@@ -46,28 +46,19 @@ void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, i
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
 }
 
-void ic_vm::push_stack_frame(unsigned char* bytecode, int stack_size, int return_size)
+void ic_vm::push_stack_frame(unsigned char* bytecode, int stack_size)
 {
     ic_stack_frame frame;
-    frame.prev_operand_stack_size = operand_stack_size;
-    frame.bp = call_stack + call_stack_size;
-    frame.ip = bytecode;
     frame.size = stack_size;
-    frame.return_size = return_size;
+    frame.bp = call_stack_size;
+    frame.ip = bytecode;
     stack_frames.push_back(frame);
-
     call_stack_size += stack_size;
     assert(call_stack_size <= IC_CALL_STACK_SIZE);
 }
 
 void ic_vm::pop_stack_frame()
 {
-    int prev_operand_stack_size = stack_frames.back().prev_operand_stack_size;
-    int return_size = stack_frames.back().return_size;
-    void* dst = operand_stack + prev_operand_stack_size;
-    void* src = end_op() - return_size;
-    memmove(dst, src, return_size * sizeof(ic_data));
-    operand_stack_size = prev_operand_stack_size + return_size;
     call_stack_size -= stack_frames.back().size;
     stack_frames.pop_back();
 }
@@ -118,7 +109,7 @@ void vm_run(ic_vm& vm, ic_program& program)
     vm.operand_stack_size = 0;
     {
         ic_vm_function& function = program.functions[0];
-        vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size, function.return_size);
+        vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size);
     }
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
     // clear global non string data
@@ -201,10 +192,9 @@ void vm_run(ic_vm& vm, ic_program& program)
             }
             else
             {
-                vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size, function.return_size);
+                vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size);
                 frame = &vm.stack_frames.back();
-                memcpy(frame->bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
-                frame->prev_operand_stack_size -= param_size;
+                memcpy(vm.call_stack + frame->bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
                 vm.pop_op_many(param_size);
             }
             break;
@@ -240,8 +230,9 @@ void vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_ADDRESS:
         {
             int byte_offset = read_int(&frame->ip);
-            void* addr = (char*)frame->bp + byte_offset;
-            assert(addr >= frame->bp && addr < vm.call_stack + vm.call_stack_size);
+            void* base_addr = vm.call_stack + frame->bp;
+            void* addr = (char*)base_addr + byte_offset;
+            assert(addr >= base_addr && addr < vm.call_stack + vm.call_stack_size);
             vm.push_op();
             vm.top_op().pointer = addr;
             break;
@@ -250,7 +241,7 @@ void vm_run(ic_vm& vm, ic_program& program)
         {
             int byte_offset = read_int(&frame->ip);
             void* addr = (char*)vm.call_stack + byte_offset;
-            assert(addr >= vm.call_stack && addr < vm.stack_frames[0].bp);
+            assert(addr >= vm.call_stack && addr < vm.call_stack + program.global_data_size);
             vm.push_op();
             vm.top_op().pointer = addr;
             break;

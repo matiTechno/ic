@@ -8,6 +8,7 @@ enum ic_lib_type
     IC_LIB_USER = 1 << 30,
 };
 
+// todo, rename to _char, _uchar, _int, _ptr etc.
 union ic_data
 {
     char s8;
@@ -23,8 +24,9 @@ using ic_host_function_ptr = ic_data(*)(ic_data* argv);
 
 struct ic_host_function
 {
-    const char* declaration;
+    const char* declaration; // todo not declaration but prototype
     ic_host_function_ptr callback;
+    // void* data
 };
 
 // todo, some better naming would be nice (ic_function, and current ic_function rename to ic_function_desc)
@@ -33,7 +35,6 @@ struct ic_vm_function
     bool host_impl;
     int return_size;
     int param_size;
-
     union
     {
         struct
@@ -46,39 +47,41 @@ struct ic_vm_function
             ic_host_function_ptr callback;
             unsigned int hash;
             int lib;
+            // data
         };
     };
 };
 
 struct ic_program
 {
+    // todo, combine strings with bytecode
     ic_vm_function* functions;
     unsigned char* bytecode;
     char* strings;
     int functions_size;
     int strings_byte_size;
     int bytecode_size;
-    int global_data_size;
+    int global_data_size; // this does not need to be stored
 };
 
 struct ic_stack_frame
 {
     int size;
-    int return_size;
-    int prev_operand_stack_size;
-    ic_data* bp; // base pointer
-    unsigned char* ip; // instruction pointer
+    int bp;
+    unsigned char* ip;
 };
 
 struct ic_vm
 {
     std::vector<ic_stack_frame> stack_frames; // I don't like to pull vector in api header, strechy buffer might be good for this
+    // stack_frame is now so small that we can allocate just one buffer for it with bounds checking
     ic_data* call_stack; // must not be invalidated during execution
     ic_data* operand_stack;
     int call_stack_size;
     int operand_stack_size;
 
-    void push_stack_frame(unsigned char* bytecode, int stack_size, int return_size);
+    // define these functions outside of vm to not polute api
+    void push_stack_frame(unsigned char* bytecode, int stack_size);
     void pop_stack_frame();
     void push_op(ic_data data);
     void push_op();
@@ -89,6 +92,7 @@ struct ic_vm
     ic_data* end_op();
 };
 
+// todo, polish these functions
 ic_program load_program(unsigned char* buf);
 void serialize_program(std::vector<unsigned char>& buf, ic_program& program);
 void disassmble(ic_program& program);
