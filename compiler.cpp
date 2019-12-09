@@ -60,6 +60,8 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         while (body_stmt)
         {
+            // we need ic_stmt_result - and if it is break, continue or return disable bytecode generation for the
+            // reset of the compound statement
             // disable code gen in compiler, that will do
             // dead code elimination, but still needs to be compiled to check corectness
             // print warning
@@ -308,7 +310,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         {
             const ic_param& member = _struct->members[i];
 
-            if (ic_string_compare(target_name, member.name))
+            if (string_compare(target_name, member.name))
             {
                 target_type = member.type;
                 match = true;

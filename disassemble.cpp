@@ -31,7 +31,7 @@ void ic_program_print_disassembly(ic_program& program)
         if (fun.host_impl)
         {
             printf("hash: %x\n", fun.hash);
-            printf("lib: %d\n", fun.lib);
+            printf("origin: %d\n", fun.origin);
             printf("returns_value: %d\n", fun.returns_value);
         }
         else

@@ -134,7 +134,7 @@ ic_data ic_host_exit(ic_data*, void*)
     exit(0);
 }
 
-bool ic_string_compare(ic_string str1, ic_string str2)
+bool string_compare(ic_string str1, ic_string str2)
 {
     if (str1.len != str2.len)
         return false;
@@ -210,9 +210,9 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
         if (!vmfun.host_impl)
             continue;
 
-        if (vmfun.lib == IC_LIB_CORE)
+        if (vmfun.origin == IC_LIB_CORE)
             resolve_function(vmfun, core_lib);
-        else if (vmfun.lib == IC_USER_FUNCTION)
+        else if (vmfun.origin == IC_USER_FUNCTION)
             resolve_function(vmfun, host_functions);
         else
             assert(false);
@@ -234,11 +234,8 @@ ic_function produce_function_from_host(ic_host_function& host_function, ic_parse
     assert(string_data.size() == 0);
 
     const ic_token* tok_ptr = tokens.data();
-    ic_global global = produce_global(&tok_ptr, parser, true);
+    ic_global global = produce_global(&tok_ptr, parser, true); // todo, produce_function_prototype
     assert(global.type == IC_GLOBAL_FUNCTION);
-    global.function.callback = host_function.callback;
-    global.function.hash = hash_string(host_function.prototype_str);
-    global.function.host_data = host_function.host_data;
     return global.function;
 }
 
@@ -264,7 +261,8 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         while (it->prototype_str)
         {
             ic_function fun = produce_function_from_host(*it, parser);
-            fun.lib = IC_LIB_CORE;
+            fun.host_function = it;
+            fun.origin = IC_LIB_CORE;
             parser.functions.push_back(fun);
             ++it;
         }
@@ -275,7 +273,8 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         while (it->prototype_str)
         {
             ic_function fun = produce_function_from_host(*it, parser);
-            fun.lib = IC_USER_FUNCTION;
+            fun.host_function = it;
+            fun.origin = IC_USER_FUNCTION;
             parser.functions.push_back(fun);
             ++it;
         }
@@ -364,7 +363,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
     {
         if (function.type == IC_FUN_SOURCE)
         {
-            if (ic_string_compare(function.token.string, { "main", 4 }))
+            if (string_compare(function.token.string, { "main", 4 }))
             {
                 assert(function.param_count == 0);
                 assert(is_void(function.return_type));
@@ -402,6 +401,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         ic_function& function = *_ptr;
         ic_vm_function vmfun;
         vmfun.param_size = 0;
+        vmfun.host_impl = function.type == IC_FUN_HOST;
 
         for (int j = 0; j < function.param_count; ++j)
         {
@@ -415,22 +415,23 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
                 vmfun.param_size += 1;
         }
 
-        if (function.type == IC_FUN_HOST)
+        if (vmfun.host_impl)
         {
-            vmfun.host_impl = true;
-            vmfun.callback = function.callback;
-            vmfun.host_data = function.host_data;
-            vmfun.hash = function.hash;
-            vmfun.lib = function.lib;
+            vmfun.callback = function.host_function->callback;
+            vmfun.host_data = function.host_function->host_data;
+            vmfun.hash = hash_string(function.host_function->prototype_str);
+            vmfun.origin = function.origin;
             vmfun.returns_value = is_void(function.return_type) ? 0 : 1;
+
+            // make sure there is no hash collision
+            for (ic_vm_function& other : vm_functions)
+                assert(other.hash != vmfun.hash);
         }
         else
         {
-            vmfun.host_impl = false;
             vmfun.data_idx = function.data_idx;
             vmfun.stack_size = function.stack_size;
         }
-
         vm_functions.push_back(vmfun);
     }
     program.functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
@@ -511,8 +512,37 @@ bool is_identifier_char(char c)
     return is_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c == '_');
 }
 
+struct ic_keyword
+{
+    const char* str;
+    ic_token_type token_type;
+};
+
 bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data)
 {
+    ic_keyword _keywords[] = {
+        {"for", IC_TOK_FOR},
+        {"while", IC_TOK_WHILE},
+        {"if", IC_TOK_IF},
+        {"else", IC_TOK_ELSE},
+        {"return", IC_TOK_RETURN},
+        {"break", IC_TOK_BREAK},
+        {"continue", IC_TOK_CONTINUE},
+        {"true", IC_TOK_TRUE},
+        {"false", IC_TOK_FALSE},
+        {"bool", IC_TOK_BOOL},
+        {"s8", IC_TOK_S8},
+        {"u8", IC_TOK_U8},
+        {"s32", IC_TOK_S32},
+        {"f32", IC_TOK_F32},
+        {"f64", IC_TOK_F64},
+        {"void", IC_TOK_VOID},
+        {"nullptr", IC_TOK_NULLPTR},
+        {"const", IC_TOK_CONST},
+        {"struct", IC_TOK_STRUCT},
+        {"sizeof", IC_TOK_SIZEOF},
+    };
+
     ic_lexer lexer{ _tokens };
     lexer._source_it = source;
 
@@ -708,7 +738,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
                 for (const ic_keyword& keyword : _keywords)
                 {
-                    if (ic_string_compare(string, { keyword.str, int(strlen(keyword.str)) }))
+                    if (string_compare(string, { keyword.str, int(strlen(keyword.str)) }))
                     {
                         is_keyword = true;
                         token_type = keyword.token_type;

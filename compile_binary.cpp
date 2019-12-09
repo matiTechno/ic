@@ -239,7 +239,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             assert(lhs_type.indirection_level == rhs_type.indirection_level);
             assert(lhs_type.basic_type == rhs_type.basic_type);
             if (lhs_type.basic_type == IC_TYPE_STRUCT)
-                assert(ic_string_compare(lhs_type.struct_name, rhs_type.struct_name));
+                assert(string_compare(lhs_type.struct_name, rhs_type.struct_name));
 
             compile_expr(expr->_binary.lhs, compiler);
             compile_expr(expr->_binary.rhs, compiler);

@@ -5,7 +5,7 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
     assert(to.indirection_level == from.indirection_level);
 
     if (to.basic_type == IC_TYPE_STRUCT && from.basic_type == IC_TYPE_STRUCT)
-        assert(ic_string_compare(to.struct_name, from.struct_name));
+        assert(string_compare(to.struct_name, from.struct_name));
 
     if (to.indirection_level)
     {
@@ -197,7 +197,7 @@ void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs)
     assert(lhs.basic_type == rhs.basic_type);
 
     if (lhs.basic_type == IC_TYPE_STRUCT)
-        assert(ic_string_compare(lhs.struct_name, rhs.struct_name));
+        assert(string_compare(lhs.struct_name, rhs.struct_name));
 }
 
 void assert_modifiable_lvalue(ic_expr_result result)

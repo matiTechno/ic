@@ -5,7 +5,6 @@ enum ic_lib_type
     IC_LIB_CORE = 1 << 0,
 };
 
-// todo, rename to _char, _uchar, _int, _ptr etc.
 union ic_data
 {
     char s8;
@@ -25,7 +24,6 @@ struct ic_host_function
     void* host_data;
 };
 
-// todo, some better naming would be nice (ic_function, and current ic_function rename to ic_function_desc)
 struct ic_vm_function
 {
     bool host_impl;
@@ -42,7 +40,7 @@ struct ic_vm_function
             ic_host_function_ptr callback;
             void* host_data;
             unsigned int hash;
-            int lib;
+            int origin;
             bool returns_value;
         };
     };
