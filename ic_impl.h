@@ -380,8 +380,7 @@ struct ic_function
         struct
         {
             ic_stmt* body;
-            unsigned char* bytecode;
-            int bytecode_size;
+            int bytecode_idx;
             int stack_size;
         };
     };
@@ -636,11 +635,11 @@ struct ic_expr_result
 
 struct ic_compiler
 {
+    std::vector<unsigned char>* bytecode;
     ic_function* function;
     ic_parser* parser;
     std::vector<ic_function*>* active_functions;
     bool generate_bytecode;
-    std::vector<unsigned char> bytecode;
     std::vector<ic_scope> scopes;
     std::vector<ic_var> vars;
     std::vector<int> resolve_break;
@@ -648,6 +647,21 @@ struct ic_compiler
     int stack_size;
     int max_stack_size;
     int loop_count;
+
+    int bc_size()
+    {
+        if (!generate_bytecode)
+            return 0;
+        return bytecode->size();
+    }
+
+    void bc_set_int(int idx, int data)
+    {
+        if (!generate_bytecode)
+            return;
+        void* dst = bytecode->data() + idx;
+        memcpy(dst, &data, sizeof(int));
+    }
 
     void push_scope()
     {
@@ -669,45 +683,45 @@ struct ic_compiler
         assert(opcode >= 0 && opcode <= 255);
         if (!generate_bytecode)
             return;
-        bytecode.push_back(opcode);
+        bytecode->push_back(opcode);
     }
 
     void add_s8(char data)
     {
         if (!generate_bytecode)
             return;
-        bytecode.emplace_back();
-        *(char*)&bytecode.back() = data;
+        bytecode->emplace_back();
+        *(char*)&bytecode->back() = data;
     }
 
     void add_u8(unsigned char data)
     {
         if (!generate_bytecode)
             return;
-        bytecode.push_back(data);
+        bytecode->push_back(data);
     }
 
     void add_s32(int data)
     {
         if (!generate_bytecode)
             return;
-        bytecode.resize(bytecode.size() + 4);
-        memcpy(&bytecode.back() - 3, &data, 4);
+        bytecode->resize(bytecode->size() + 4);
+        memcpy(&bytecode->back() - 3, &data, 4);
     }
     void add_f32(float data)
     {
         if (!generate_bytecode)
             return;
-        bytecode.resize(bytecode.size() + 4);
-        memcpy(&bytecode.back() - 3, &data, 4);
+        bytecode->resize(bytecode->size() + 4);
+        memcpy(&bytecode->back() - 3, &data, 4);
     }
 
     void add_f64(double data)
     {
         if (!generate_bytecode)
             return;
-        bytecode.resize(bytecode.size() + 8);
-        memcpy(&bytecode.back() - 7, &data, 8);
+        bytecode->resize(bytecode->size() + 8);
+        memcpy(&bytecode->back() - 7, &data, 8);
     }
 
     void declare_unused_param(ic_type type)
@@ -752,7 +766,6 @@ struct ic_compiler
 
         if (!generate_bytecode)
             return function;
-        assert(active_functions);
 
         for(int i = 0; i < active_functions->size(); ++i)
         {
@@ -791,7 +804,8 @@ struct ic_compiler
 };
 
 // todo, return false on error
-void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions, bool generate_bytecode);
+void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions,
+    std::vector<unsigned char>* bytecode);
 // returnes true if all branches have a return statements
 bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);

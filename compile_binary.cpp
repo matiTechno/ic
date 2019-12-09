@@ -143,22 +143,22 @@ ic_expr_result compile_binary_logical(ic_expr* expr, ic_opcode opc_jump, int val
     ic_type lhs_type = compile_expr(expr->_binary.lhs, compiler).type;
     compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
     compiler.add_opcode(opc_jump);
-    int idx_resolve_true = compiler.bytecode.size();
+    int idx_resolve_condition = compiler.bc_size();
     compiler.add_s32({});
     // rhs condition
     ic_type rhs_type = compile_expr(expr->_binary.rhs, compiler).type;
     compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
     compiler.add_opcode(IC_OPC_JUMP);
-    int idx_resolve_end = compiler.bytecode.size();
+    int idx_resolve_end = compiler.bc_size();
     compiler.add_s32({});
     // if (lhs)
-    int idx_true = compiler.bytecode.size();
-    memcpy(&compiler.bytecode[idx_resolve_true], &idx_true, sizeof(int));
+    int idx_condition = compiler.bc_size();
+    compiler.bc_set_int(idx_resolve_condition, idx_condition);
     compiler.add_opcode(IC_OPC_PUSH_S32);
     compiler.add_s32(value_early_jump);
 
-    int idx_end = compiler.bytecode.size();
-    memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int));
+    int idx_end = compiler.bc_size();
+    compiler.bc_set_int(idx_resolve_end, idx_end);
 
     return { non_pointer_type(IC_TYPE_S32), false };
 }

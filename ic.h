@@ -1,6 +1,5 @@
 #pragma once
 #include <vector>
-#include <assert.h> // tod, remove
 
 enum ic_lib_type
 {
@@ -39,26 +38,26 @@ struct ic_vm_function
     {
         struct
         {
-            unsigned char* bytecode;
-            int bytecode_size;
+            int bytecode_idx;
             int stack_size;
         };
         struct
         {
             ic_host_function_ptr callback;
             unsigned int hash;
-            int lib; // rename to origin?
+            int lib;
         };
     };
 };
 
-// todo keep one buffer for all functions bytecode
 struct ic_program
 {
     ic_vm_function* functions;
-    int functions_size;
+    unsigned char* bytecode;
     char* strings;
+    int functions_size;
     int strings_byte_size;
+    int bytecode_size;
     int global_data_size;
 };
 
@@ -69,12 +68,11 @@ struct ic_stack_frame
     int prev_operand_stack_size;
     ic_data* bp; // base pointer
     unsigned char* ip; // instruction pointer
-    unsigned char* bytecode; // this is needed for jumps
 };
 
 struct ic_vm
 {
-    std::vector<ic_stack_frame> stack_frames;
+    std::vector<ic_stack_frame> stack_frames; // I don't like to pull vector in api header, strechy buffer might be good for this
     ic_data* call_stack; // must not be invalidated during execution
     ic_data* operand_stack;
     int call_stack_size;

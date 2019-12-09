@@ -68,8 +68,10 @@ ic_program load_program(unsigned char* buf)
     ic_program program;
     program.functions_size = read_int(&buf);
     program.strings_byte_size = read_int(&buf);
+    program.bytecode_size = read_int(&buf);
     program.global_data_size = read_int(&buf);
     program.strings = (char*)read_bytes(&buf, program.strings_byte_size);
+    program.bytecode = (unsigned char*)read_bytes(&buf, program.bytecode_size);
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
     for (int i = 0; i < program.functions_size; ++i)
@@ -87,9 +89,8 @@ ic_program load_program(unsigned char* buf)
         }
         else
         {
-            function.bytecode_size = read_int(&buf);
+            function.bytecode_idx = read_int(&buf);
             function.stack_size = read_int(&buf);
-            function.bytecode = (unsigned char*)read_bytes(&buf, function.bytecode_size);
         }
     }
     return program;
@@ -99,8 +100,10 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
 {
     write_int(buf, program.functions_size);
     write_int(buf, program.strings_byte_size);
+    write_int(buf, program.bytecode_size);
     write_int(buf, program.global_data_size);
     write_bytes(buf, (unsigned char*)program.strings, program.strings_byte_size);
+    write_bytes(buf, program.bytecode, program.bytecode_size);
 
     for (int i = 0; i < program.functions_size; ++i)
     {
@@ -116,9 +119,8 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
         }
         else
         {
-            write_int(buf, function.bytecode_size);
+            write_int(buf, function.bytecode_idx);
             write_int(buf, function.stack_size);
-            write_bytes(buf, function.bytecode, function.bytecode_size);
         }
     }
 }
@@ -398,25 +400,30 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
                 assert(is_void(function.return_type));
                 active_functions.push_back(&function);
             }
-            function.bytecode = nullptr; // important
+            function.bytecode_idx = -1;
         }
     }
 
     assert(active_functions.size());
+    std::vector<unsigned char> bytecode;
     // important, active_functions.size() changes during loop execution
     for (int i = 0; i < active_functions.size(); ++i)
     {
         if (active_functions[i]->type == IC_FUN_SOURCE)
-            compile_function(*active_functions[i], &parser, &active_functions, true);
+            compile_function(*active_functions[i], &parser, &active_functions, &bytecode);
     }
+
+    program->bytecode_size = bytecode.size();
+    program->bytecode = (unsigned char*)malloc(bytecode.size());
+    memcpy(program->bytecode, bytecode.data(), bytecode.size());
 
     // compile inactive function for code corectness, these will not be included in returned program
     for (ic_function& function : parser.functions)
     {
-        if (function.type == IC_FUN_HOST || function.bytecode)
+        if (function.type == IC_FUN_HOST || function.bytecode_idx != -1)
             continue;
         printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
-        compile_function(function, &parser, nullptr, true);
+        compile_function(function, &parser, nullptr, nullptr);
     }
 
     std::vector<ic_vm_function> vm_functions;
@@ -460,8 +467,7 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
         else
         {
             vmfun.host_impl = false;
-            vmfun.bytecode = function.bytecode;
-            vmfun.bytecode_size = function.bytecode_size;
+            vmfun.bytecode_idx = function.bytecode_idx;
             vmfun.stack_size = function.stack_size;
         }
 

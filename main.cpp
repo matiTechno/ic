@@ -1,6 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "ic.h"
 #include <chrono>
+#include <assert.h>
 // which header includes stdio.h here? I have no idea, wtf
 
 ic_data host_random01(ic_data*)

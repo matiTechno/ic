@@ -1,17 +1,26 @@
 #include "ic_impl.h"
 
-void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions, bool generate_bytecode)
+void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions,
+    std::vector<unsigned char>* bytecode)
 {
     assert(function.type == IC_FUN_SOURCE);
+
+    if(bytecode)
+        function.bytecode_idx = bytecode->size();
+
     ic_compiler compiler;
+    compiler.bytecode = bytecode;
     compiler.function = &function;
     compiler.parser = parser;
     compiler.active_functions = active_functions;
-    compiler.generate_bytecode = generate_bytecode;
+    compiler.generate_bytecode = bytecode != nullptr;
     compiler.stack_size = 0;
     compiler.max_stack_size = 0;
     compiler.loop_count = 0;
     compiler.push_scope();
+
+    if (compiler.generate_bytecode)
+        assert(active_functions);
 
     for (int i = 0; i < function.param_count; ++i)
     {
@@ -23,7 +32,6 @@ void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_f
             compiler.declare_unused_param(function.params[i].type);
         }
     }
-
     bool returned = compile_stmt(function.body, compiler);
     assert(compiler.scopes.size() == 1);
     assert(compiler.loop_count == 0);
@@ -33,11 +41,6 @@ void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_f
     else if(!returned)
         compiler.add_opcode(IC_OPC_RETURN);
 
-    int size = compiler.bytecode.size();
-    function.bytecode = (unsigned char*)malloc(size);
-    // todo, replace std::vector with ic_array and just assign pointer...
-    memcpy(function.bytecode, compiler.bytecode.data(), size);
-    function.bytecode_size = size;
     function.stack_size = compiler.max_stack_size;
 }
 
@@ -81,7 +84,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_for.header1)
             compile_stmt(stmt->_for.header1, compiler);
 
-        int idx_begin = compiler.bytecode.size();
+        int idx_begin = compiler.bc_size();
         int idx_resolve_end;
 
         if (stmt->_for.header2)
@@ -90,7 +93,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             ic_expr_result result = compile_expr(stmt->_for.header2, compiler);
             compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
             compiler.add_opcode(IC_OPC_JUMP_FALSE);
-            idx_resolve_end = compiler.bytecode.size();
+            idx_resolve_end = compiler.bc_size();
             compiler.add_s32({});
         }
 
@@ -104,16 +107,16 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         compiler.add_opcode(IC_OPC_JUMP);
         compiler.add_s32(idx_begin);
-        int idx_end = compiler.bytecode.size();
+        int idx_end = compiler.bc_size();
 
         if (stmt->_for.header2)
-            memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int));
+            compiler.bc_set_int(idx_resolve_end, idx_end);
 
         for(int i = 0; i < compiler.resolve_break.size(); ++i)
-            memcpy(&compiler.bytecode[i], &idx_end, sizeof(int));
+            compiler.bc_set_int(compiler.resolve_break[i], idx_end);
 
         for(int i = 0; i < compiler.resolve_continue.size(); ++i)
-            memcpy(&compiler.bytecode[i], &idx_begin, sizeof(int));
+            compiler.bc_set_int(compiler.resolve_continue[i], idx_begin);
 
         compiler.resolve_break.clear();
         compiler.resolve_continue.clear();
@@ -129,7 +132,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         ic_expr_result result = compile_expr(stmt->_if.header, compiler); // no need to push a scope here, expr can't declare a new variable
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
         compiler.add_opcode(IC_OPC_JUMP_FALSE);
-        int idx_resolve_else = compiler.bytecode.size();
+        int idx_resolve_else = compiler.bc_size();
         compiler.add_s32({});
         compiler.push_scope();
         returned_if = compile_stmt(stmt->_if.body_if, compiler);
@@ -139,19 +142,19 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_if.body_else)
         {
             compiler.add_opcode(IC_OPC_JUMP);
-            int idx_resolve_end = compiler.bytecode.size();
+            int idx_resolve_end = compiler.bc_size();
             compiler.add_s32({});
-            idx_else = compiler.bytecode.size();
+            idx_else = compiler.bc_size();
             compiler.push_scope();
             returned_else = compile_stmt(stmt->_if.body_else, compiler);
             compiler.pop_scope();
-            int idx_end = compiler.bytecode.size();
-            memcpy(&compiler.bytecode[idx_resolve_end], &idx_end, sizeof(int)); // memcpy is used to not violate alignment
+            int idx_end = compiler.bc_size();
+            compiler.bc_set_int(idx_resolve_end, idx_end);
         }
         else
-            idx_else = compiler.bytecode.size();
+            idx_else = compiler.bc_size();
 
-        memcpy(&compiler.bytecode[idx_resolve_else], &idx_else, sizeof(int));
+        compiler.bc_set_int(idx_resolve_else, idx_else);
         returned = returned_if && returned_else; // both branches must return, if there is no else branch return false
         break;
     }
@@ -203,7 +206,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     {
         assert(compiler.loop_count);
         compiler.add_opcode(IC_OPC_JUMP);
-        compiler.resolve_break.push_back(compiler.bytecode.size());
+        compiler.resolve_break.push_back(compiler.bc_size());
         compiler.add_s32({});
         break;
     }
@@ -211,7 +214,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     {
         assert(compiler.loop_count);
         compiler.add_opcode(IC_OPC_JUMP);
-        compiler.resolve_continue.push_back(compiler.bytecode.size());
+        compiler.resolve_continue.push_back(compiler.bc_size());
         compiler.add_s32({});
         break;
     }

@@ -19,7 +19,7 @@ void disassmble(ic_program& program)
         printf(" ");
     }
 
-    printf("\n");
+    printf("\n\n");
 
     for (int i = 0; i < program.functions_size; ++i)
     {
@@ -36,9 +36,22 @@ void disassmble(ic_program& program)
         }
         else
         {
-            printf("bytecode_size: %d\n", fun.bytecode_size);
+            int end_idx = 0;
+            for (int x = i + 1; x < program.functions_size; ++x)
+            {
+                ic_vm_function& fun = program.functions[x];
+                if (fun.host_impl)
+                    continue;
+                end_idx = fun.bytecode_idx;
+                break;
+            }
+            if (!end_idx)
+                end_idx = program.bytecode_size;
+
+            int size = end_idx - fun.bytecode_idx;
+            printf("bytecode_size: %d\n", size);
             printf("stack_size: %d\n", fun.stack_size);
-            print_bc(fun.bytecode, fun.bytecode_size);
+            print_bc(program.bytecode + fun.bytecode_idx, size);
         }
         printf("\n");
     }
