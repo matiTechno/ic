@@ -247,7 +247,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             int size = pointed_type_byte_size(lhs_type, compiler);
             assert(size);
             compiler.add_s32(size);
-            return { IC_TYPE_S32, false };
+            return { non_pointer_type(IC_TYPE_S32), false };
         }
 
         if (lhs_type.indirection_level)

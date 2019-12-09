@@ -32,22 +32,21 @@ void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_f
             compiler.declare_unused_param(function.params[i].type);
         }
     }
-    bool returned = compile_stmt(function.body, compiler);
+    ic_stmt_result result = compile_stmt(function.body, compiler);
     assert(compiler.scopes.size() == 1);
     assert(compiler.loop_count == 0);
 
     if(!is_void(function.return_type))
-        assert(returned);
-    else if(!returned)
+        assert(result == IC_STMT_RESULT_RETURN);
+    else if(result != IC_STMT_RESULT_RETURN)
         compiler.add_opcode(IC_OPC_RETURN);
 
     function.stack_size = compiler.max_stack_size;
 }
 
-bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
+ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 {
     assert(stmt);
-    bool returned = false;
 
     switch (stmt->type)
     {
@@ -56,30 +55,36 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_compound.push_scope)
             compiler.push_scope();
 
-        ic_stmt* body_stmt = stmt->_compound.body;
+        ic_stmt* stmt_it = stmt->_compound.body;
+        ic_stmt_result result = IC_STMT_RESULT_NULL;
+        int prev_gen_bc = compiler.generate_bytecode;
 
-        while (body_stmt)
+        while (stmt_it)
         {
-            // we need ic_stmt_result - and if it is break, continue or return disable bytecode generation for the
-            // reset of the compound statement
-            // disable code gen in compiler, that will do
-            // dead code elimination, but still needs to be compiled to check corectness
-            // print warning
-            //if (returned)
-                //break;
-            // todo do detect unreachable code with break and continue statements
-            returned = returned || compile_stmt(body_stmt, compiler);
-            body_stmt = body_stmt->next;
+            ic_stmt_result inner_result = compile_stmt(stmt_it, compiler);
+
+            if (result == IC_STMT_RESULT_NULL && inner_result != IC_STMT_RESULT_NULL)
+            {
+                result = inner_result;
+                if (stmt_it->next) // if this is not the last statement of a compound statement
+                {
+                    compiler.generate_bytecode = false; // don't generate unreachable code, but compile for correctness
+                    printf("warning: compiling unreachable code\n"); // todo, print on which line
+                }
+            }
+            stmt_it = stmt_it->next;
         }
 
         if (stmt->_compound.push_scope)
             compiler.pop_scope();
-
-        break;
+        compiler.generate_bytecode = prev_gen_bc;
+        return result;
     }
     case IC_STMT_FOR:
     {
-        // don't set returned flag in any case, loop may never be executed
+        // outer loops may have unresolved break and continue operands
+        int break_ops_begin = compiler.break_ops.size();
+        int cont_ops_begin = compiler.cont_ops.size();
         compiler.loop_count += 1;
         compiler.push_scope();
 
@@ -100,6 +105,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         }
 
         compile_stmt(stmt->_for.body, compiler);
+        int idx_continue = compiler.bc_size();
 
         if (stmt->_for.header3)
         {
@@ -114,22 +120,22 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_for.header2)
             compiler.bc_set_int(idx_resolve_end, idx_end);
 
-        for(int i = 0; i < compiler.resolve_break.size(); ++i)
-            compiler.bc_set_int(compiler.resolve_break[i], idx_end);
+        for(int i = break_ops_begin; i < compiler.break_ops.size(); ++i)
+            compiler.bc_set_int(compiler.break_ops[i], idx_end);
 
-        for(int i = 0; i < compiler.resolve_continue.size(); ++i)
-            compiler.bc_set_int(compiler.resolve_continue[i], idx_begin);
+        for(int i = cont_ops_begin; i < compiler.cont_ops.size(); ++i)
+            compiler.bc_set_int(compiler.cont_ops[i], idx_continue);
 
-        compiler.resolve_break.clear();
-        compiler.resolve_continue.clear();
         compiler.pop_scope();
         compiler.loop_count -= 1;
-        break;
+        compiler.break_ops.resize(break_ops_begin);
+        compiler.cont_ops.resize(cont_ops_begin);
+        return IC_STMT_RESULT_NULL;
     }
     case IC_STMT_IF:
     {
-        int returned_if = false;
-        int returned_else = false;
+        ic_stmt_result result_if;
+        ic_stmt_result result_else = IC_STMT_RESULT_NULL;
         // no need to pop result, JUMP_FALSE instr pops it
         ic_expr_result result = compile_expr(stmt->_if.header, compiler); // no need to push a scope here, expr can't declare a new variable
         compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
@@ -137,7 +143,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         int idx_resolve_else = compiler.bc_size();
         compiler.add_s32({});
         compiler.push_scope();
-        returned_if = compile_stmt(stmt->_if.body_if, compiler);
+        result_if = compile_stmt(stmt->_if.body_if, compiler);
         compiler.pop_scope();
         int idx_else;
 
@@ -148,7 +154,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             compiler.add_s32({});
             idx_else = compiler.bc_size();
             compiler.push_scope();
-            returned_else = compile_stmt(stmt->_if.body_else, compiler);
+            result_else = compile_stmt(stmt->_if.body_else, compiler);
             compiler.pop_scope();
             int idx_end = compiler.bc_size();
             compiler.bc_set_int(idx_resolve_end, idx_end);
@@ -157,8 +163,7 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             idx_else = compiler.bc_size();
 
         compiler.bc_set_int(idx_resolve_else, idx_else);
-        returned = returned_if && returned_else; // both branches must return, if there is no else branch return false
-        break;
+        return result_if < result_else ? result_if : result_else;
     }
     case IC_STMT_VAR_DECLARATION:
     {
@@ -184,12 +189,10 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         }
         else
             assert((var.type.const_mask & 1) == 0); // const variable must be initialized
-
-        break;
+        return IC_STMT_RESULT_NULL;
     }
     case IC_STMT_RETURN:
     {
-        returned = true;
         ic_type return_type = compiler.function->return_type;
 
         if (stmt->_return.expr)
@@ -202,23 +205,21 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             assert(is_void(return_type));
 
         compiler.add_opcode(IC_OPC_RETURN);
-        break;
+        return IC_STMT_RESULT_RETURN;
     }
     case IC_STMT_BREAK:
-    {
-        assert(compiler.loop_count);
-        compiler.add_opcode(IC_OPC_JUMP);
-        compiler.resolve_break.push_back(compiler.bc_size());
-        compiler.add_s32({});
-        break;
-    }
     case IC_STMT_CONTINUE:
     {
         assert(compiler.loop_count);
         compiler.add_opcode(IC_OPC_JUMP);
-        compiler.resolve_continue.push_back(compiler.bc_size());
+
+        if(stmt->type == IC_STMT_BREAK)
+            compiler.break_ops.push_back(compiler.bc_size());
+        else
+            compiler.cont_ops.push_back(compiler.bc_size());
+
         compiler.add_s32({});
-        break;
+        return IC_STMT_RESULT_BREAK_CONT;
     }
     case IC_STMT_EXPR:
     {
@@ -227,13 +228,12 @@ bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             ic_expr_result result = compile_expr(stmt->_expr, compiler);
             compile_pop_expr_result(result, compiler);
         }
-        break;
+        return IC_STMT_RESULT_NULL;
     }
     default:
         assert(false);
     }
-
-    return returned;
+    return {};
 }
 
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue)
@@ -336,7 +336,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             {
                 // propagate constness to accessed data; non pointer type can have only one first bit set in a const mask
                 assert(result.type.const_mask == 0 || result.type.const_mask == 1);
-                target_type.const_mask |= result.type.const_mask;
+                target_type.const_mask |= result.type.const_mask; // & 1 is missing because we know only first bit may be set
                 return { target_type, true };
             }
 

@@ -47,19 +47,31 @@ void ic_buf_free(unsigned char* buf)
     free(buf);
 }
 
-ic_type non_pointer_type(ic_basic_type type)
+ic_type non_pointer_type(ic_basic_type btype)
 {
-    return { type, 0, 0 };
+    ic_type type;
+    type.basic_type = btype;
+    type.indirection_level = 0;
+    type.const_mask = 0; // doesn't matter but it makes debugging easier
+    return type;
 }
 
-ic_type const_pointer1_type(ic_basic_type type)
+ic_type const_pointer1_type(ic_basic_type btype)
 {
-    return { type, 1, 1 << 2 };
+    ic_type type;
+    type.basic_type = btype;
+    type.indirection_level = 1;
+    type.const_mask = 1 << 2;
+    return type;
 }
 
-ic_type pointer1_type(ic_basic_type type)
+ic_type pointer1_type(ic_basic_type btype)
 {
-    return { type, 1, 0 };
+    ic_type type;
+    type.basic_type = btype;
+    type.indirection_level = 1;
+    type.const_mask = 0;
+    return type;
 }
 
 bool is_struct(ic_type type)
@@ -819,6 +831,8 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
     throw ic_exception_parsing{};
 }
 
+#define IC_CMASK_MSB 7
+
 bool produce_type(const ic_token** it, ic_type& type, ic_parser& parser)
 {
     bool init = false;
@@ -827,7 +841,7 @@ bool produce_type(const ic_token** it, ic_type& type, ic_parser& parser)
 
     if (token_consume(it, IC_TOK_CONST))
     {
-        type.const_mask = 1 << 31;
+        type.const_mask = 1 << IC_CMASK_MSB;
         init = true;
     }
 
@@ -872,16 +886,16 @@ bool produce_type(const ic_token** it, ic_type& type, ic_parser& parser)
 
     while (token_consume(it, IC_TOK_STAR))
     {
-        if (type.indirection_level == 31)
+        if (type.indirection_level == IC_CMASK_MSB)
             exit_parsing(it, "exceeded maximal level of indirection");
 
         type.indirection_level += 1;
 
         if (token_consume(it, IC_TOK_CONST))
-            type.const_mask += 1 << (31 - type.indirection_level);
+            type.const_mask += 1 << (IC_CMASK_MSB - type.indirection_level);
     }
 
-    type.const_mask = type.const_mask >> (31 - type.indirection_level);
+    type.const_mask = type.const_mask >> (IC_CMASK_MSB - type.indirection_level);
     return true;
 }
 

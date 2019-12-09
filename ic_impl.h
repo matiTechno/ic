@@ -156,7 +156,7 @@ enum ic_opcode
     IC_OPC_F64_F32,
 };
 
-enum ic_token_type
+enum ic_token_type: unsigned char
 {
     IC_TOK_EOF,
     IC_TOK_IDENTIFIER,
@@ -222,20 +222,20 @@ enum ic_token_type
     IC_TOK_ARROW,
 };
 
-enum ic_global_type
+enum ic_global_type: unsigned char
 {
     IC_GLOBAL_FUNCTION,
     IC_GLOBAL_STRUCT,
     IC_GLOBAL_VAR_DECLARATION,
 };
 
-enum ic_function_type
+enum ic_function_type: unsigned char
 {
     IC_FUN_HOST,
     IC_FUN_SOURCE,
 };
 
-enum ic_stmt_type
+enum ic_stmt_type: unsigned char
 {
     IC_STMT_COMPOUND,
     IC_STMT_FOR,
@@ -247,7 +247,7 @@ enum ic_stmt_type
     IC_STMT_EXPR,
 };
 
-enum ic_expr_type
+enum ic_expr_type: unsigned char
 {
     IC_EXPR_BINARY,
     IC_EXPR_UNARY,
@@ -263,7 +263,7 @@ enum ic_expr_type
 };
 
 // order is important here
-enum ic_basic_type
+enum ic_basic_type: unsigned char
 {
     IC_TYPE_BOOL, // stores only 0 or 1; 1 byte at .s8
     IC_TYPE_S8,
@@ -274,6 +274,13 @@ enum ic_basic_type
     IC_TYPE_VOID,
     IC_TYPE_NULLPTR,
     IC_TYPE_STRUCT,
+};
+
+enum ic_stmt_result
+{
+    IC_STMT_RESULT_NULL = 0,
+    IC_STMT_RESULT_BREAK_CONT = 1,
+    IC_STMT_RESULT_RETURN = 2,
 };
 
 template<typename T, int N>
@@ -334,10 +341,10 @@ struct ic_token
 
 struct ic_type
 {
+    ic_string struct_name; // keep pointer instead
     ic_basic_type basic_type;
-    int indirection_level;
-    unsigned int const_mask;
-    ic_string struct_name;
+    char indirection_level;
+    unsigned char const_mask;
 };
 
 struct ic_expr;
@@ -601,8 +608,8 @@ struct ic_compiler
     bool generate_bytecode;
     std::vector<ic_scope> scopes;
     std::vector<ic_var> vars;
-    std::vector<int> resolve_break;
-    std::vector<int> resolve_continue;
+    std::vector<int> break_ops;
+    std::vector<int> cont_ops;
     int stack_size;
     int max_stack_size;
     int loop_count;
@@ -767,7 +774,7 @@ double read_double(unsigned char** buf_it);
 void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode);
 // returnes true if all branches have a return statements
-bool compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
+ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
