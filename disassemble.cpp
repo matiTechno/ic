@@ -3,7 +3,7 @@
 void print_bc(unsigned char* data, int offset, int size);
 
 // todo, bounds checking
-void disassmble(ic_program& program)
+void ic_program_print_disassembly(ic_program& program)
 {
     printf("program disassmbly\n");
     printf("functions_size: %d\n", program.functions_size);
@@ -26,13 +26,13 @@ void disassmble(ic_program& program)
         ic_vm_function& fun = program.functions[i];
         printf("function id: %d\n", i);
         printf("host_impl: %d\n", fun.host_impl);
-        printf("return_size: %d\n", fun.return_size);
         printf("param_size: %d\n", fun.param_size);
 
         if (fun.host_impl)
         {
             printf("hash: %x\n", fun.hash);
             printf("lib: %d\n", fun.lib);
+            printf("returns_value: %d\n", fun.returns_value);
         }
         else
         {

@@ -1,5 +1,29 @@
 #include "ic_impl.h"
 
+int read_int(unsigned char** buf_it)
+{
+    int v;
+    memcpy(&v, *buf_it, sizeof(int));
+    *buf_it += sizeof(int);
+    return v;
+}
+
+float read_float(unsigned char** buf_it)
+{
+    float v;
+    memcpy(&v, *buf_it, sizeof(float));
+    *buf_it += sizeof(float);
+    return v;
+}
+
+double read_double(unsigned char** buf_it)
+{
+    double v;
+    memcpy(&v, *buf_it, sizeof(double));
+    *buf_it += sizeof(double);
+    return v;
+}
+
 void write_bytes(unsigned char** buf_it, void* src, int bytes)
 {
     memcpy(*buf_it, src, bytes);
@@ -12,29 +36,15 @@ void read_bytes(void* dst, unsigned char** buf_it, int bytes)
     *buf_it += bytes;
 }
 
-ic_program load_program(unsigned char* buf)
+void ic_program_free(ic_program& program)
 {
-    assert(buf);
-    unsigned char* buf_it = buf;
-    ic_program program;
-    read_bytes(&program, &buf_it, sizeof(program));
-    program.data = (unsigned char*)malloc(sizeof(program.data_size));
-    read_bytes(program.data, &buf_it, program.data_size);
-    program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
-    for(int i = 0; i < program.functions_size; ++i)
-        read_bytes(program.functions + i, &buf_it, sizeof(ic_vm_function));
-    return program;
+    free(program.data);
+    free(program.functions);
 }
 
-void ic_serialize(ic_program& program, unsigned char*& buf, int& size)
+void ic_buf_free(unsigned char* buf)
 {
-    size = sizeof(ic_program) + program.data_size + program.functions_size * sizeof(ic_vm_function);
-    buf = (unsigned char*)malloc(size);
-    unsigned char* buf_it = buf;
-    write_bytes(&buf_it, &program, sizeof(ic_program));
-    write_bytes(&buf_it, program.data, program.data_size);
-    for(int i = 0; i < program.functions_size; ++i)
-        write_bytes(&buf_it, program.functions + i, sizeof(ic_vm_function));
+    free(buf);
 }
 
 ic_type non_pointer_type(ic_basic_type type)
@@ -72,25 +82,25 @@ void ic_print_error(int line, int col, const char* fmt, ...)
     printf("\n");
 }
 
-ic_data ic_host_prints(ic_data* argv)
+ic_data ic_host_prints(ic_data* argv, void*)
 {
     printf("prints: %s\n", (const char*)argv->pointer);
     return {};
 }
 
-ic_data ic_host_printf(ic_data* argv)
+ic_data ic_host_printf(ic_data* argv, void*)
 {
     printf("printf: %f\n", argv->f64);
     return {};
 }
 
-ic_data ic_host_printp(ic_data* argv)
+ic_data ic_host_printp(ic_data* argv, void*)
 {
     printf("printp: %p\n", argv->pointer);
     return {};
 }
 
-ic_data ic_host_malloc(ic_data* argv)
+ic_data ic_host_malloc(ic_data* argv, void*)
 {
     void* ptr = malloc(argv->s32);
     ic_data data;
@@ -98,28 +108,28 @@ ic_data ic_host_malloc(ic_data* argv)
     return data;
 }
 
-ic_data ic_host_tan(ic_data* argv)
+ic_data ic_host_tan(ic_data* argv, void*)
 {
     ic_data data;
     data.f64 = tan(argv->f64);
     return data;
 }
 
-ic_data ic_host_sqrt(ic_data* argv)
+ic_data ic_host_sqrt(ic_data* argv, void*)
 {
     ic_data data;
     data.f64 = sqrt(argv->f64);
     return data;
 }
 
-ic_data ic_host_pow(ic_data* argv)
+ic_data ic_host_pow(ic_data* argv, void*)
 {
     ic_data data;
     data.f64 = pow(argv[0].f64, argv[1].f64);
     return data;
 }
 
-ic_data ic_host_exit(ic_data*)
+ic_data ic_host_exit(ic_data*, void*)
 {
     exit(0);
 }
@@ -132,7 +142,7 @@ bool ic_string_compare(ic_string str1, ic_string str2)
     return (strncmp(str1.data, str2.data, str1.len) == 0);
 }
 
-static ic_host_function ic_core_lib[] =
+static ic_host_function core_lib[] =
 {
     {"void prints(const s8*)", ic_host_prints},
     {"void printf(f64)", ic_host_printf},
@@ -142,13 +152,8 @@ static ic_host_function ic_core_lib[] =
     {"f64 sqrt(f64)", ic_host_sqrt},
     {"f64 pow(f64, f64)", ic_host_pow},
     {"void exit()", ic_host_exit},
+    nullptr
 };
-
-void get_core_lib(ic_host_function** lib_ptr, int* size)
-{
-    *lib_ptr = ic_core_lib;
-    *size = sizeof(ic_core_lib) / sizeof(ic_host_function);
-}
 
  unsigned int hash_string (const char* str)
 {
@@ -161,16 +166,70 @@ void get_core_lib(ic_host_function** lib_ptr, int* size)
     return hash;
 }
 
+ void resolve_function(ic_vm_function& vmfun, ic_host_function* it)
+ {
+     assert(it);
+     while (it->prototype_str)
+     {
+         if (vmfun.hash == hash_string(it->prototype_str))
+         {
+             vmfun.callback = it->callback;
+             vmfun.host_data = it->host_data;
+             return;
+         }
+         ++it;
+     }
+     assert(false);
+ }
+
+void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size)
+{
+    size = sizeof(ic_program) + program.data_size + program.functions_size * sizeof(ic_vm_function);
+    buf = (unsigned char*)malloc(size);
+    unsigned char* buf_it = buf;
+    write_bytes(&buf_it, &program, sizeof(ic_program));
+    write_bytes(&buf_it, program.data, program.data_size);
+    for(int i = 0; i < program.functions_size; ++i)
+        write_bytes(&buf_it, program.functions + i, sizeof(ic_vm_function));
+}
+
+void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions)
+{
+    assert(buf);
+    unsigned char* buf_it = buf;
+    read_bytes(&program, &buf_it, sizeof(program));
+    program.data = (unsigned char*)malloc(program.data_size);
+    read_bytes(program.data, &buf_it, program.data_size);
+    program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
+
+    for (int i = 0; i < program.functions_size; ++i)
+    {
+        ic_vm_function& vmfun = program.functions[i];
+        read_bytes(&vmfun, &buf_it, sizeof(ic_vm_function));
+
+        if (!vmfun.host_impl)
+            continue;
+
+        if (vmfun.lib == IC_LIB_CORE)
+            resolve_function(vmfun, core_lib);
+        else if (vmfun.lib == IC_USER_FUNCTION)
+            resolve_function(vmfun, host_functions);
+        else
+            assert(false);
+    }
+}
+
 bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
 // create new function produce_host_decl, and don't use bool flag
 ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration);
 
  // todo, better name
+// + it would be better if it run over array of functions
 ic_function produce_function_from_host(ic_host_function& host_function, ic_parser& parser)
 {
     std::vector<ic_token> tokens;
     std::vector<unsigned char> string_data;
-    bool success = ic_tokenize(host_function.declaration, tokens, string_data);
+    bool success = ic_tokenize(host_function.prototype_str, tokens, string_data);
     assert(success);
     assert(string_data.size() == 0);
 
@@ -178,12 +237,13 @@ ic_function produce_function_from_host(ic_host_function& host_function, ic_parse
     ic_global global = produce_global(&tok_ptr, parser, true);
     assert(global.type == IC_GLOBAL_FUNCTION);
     global.function.callback = host_function.callback;
-    global.function.hash = hash_string(host_function.declaration);
+    global.function.hash = hash_string(host_function.prototype_str);
+    global.function.host_data = host_function.host_data;
     return global.function;
 }
 
 // todo cleanup on early return
-bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size)
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
 {
     assert(source);
 
@@ -193,31 +253,32 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
     if (!ic_tokenize(source, tokens, program_data))
         return false;
 
-    program->strings_byte_size = program_data.size();
-    program->global_data_size = program_data.size() / sizeof(ic_data) + 1;
+    program.strings_byte_size = program_data.size();
+    program.global_data_size = program_data.size() / sizeof(ic_data) + 1;
     ic_parser parser;
     parser.init();
 
     if (libs & IC_LIB_CORE)
     {
-        ic_host_function* host_fun;
-        int size;
-        get_core_lib(&host_fun, &size);
-
-        for(int i = 0; i < size; ++i)
+        ic_host_function* it = core_lib;
+        while (it->prototype_str)
         {
-            ic_function fun = produce_function_from_host(host_fun[i], parser);
+            ic_function fun = produce_function_from_host(*it, parser);
             fun.lib = IC_LIB_CORE;
             parser.functions.push_back(fun);
+            ++it;
         }
     }
-
-    for (int i = 0; i < host_functions_size; ++i)
+    if (host_functions)
     {
-        assert(host_functions);
-        ic_function fun = produce_function_from_host(host_functions[i], parser);
-        fun.lib = IC_USER_FUNCTION;
-        parser.functions.push_back(fun);
+        ic_host_function* it = host_functions;
+        while (it->prototype_str)
+        {
+            ic_function fun = produce_function_from_host(*it, parser);
+            fun.lib = IC_USER_FUNCTION;
+            parser.functions.push_back(fun);
+            ++it;
+        }
     }
 
     const ic_token* token_it = tokens.data();
@@ -276,7 +337,7 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
                 return false;
             }
             ic_var var;
-            var.idx = program->global_data_size * sizeof(ic_data);
+            var.idx = program.global_data_size * sizeof(ic_data);
             var.type = global.var.type;
             var.name = token.string;
 
@@ -284,10 +345,10 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
             {
                 ic_struct* _struct = parser.get_struct(var.type.struct_name);
                 assert(_struct);
-                program->global_data_size += _struct->num_data;
+                program.global_data_size += _struct->num_data;
             }
             else
-                program->global_data_size += 1;
+                program.global_data_size += 1;
 
             parser.global_vars.push_back(var);
             break;
@@ -321,9 +382,9 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
             compile_function(*active_functions[i], &parser, &active_functions, &program_data);
     }
 
-    program->data_size = program_data.size();
-    program->data = (unsigned char*)malloc(program->data_size);
-    memcpy(program->data, program_data.data(), program->data_size);
+    program.data_size = program_data.size();
+    program.data = (unsigned char*)malloc(program.data_size);
+    memcpy(program.data, program_data.data(), program.data_size);
 
     // compile inactive function for code corectness, these will not be included in returned program
     for (ic_function& function : parser.functions)
@@ -344,7 +405,7 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
 
         for (int j = 0; j < function.param_count; ++j)
         {
-            if (is_struct(function.params[j].type))
+            if (is_struct(function.params[j].type)) // use function for this
             {
                 ic_struct* _struct = parser.get_struct(function.params[j].type.struct_name);
                 assert(_struct);
@@ -354,23 +415,14 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
                 vmfun.param_size += 1;
         }
 
-        if (is_struct(function.return_type))
-        {
-            ic_struct* _struct = parser.get_struct(function.return_type.struct_name);
-            assert(_struct);
-            vmfun.return_size = _struct->num_data; // todo, use function to determine type size
-        }
-        else if(!is_void(function.return_type))
-            vmfun.return_size = 1;
-        else
-            vmfun.return_size = 0;
-
         if (function.type == IC_FUN_HOST)
         {
             vmfun.host_impl = true;
             vmfun.callback = function.callback;
+            vmfun.host_data = function.host_data;
             vmfun.hash = function.hash;
             vmfun.lib = function.lib;
+            vmfun.returns_value = is_void(function.return_type) ? 0 : 1;
         }
         else
         {
@@ -381,9 +433,9 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
 
         vm_functions.push_back(vmfun);
     }
-    program->functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
-    memcpy(program->functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
-    program->functions_size = vm_functions.size();
+    program.functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
+    memcpy(program.functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
+    program.functions_size = vm_functions.size();
     return true;
 }
 

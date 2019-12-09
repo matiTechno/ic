@@ -1,75 +1,21 @@
 #include "ic_impl.h"
+
 #define IC_CALL_STACK_SIZE (1024 * 1024)
 #define IC_OPERAND_STACK_SIZE 1024
 #define IC_STACK_FRAMES_SIZE 512
 
-int read_int(unsigned char** buf_it)
+void ic_vm_init(ic_vm& vm)
 {
-    int v;
-    memcpy(&v, *buf_it, sizeof(int));
-    *buf_it += sizeof(int);
-    return v;
-}
-
-float read_float(unsigned char** buf_it)
-{
-    float v;
-    memcpy(&v, *buf_it, sizeof(float));
-    *buf_it += sizeof(float);
-    return v;
-}
-
-double read_double(unsigned char** buf_it)
-{
-    double v;
-    memcpy(&v, *buf_it, sizeof(double));
-    *buf_it += sizeof(double);
-    return v;
-}
-
-bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int size)
-{
-    for (int i = 0; i < size; ++i)
-    {
-        unsigned int hash = hash_string(host_functions[i].declaration);
-        if (fun->hash == hash)
-        {
-            fun->callback = host_functions[i].callback;
-            return true;
-        }
-    }
-    return false;
-}
-
-void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size)
-{
-    for (int i = 0; i < program.functions_size; ++i)
-    {
-        ic_vm_function& fun = program.functions[i];
-
-        if (fun.host_impl && !fun.callback)
-        {
-            // try to find this function in program.libs and in host_functions
-
-            if (fun.lib == IC_LIB_CORE)
-            {
-                ic_host_function* lib;
-                int lib_size;
-                get_core_lib(&lib, &lib_size);
-                assert(resolve_function(&fun, lib, lib_size));
-            }
-            else
-            {
-                assert(fun.lib == IC_USER_FUNCTION);
-                assert(resolve_function(&fun, host_functions, host_functions_size));
-            }
-        }
-    }
-
     vm.stack_frames = (ic_stack_frame*)malloc(IC_STACK_FRAMES_SIZE * sizeof(ic_stack_frame));
     vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
-    memcpy(vm.call_stack, program.data, program.strings_byte_size); // string data doesn't change across program runs
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
+}
+
+void ic_vm_free(ic_vm& vm)
+{
+    free(vm.stack_frames);
+    free(vm.call_stack);
+    free(vm.operand_stack);
 }
 
 void ic_vm::push_stack_frame(unsigned char* bytecode, int stack_size)
@@ -135,18 +81,15 @@ ic_stack_frame& ic_vm::top_frame()
     return stack_frames[stack_frames_size - 1];
 }
 
-void vm_run(ic_vm& vm, ic_program& program)
+void ic_vm_run(ic_vm& vm, ic_program& program)
 {
+    memcpy(vm.call_stack, program.data, program.strings_byte_size);
+    // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?); clear global non string data
+    memset(vm.call_stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
     vm.stack_frames_size = 0;
     vm.call_stack_size = program.global_data_size; // this is important
     vm.operand_stack_size = 0;
-    {
-        ic_vm_function& function = program.functions[0];
-        vm.push_stack_frame(program.data + function.data_idx, function.stack_size);
-    }
-    // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
-    // clear global non string data
-    memset(vm.call_stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
+    vm.push_stack_frame(program.data + program.functions[0].data_idx, program.functions[0].stack_size);
     assert(vm.stack_frames_size == 1);
     ic_stack_frame* frame = &vm.stack_frames[0];
 
@@ -214,10 +157,10 @@ void vm_run(ic_vm& vm, ic_program& program)
 
             if (function.host_impl)
             {
-                ic_data return_data = function.callback(vm.end_op() - param_size);
+                ic_data return_data = function.callback(vm.end_op() - param_size, function.host_data);
                 vm.pop_op_many(function.param_size);
 
-                if (function.return_size)
+                if (function.returns_value)
                     vm.push_op(return_data);
             }
             else

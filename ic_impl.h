@@ -380,6 +380,7 @@ struct ic_function
             ic_host_function_ptr callback;
             unsigned int hash;
             int lib;
+            void* host_data;
         };
 
         struct
@@ -432,7 +433,6 @@ bool is_void(ic_type type);
 ic_type non_pointer_type(ic_basic_type type);
 ic_type const_pointer1_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type);
-void get_core_lib(ic_host_function** lib_ptr, int* size); // todo, change  to get_lib (select lib in function based on lib param)
 unsigned int hash_string(const char* str);
 
 struct ic_parser

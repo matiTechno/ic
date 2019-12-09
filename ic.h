@@ -1,5 +1,4 @@
 #pragma once
-#include <vector> // todo
 
 enum ic_lib_type
 {
@@ -17,21 +16,19 @@ union ic_data
     void* pointer;
 };
 
-// add pointer to void*, so host can change its internal state without using global variables
-using ic_host_function_ptr = ic_data(*)(ic_data* argv);
+using ic_host_function_ptr = ic_data(*)(ic_data* argv, void* host_data);
 
 struct ic_host_function
 {
-    const char* declaration; // todo not declaration but prototype
+    const char* prototype_str;
     ic_host_function_ptr callback;
-    // void* data
+    void* host_data;
 };
 
 // todo, some better naming would be nice (ic_function, and current ic_function rename to ic_function_desc)
 struct ic_vm_function
 {
     bool host_impl;
-    int return_size;
     int param_size;
     union
     {
@@ -43,9 +40,10 @@ struct ic_vm_function
         struct
         {
             ic_host_function_ptr callback;
+            void* host_data;
             unsigned int hash;
             int lib;
-            // data
+            bool returns_value;
         };
     };
 };
@@ -88,17 +86,12 @@ struct ic_vm
     ic_data* end_op();
 };
 
-// todo, polish these functions
-// todo, free_program 
-// todo, free_serialize_buf
-ic_program load_program(unsigned char* buf); // init_program_load (take host functions), init_program_compile
-void disassmble(ic_program& program);
-void ic_serialize(ic_program& program, unsigned char*& buf, int& size);
-bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size);
-
-// don't require program to init
-void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size); // if vm runs only one program can be done once before many runs
-
-void vm_run(ic_vm& vm, ic_program& program);
-
-// free_vm
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions);
+void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions);
+void ic_program_free(ic_program& program);
+void ic_program_print_disassembly(ic_program& program);
+void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size);
+void ic_buf_free(unsigned char* buf);
+void ic_vm_init(ic_vm& vm);
+void ic_vm_run(ic_vm& vm, ic_program& program);
+void ic_vm_free(ic_vm& vm);
