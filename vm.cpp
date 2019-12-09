@@ -44,7 +44,7 @@ void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, i
 
     vm.stack_frames = (ic_stack_frame*)malloc(IC_STACK_FRAMES_SIZE * sizeof(ic_stack_frame));
     vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
-    memcpy(vm.call_stack, program.strings, program.strings_byte_size); // string data doesn't change across program runs
+    memcpy(vm.call_stack, program.data, program.strings_byte_size); // string data doesn't change across program runs
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
 }
 
@@ -118,7 +118,7 @@ void vm_run(ic_vm& vm, ic_program& program)
     vm.operand_stack_size = 0;
     {
         ic_vm_function& function = program.functions[0];
-        vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size);
+        vm.push_stack_frame(program.data + function.data_idx, function.stack_size);
     }
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?)
     // clear global non string data
@@ -201,7 +201,7 @@ void vm_run(ic_vm& vm, ic_program& program)
             }
             else
             {
-                vm.push_stack_frame(program.bytecode + function.bytecode_idx, function.stack_size);
+                vm.push_stack_frame(program.data + function.data_idx, function.stack_size);
                 frame = &vm.top_frame();
                 memcpy(vm.call_stack + frame->bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
                 vm.pop_op_many(param_size);
@@ -220,20 +220,20 @@ void vm_run(ic_vm& vm, ic_program& program)
         {
             int idx = read_int(&frame->ip);
             if(vm.pop_op().s32)
-                frame->ip = program.bytecode + idx;
+                frame->ip = program.data + idx;
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
             int idx = read_int(&frame->ip);
             if(!vm.pop_op().s32)
-                frame->ip = program.bytecode + idx;
+                frame->ip = program.data + idx;
             break;
         }
         case IC_OPC_JUMP:
         {
             int idx = read_int(&frame->ip);
-            frame->ip = program.bytecode + idx;
+            frame->ip = program.data + idx;
             break;
         }
         case IC_OPC_ADDRESS:

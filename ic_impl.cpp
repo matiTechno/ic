@@ -68,10 +68,9 @@ ic_program load_program(unsigned char* buf)
     ic_program program;
     program.functions_size = read_int(&buf);
     program.strings_byte_size = read_int(&buf);
-    program.bytecode_size = read_int(&buf);
+    program.data_size = read_int(&buf);
     program.global_data_size = read_int(&buf);
-    program.strings = (char*)read_bytes(&buf, program.strings_byte_size);
-    program.bytecode = (unsigned char*)read_bytes(&buf, program.bytecode_size);
+    program.data = (unsigned char*)read_bytes(&buf, program.data_size);
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
     for (int i = 0; i < program.functions_size; ++i)
@@ -89,7 +88,7 @@ ic_program load_program(unsigned char* buf)
         }
         else
         {
-            function.bytecode_idx = read_int(&buf);
+            function.data_idx = read_int(&buf);
             function.stack_size = read_int(&buf);
         }
     }
@@ -100,10 +99,9 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
 {
     write_int(buf, program.functions_size);
     write_int(buf, program.strings_byte_size);
-    write_int(buf, program.bytecode_size);
+    write_int(buf, program.data_size);
     write_int(buf, program.global_data_size);
-    write_bytes(buf, (unsigned char*)program.strings, program.strings_byte_size);
-    write_bytes(buf, program.bytecode, program.bytecode_size);
+    write_bytes(buf, program.data, program.data_size);
 
     for (int i = 0; i < program.functions_size; ++i)
     {
@@ -119,7 +117,7 @@ void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
         }
         else
         {
-            write_int(buf, function.bytecode_idx);
+            write_int(buf, function.data_idx);
             write_int(buf, function.stack_size);
         }
     }
@@ -249,7 +247,7 @@ void get_core_lib(ic_host_function** lib_ptr, int* size)
     return hash;
 }
 
-bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<char>& _string_data);
+bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
 // create new function produce_host_decl, and don't use bool flag
 ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration);
 
@@ -257,7 +255,7 @@ ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_decla
 ic_function produce_function_from_host(ic_host_function& host_function, ic_parser& parser)
 {
     std::vector<ic_token> tokens;
-    std::vector<char> string_data;
+    std::vector<unsigned char> string_data;
     bool success = ic_tokenize(host_function.declaration, tokens, string_data);
     assert(success);
     assert(string_data.size() == 0);
@@ -276,16 +274,13 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
     assert(source);
 
     std::vector<ic_token> tokens;
-    std::vector<char> strings;
+    std::vector<unsigned char> program_data;
 
-    if (!ic_tokenize(source, tokens, strings))
+    if (!ic_tokenize(source, tokens, program_data))
         return false;
 
-    program->strings_byte_size = strings.size();
-    program->strings = (char*)malloc(program->strings_byte_size);
-    memcpy(program->strings, strings.data(), program->strings_byte_size);
-
-    program->global_data_size = strings.size() / sizeof(ic_data) + 1;
+    program->strings_byte_size = program_data.size();
+    program->global_data_size = program_data.size() / sizeof(ic_data) + 1;
     ic_parser parser;
     parser.init();
 
@@ -400,27 +395,26 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
                 assert(is_void(function.return_type));
                 active_functions.push_back(&function);
             }
-            function.bytecode_idx = -1;
+            function.data_idx = -1;
         }
     }
 
     assert(active_functions.size());
-    std::vector<unsigned char> bytecode;
     // important, active_functions.size() changes during loop execution
     for (int i = 0; i < active_functions.size(); ++i)
     {
         if (active_functions[i]->type == IC_FUN_SOURCE)
-            compile_function(*active_functions[i], &parser, &active_functions, &bytecode);
+            compile_function(*active_functions[i], &parser, &active_functions, &program_data);
     }
 
-    program->bytecode_size = bytecode.size();
-    program->bytecode = (unsigned char*)malloc(bytecode.size());
-    memcpy(program->bytecode, bytecode.data(), bytecode.size());
+    program->data_size = program_data.size();
+    program->data = (unsigned char*)malloc(program->data_size);
+    memcpy(program->data, program_data.data(), program->data_size);
 
     // compile inactive function for code corectness, these will not be included in returned program
     for (ic_function& function : parser.functions)
     {
-        if (function.type == IC_FUN_HOST || function.bytecode_idx != -1)
+        if (function.type == IC_FUN_HOST || function.data_idx != -1)
             continue;
         printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
         compile_function(function, &parser, nullptr, nullptr);
@@ -467,7 +461,7 @@ bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_h
         else
         {
             vmfun.host_impl = false;
-            vmfun.bytecode_idx = function.bytecode_idx;
+            vmfun.data_idx = function.data_idx;
             vmfun.stack_size = function.stack_size;
         }
 
@@ -551,7 +545,7 @@ bool is_identifier_char(char c)
     return is_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c == '_');
 }
 
-bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<char>& _string_data)
+bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data)
 {
     ic_lexer lexer{ _tokens };
     lexer._source_it = source;

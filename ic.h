@@ -1,5 +1,5 @@
 #pragma once
-#include <vector>
+#include <vector> // todo
 
 enum ic_lib_type
 {
@@ -37,7 +37,7 @@ struct ic_vm_function
     {
         struct
         {
-            int bytecode_idx;
+            int data_idx;
             int stack_size;
         };
         struct
@@ -52,14 +52,12 @@ struct ic_vm_function
 
 struct ic_program
 {
-    // todo, combine strings with bytecode
     ic_vm_function* functions;
-    unsigned char* bytecode;
-    char* strings;
+    unsigned char* data;
     int functions_size;
     int strings_byte_size;
-    int bytecode_size;
-    int global_data_size; // this does not need to be stored
+    int data_size;
+    int global_data_size;
 };
 
 struct ic_stack_frame
@@ -72,16 +70,15 @@ struct ic_stack_frame
 struct ic_vm
 {
     ic_stack_frame* stack_frames;
-    // stack_frame is now so small that we can allocate just one buffer for it with bounds checking
-    ic_data* call_stack; // must not be invalidated during execution
+    ic_data* call_stack;
     ic_data* operand_stack;
     int stack_frames_size;
     int call_stack_size;
     int operand_stack_size;
 
-    // define these functions outside of vm to not polute api
     void push_stack_frame(unsigned char* bytecode, int stack_size);
     void pop_stack_frame();
+    ic_stack_frame& top_frame();
     void push_op(ic_data data);
     void push_op();
     void push_op_many(int size);
@@ -89,7 +86,6 @@ struct ic_vm
     void pop_op_many(int size);
     ic_data& top_op();
     ic_data* end_op();
-    ic_stack_frame& top_frame();
 };
 
 // todo, polish these functions

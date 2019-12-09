@@ -1,6 +1,6 @@
 #include "ic_impl.h"
 
-void print_bc(unsigned char* bytecode, int size);
+void print_bc(unsigned char* data, int offset, int size);
 
 // todo, bounds checking
 void disassmble(ic_program& program)
@@ -14,7 +14,7 @@ void disassmble(ic_program& program)
 
     while (str_idx < program.strings_byte_size)
     {
-        str_idx += printf("%s", program.strings + str_idx);
+        str_idx += printf("%s", program.data + str_idx);
         str_idx += 1; // skip null character
         printf(" ");
     }
@@ -42,32 +42,33 @@ void disassmble(ic_program& program)
                 ic_vm_function& fun = program.functions[x];
                 if (fun.host_impl)
                     continue;
-                end_idx = fun.bytecode_idx;
+                end_idx = fun.data_idx;
                 break;
             }
             if (!end_idx)
-                end_idx = program.bytecode_size;
+                end_idx = program.data_size;
 
-            int size = end_idx - fun.bytecode_idx;
+            int size = end_idx - fun.data_idx;
             printf("bytecode_size: %d\n", size);
             printf("stack_size: %d\n", fun.stack_size);
-            print_bc(program.bytecode + fun.bytecode_idx, size);
+            print_bc(program.data, fun.data_idx, size);
         }
         printf("\n");
     }
 }
 
-void print_bc(unsigned char* bytecode, int size)
+void print_bc(unsigned char* data, int offset, int size)
 {
     printf("bytecode:\n");
 
-    unsigned char* it = bytecode;
+    unsigned char* it = data + offset;
     int line = 0;
 
     // todo, bounds checking
-    while (it < bytecode + size)
+    while (it < data + offset + size)
     {
-        printf("%-5d", line);
+        int byte_id = it - data;
+        printf("%-8d", byte_id);
         ++line;
         ic_opcode opcode = (ic_opcode)*it;
         ++it;

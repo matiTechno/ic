@@ -6,7 +6,7 @@ void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_f
     assert(function.type == IC_FUN_SOURCE);
 
     if(bytecode)
-        function.bytecode_idx = bytecode->size();
+        function.data_idx = bytecode->size();
 
     ic_compiler compiler;
     compiler.bytecode = bytecode;

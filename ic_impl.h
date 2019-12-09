@@ -381,7 +381,7 @@ struct ic_function
         struct
         {
             ic_stmt* body;
-            int bytecode_idx;
+            int data_idx;
             int stack_size;
         };
     };
