@@ -1,126 +1,40 @@
 #include "ic_impl.h"
 
-int read_int(unsigned char** buf_it)
+void write_bytes(unsigned char** buf_it, void* src, int bytes)
 {
-    int v;
-    memcpy(&v, *buf_it, sizeof(int));
-    *buf_it += sizeof(int);
-    return v;
+    memcpy(*buf_it, src, bytes);
+    *buf_it += bytes;
 }
 
-unsigned int read_uint(unsigned char** buf_it)
+void read_bytes(void* dst, unsigned char** buf_it, int bytes)
 {
-    unsigned int v;
-    memcpy(&v, *buf_it, sizeof(unsigned int));
-    *buf_it += sizeof(unsigned int);
-    return v;
+    memcpy(dst, *buf_it, bytes);
+    *buf_it += bytes;
 }
 
-float read_float(unsigned char** buf_it)
-{
-    float v;
-    memcpy(&v, *buf_it, sizeof(float));
-    *buf_it += sizeof(float);
-    return v;
-}
-
-double read_double(unsigned char** buf_it)
-{
-    double v;
-    memcpy(&v, *buf_it, sizeof(double));
-    *buf_it += sizeof(double);
-    return v;
-}
-
-void* read_bytes(unsigned char** buf, int size)
-{
-    void* ptr = malloc(size);
-    memcpy(ptr, *buf, size);
-    *buf += size;
-    return ptr;
-}
-
-void write_int(std::vector<unsigned char>& buf, int v)
-{
-    int size = buf.size();
-    buf.resize(size + sizeof(int));
-    memcpy(buf.data() + size, &v, sizeof(int));
-}
-
-void write_uint(std::vector<unsigned char>& buf, unsigned int v)
-{
-    int size = buf.size();
-    buf.resize(size + sizeof(unsigned int));
-    memcpy(buf.data() + size, &v, sizeof(unsigned int));
-}
-
-void write_bytes(std::vector<unsigned char>& buf, unsigned char* bytes, int size)
-{
-    int idx = buf.size();
-    buf.resize(idx + size);
-    memcpy(buf.data() + idx, bytes, size);
-}
-
-// todo, bounds checking
 ic_program load_program(unsigned char* buf)
 {
     assert(buf);
+    unsigned char* buf_it = buf;
     ic_program program;
-    program.functions_size = read_int(&buf);
-    program.strings_byte_size = read_int(&buf);
-    program.data_size = read_int(&buf);
-    program.global_data_size = read_int(&buf);
-    program.data = (unsigned char*)read_bytes(&buf, program.data_size);
+    read_bytes(&program, &buf_it, sizeof(program));
+    program.data = (unsigned char*)malloc(sizeof(program.data_size));
+    read_bytes(program.data, &buf_it, program.data_size);
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
-
-    for (int i = 0; i < program.functions_size; ++i)
-    {
-        ic_vm_function& function = program.functions[i];
-        function.host_impl = read_int(&buf);
-        function.return_size = read_int(&buf);
-        function.param_size = read_int(&buf);
-
-        if (function.host_impl)
-        {
-            function.hash = read_uint(&buf);
-            function.lib = read_int(&buf);
-            function.callback = nullptr;
-        }
-        else
-        {
-            function.data_idx = read_int(&buf);
-            function.stack_size = read_int(&buf);
-        }
-    }
+    for(int i = 0; i < program.functions_size; ++i)
+        read_bytes(program.functions + i, &buf_it, sizeof(ic_vm_function));
     return program;
 }
 
-void serialize_program(std::vector<unsigned char>& buf, ic_program& program)
+void ic_serialize(ic_program& program, unsigned char*& buf, int& size)
 {
-    write_int(buf, program.functions_size);
-    write_int(buf, program.strings_byte_size);
-    write_int(buf, program.data_size);
-    write_int(buf, program.global_data_size);
-    write_bytes(buf, program.data, program.data_size);
-
-    for (int i = 0; i < program.functions_size; ++i)
-    {
-        ic_vm_function& function = program.functions[i];
-        write_int(buf, function.host_impl);
-        write_int(buf, function.return_size);
-        write_int(buf, function.param_size);
-
-        if (function.host_impl)
-        {
-            write_uint(buf, function.hash);
-            write_int(buf, function.lib);
-        }
-        else
-        {
-            write_int(buf, function.data_idx);
-            write_int(buf, function.stack_size);
-        }
-    }
+    size = sizeof(ic_program) + program.data_size + program.functions_size * sizeof(ic_vm_function);
+    buf = (unsigned char*)malloc(size);
+    unsigned char* buf_it = buf;
+    write_bytes(&buf_it, &program, sizeof(ic_program));
+    write_bytes(&buf_it, program.data, program.data_size);
+    for(int i = 0; i < program.functions_size; ++i)
+        write_bytes(&buf_it, program.functions + i, sizeof(ic_vm_function));
 }
 
 ic_type non_pointer_type(ic_basic_type type)

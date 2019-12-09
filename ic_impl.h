@@ -29,6 +29,10 @@
 // self-hosting
 // naming convention - size (number of elements), byte_size (number of bytes)
 
+int read_int(unsigned char** buf_it);
+float read_float(unsigned char** buf_it);
+double read_double(unsigned char** buf_it);
+
 template<typename T, int N>
 struct ic_deque
 {
@@ -428,11 +432,8 @@ bool is_void(ic_type type);
 ic_type non_pointer_type(ic_basic_type type);
 ic_type const_pointer1_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type);
-void get_core_lib(ic_host_function** lib_ptr, int* size);
+void get_core_lib(ic_host_function** lib_ptr, int* size); // todo, change  to get_lib (select lib in function based on lib param)
 unsigned int hash_string(const char* str);
-int read_int(unsigned char** buf_it);
-float read_float(unsigned char** buf_it);
-double read_double(unsigned char** buf_it);
 
 struct ic_parser
 {

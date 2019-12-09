@@ -89,10 +89,16 @@ struct ic_vm
 };
 
 // todo, polish these functions
-ic_program load_program(unsigned char* buf);
-// read entire struct and not member by member
-void serialize_program(std::vector<unsigned char>& buf, ic_program& program); // remove vector
+// todo, free_program 
+// todo, free_serialize_buf
+ic_program load_program(unsigned char* buf); // init_program_load (take host functions), init_program_compile
 void disassmble(ic_program& program);
+void ic_serialize(ic_program& program, unsigned char*& buf, int& size);
 bool compile_to_bytecode(const char* source, ic_program* program, int libs, ic_host_function* host_functions, int host_functions_size);
+
+// don't require program to init
 void vm_init(ic_vm& vm, ic_program& program, ic_host_function* host_functions, int host_functions_size); // if vm runs only one program can be done once before many runs
+
 void vm_run(ic_vm& vm, ic_program& program);
+
+// free_vm

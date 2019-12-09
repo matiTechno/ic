@@ -101,9 +101,10 @@ int main(int argc, const char** argv)
         ic_program program;
         bool success = compile_to_bytecode((char*)file_data.data(), &program, IC_LIB_CORE, host_functions, 2);
         assert(success);
-        std::vector<unsigned char> buf;
-        serialize_program(buf, program);
-        write_to_file(buf.data(), buf.size(), "bytecode.bc");
+        unsigned char* buf;
+        int size;
+        ic_serialize(program, buf, size);
+        write_to_file(buf, size, "bytecode.bc");
         return 0;
     }
     else if (strcmp(argv[1], "disassemble") == 0)

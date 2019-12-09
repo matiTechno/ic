@@ -3,6 +3,30 @@
 #define IC_OPERAND_STACK_SIZE 1024
 #define IC_STACK_FRAMES_SIZE 512
 
+int read_int(unsigned char** buf_it)
+{
+    int v;
+    memcpy(&v, *buf_it, sizeof(int));
+    *buf_it += sizeof(int);
+    return v;
+}
+
+float read_float(unsigned char** buf_it)
+{
+    float v;
+    memcpy(&v, *buf_it, sizeof(float));
+    *buf_it += sizeof(float);
+    return v;
+}
+
+double read_double(unsigned char** buf_it)
+{
+    double v;
+    memcpy(&v, *buf_it, sizeof(double));
+    *buf_it += sizeof(double);
+    return v;
+}
+
 bool resolve_function(ic_vm_function* fun, ic_host_function* host_functions, int size)
 {
     for (int i = 0; i < size; ++i)
@@ -134,20 +158,17 @@ void vm_run(ic_vm& vm, ic_program& program)
         switch (opcode)
         {
         case IC_OPC_PUSH_S32:
-        case IC_OPC_PUSH_F32:
-        {
-            vm.push_op(); // ic_data is 8 bytes so one is enough to hold any immediate operand
-            memcpy(vm.end_op() - 1, frame->ip, 4); // implicit conversions or casting operator violate alignment rules
-            frame->ip += 4;
-            break;
-        }
-        case IC_OPC_PUSH_F64:
-        {
             vm.push_op();
-            memcpy(vm.end_op() - 1, frame->ip, 8);
-            frame->ip += 8;
+            vm.top_op().s32 = read_int(&frame->ip);
             break;
-        }
+        case IC_OPC_PUSH_F32:
+            vm.push_op();
+            vm.top_op().f32 = read_float(&frame->ip);
+            break;
+        case IC_OPC_PUSH_F64:
+            vm.push_op();
+            vm.top_op().f64 = read_double(&frame->ip);
+            break;
         case IC_OPC_PUSH_NULLPTR:
         {
             vm.push_op();
