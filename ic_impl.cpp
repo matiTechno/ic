@@ -25,7 +25,7 @@ ic_type non_pointer_type(ic_basic_type btype)
 
 ic_type const_pointer1_type(ic_basic_type btype)
 {
-    return { btype, 1, 1 << 2 };
+    return { btype, 1, 1 << 1 };
 }
 
 ic_type pointer1_type(ic_basic_type btype)
