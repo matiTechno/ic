@@ -4,6 +4,7 @@
 #include <string.h>
 #include <vector>
 #include <stdio.h>
+#include <stdlib.h>
 #include "ic.h"
 
 ic_data host_random01(ic_data*, void*)

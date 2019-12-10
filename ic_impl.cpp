@@ -85,7 +85,7 @@ void ic_buf_free(unsigned char* buf)
     free(buf);
 }
 
- unsigned int hash_string (const char* str)
+unsigned int hash_string(const char* str)
 {
     unsigned int hash = 5381;
     int c;
@@ -230,7 +230,7 @@ void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
         assert(global.type == IC_GLOBAL_FUNCTION);
         global.function.type = IC_FUN_HOST;
         global.function.host_function = it;
-        global.function.origin = IC_LIB_CORE;
+        global.function.origin = origin;
         parser.functions.push_back(global.function);
         ++it;
     }
