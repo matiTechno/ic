@@ -10,16 +10,15 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
     if (to.indirection_level)
     {
         assert(to.basic_type != IC_TYPE_NULLPTR);
-
-        // TODO, this is not correct, 
         // http://c-faq.com/ansi/constmismatch.html
-        // needs t o be fixed
-        // to_type must be more const than from_type, except constness of a pointer itself
-        for (int i = 1; i <= to.indirection_level; ++i)
+        // this implementation is more restrictive than C++ permits, might fix later
+        assert((to.const_mask & 2) >= (from.const_mask & 2));
+
+        for (int i = 2; i <= to.indirection_level; ++i)
         {
             int const_to = to.const_mask & (1 << i);
             int const_from = from.const_mask & (1 << i);
-            assert(const_to >= const_from);
+            assert(const_to == const_from);
         }
 
         if (to.basic_type == IC_TYPE_VOID || from.basic_type == IC_TYPE_NULLPTR || to.basic_type == from.basic_type)
