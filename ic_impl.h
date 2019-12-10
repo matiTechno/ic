@@ -11,7 +11,6 @@
 
 // ic - interpreted C
 // todo
-// use common prefix for all declarations (at least for interface)
 // comma, ternary, bitwise operators, switch, else if
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
 // function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, preprocessor, enum, union
@@ -27,6 +26,7 @@
 // bytecode endianness
 // I would like to support simple generics and plain struct functions
 // self-hosting
+// remove std::vector dependency - to keep POD and explicit initialization style consistent
 
 static_assert(sizeof(int) == 4, "sizeof(int) == 4");
 static_assert(sizeof(float) == 4, "sizeof(float) == 4");
@@ -34,7 +34,6 @@ static_assert(sizeof(double) == 8, "sizeof(double) == 8");
 static_assert(sizeof(void*) == 8, "sizeof(void*) == 8");
 
 #define IC_MAX_ARGC 10
-#define IC_USER_FUNCTION -1
 
 // important: compare and logical_not push s32 not bool
 enum ic_opcode
@@ -199,6 +198,7 @@ enum ic_token_type: unsigned char
     IC_TOK_LESS_EQUAL,
     IC_TOK_PLUS_PLUS,
     IC_TOK_MINUS_MINUS,
+    IC_TOK_ARROW,
     // single character
     IC_TOK_LEFT_PAREN,
     IC_TOK_RIGHT_PAREN,
@@ -219,32 +219,20 @@ enum ic_token_type: unsigned char
     IC_TOK_LEFT_BRACKET,
     IC_TOK_RIGHT_BRACKET,
     IC_TOK_DOT,
-    IC_TOK_ARROW,
 };
 
-enum ic_global_type: unsigned char
+// order is important here
+enum ic_basic_type: unsigned char
 {
-    IC_GLOBAL_FUNCTION,
-    IC_GLOBAL_STRUCT,
-    IC_GLOBAL_VAR_DECLARATION,
-};
-
-enum ic_function_type: unsigned char
-{
-    IC_FUN_HOST,
-    IC_FUN_SOURCE,
-};
-
-enum ic_stmt_type: unsigned char
-{
-    IC_STMT_COMPOUND,
-    IC_STMT_FOR,
-    IC_STMT_IF,
-    IC_STMT_VAR_DECLARATION,
-    IC_STMT_RETURN,
-    IC_STMT_BREAK,
-    IC_STMT_CONTINUE,
-    IC_STMT_EXPR,
+    IC_TYPE_BOOL, // stores only 0 or 1 at .s8
+    IC_TYPE_S8,
+    IC_TYPE_U8,
+    IC_TYPE_S32,
+    IC_TYPE_F32,
+    IC_TYPE_F64,
+    IC_TYPE_VOID,
+    IC_TYPE_NULLPTR,
+    IC_TYPE_STRUCT,
 };
 
 enum ic_expr_type: unsigned char
@@ -262,18 +250,29 @@ enum ic_expr_type: unsigned char
     IC_EXPR_PRIMARY,
 };
 
-// order is important here
-enum ic_basic_type: unsigned char
+enum ic_stmt_type: unsigned char
 {
-    IC_TYPE_BOOL, // stores only 0 or 1; 1 byte at .s8
-    IC_TYPE_S8,
-    IC_TYPE_U8,
-    IC_TYPE_S32,
-    IC_TYPE_F32,
-    IC_TYPE_F64,
-    IC_TYPE_VOID,
-    IC_TYPE_NULLPTR,
-    IC_TYPE_STRUCT,
+    IC_STMT_COMPOUND,
+    IC_STMT_FOR,
+    IC_STMT_IF,
+    IC_STMT_VAR_DECL,
+    IC_STMT_RETURN,
+    IC_STMT_BREAK,
+    IC_STMT_CONTINUE,
+    IC_STMT_EXPR,
+};
+
+enum ic_function_type: unsigned char
+{
+    IC_FUN_HOST,
+    IC_FUN_SOURCE,
+};
+
+enum ic_decl_type: unsigned char
+{
+    IC_DECL_FUNCTION,
+    IC_DECL_STRUCT,
+    IC_DECL_VAR,
 };
 
 enum ic_stmt_result
@@ -281,42 +280,6 @@ enum ic_stmt_result
     IC_STMT_RESULT_NULL = 0,
     IC_STMT_RESULT_BREAK_CONT = 1,
     IC_STMT_RESULT_RETURN = 2,
-};
-
-template<typename T, int N>
-struct ic_deque
-{
-    std::vector<T*> pools;
-    int size;
-
-    void init()
-    {
-        size = 0;
-    }
-
-    void free()
-    {
-        for (T* pool : pools)
-            ::free(pool);
-    }
-
-    T& get(int idx)
-    {
-        assert(idx < size);
-        return pools[idx / N][idx % N];
-    }
-
-    T* allocate()
-    {
-        if (pools.empty() || size == pools.size() * N)
-        {
-            T* new_pool = (T*)malloc(N * sizeof(T));
-            pools.push_back(new_pool);
-        }
-
-        size += 1;
-        return &get(size - 1);
-    }
 };
 
 struct ic_string
@@ -333,7 +296,6 @@ struct ic_token
 
     union
     {
-        // todo, int type for storing string literal idx and integer values
         double number;
         ic_string string;
     };
@@ -344,53 +306,7 @@ struct ic_type
     ic_basic_type basic_type;
     char indirection_level;
     unsigned char const_mask;
-    ic_string struct_name; // keep pointer instead
-};
-
-struct ic_expr;
-
-struct ic_stmt
-{
-    ic_stmt_type type;
-    ic_stmt* next;
-
-    union
-    {
-        struct
-        {
-            bool push_scope;
-            ic_stmt* body;
-        } _compound;
-
-        struct
-        {
-            ic_stmt* header1;
-            ic_expr* header2;
-            ic_expr* header3;
-            ic_stmt* body;
-        } _for;
-
-        struct
-        {
-            ic_expr* header;
-            ic_stmt* body_if;
-            ic_stmt* body_else;
-        } _if;
-
-        struct
-        {
-            ic_type type;
-            ic_token token;
-            ic_expr* expr;
-        } _var_declaration;
-
-        struct
-        {
-            ic_expr* expr;
-        } _return;
-        
-        ic_expr* _expr;
-    };
+    ic_string struct_name;
 };
 
 struct ic_expr
@@ -447,6 +363,51 @@ struct ic_expr
     };
 };
 
+struct ic_stmt
+{
+    ic_stmt_type type;
+    // todo, token for error reporting
+    ic_stmt* next;
+
+    union
+    {
+        struct
+        {
+            bool push_scope;
+            ic_stmt* body;
+        } _compound;
+
+        struct
+        {
+            ic_stmt* header1;
+            ic_expr* header2;
+            ic_expr* header3;
+            ic_stmt* body;
+        } _for;
+
+        struct
+        {
+            ic_expr* header;
+            ic_stmt* body_if;
+            ic_stmt* body_else;
+        } _if;
+
+        struct
+        {
+            ic_type type;
+            ic_token token;
+            ic_expr* expr;
+        } _var_decl;
+
+        struct
+        {
+            ic_expr* expr;
+        } _return;
+        
+        ic_expr* _expr;
+    };
+};
+
 struct ic_param
 {
     ic_type type;
@@ -485,15 +446,13 @@ struct ic_struct
     int num_data;
 };
 
-struct ic_global
+struct ic_decl
 {
-    ic_global_type type;
-
+    ic_decl_type type;
     union
     {
-        ic_function function;
         ic_struct _struct;
-
+        ic_function function;
         struct
         {
             ic_type type;
@@ -519,45 +478,12 @@ int read_int(unsigned char** buf_it);
 float read_float(unsigned char** buf_it);
 double read_double(unsigned char** buf_it);
 
-struct ic_exception_parse {};
-struct ic_exception_compie {};
-
-struct ic_parser
+struct ic_global_scope
 {
-    ic_deque<ic_expr, 1000> expressions;
-    ic_deque<ic_stmt, 1000> statements;
     std::vector<ic_struct> structs;
     std::vector<ic_function> functions;
-    std::vector<ic_var> global_vars;
-
-    void init()
-    {
-        expressions.init();
-        statements.init();
-    }
-
-    void free()
-    {
-        expressions.free();
-        statements.free();
-    }
-
-    ic_stmt* allocate_stmt(ic_stmt_type type)
-    {
-        ic_stmt* stmt = statements.allocate();
-        memset(stmt, 0, sizeof(ic_stmt));
-        stmt->type = type;
-        return stmt;
-    }
-
-    ic_expr* allocate_expr(ic_expr_type type, ic_token token)
-    {
-        ic_expr* expr = expressions.allocate();
-        memset(expr, 0, sizeof(ic_expr));
-        expr->type = type;
-        expr->token = token;
-        return expr;
-    }
+    std::vector<ic_var> vars;
+    int global_data_size;
 
     ic_struct* get_struct(ic_string name)
     {
@@ -579,9 +505,9 @@ struct ic_parser
         return nullptr;
     }
 
-    ic_var* get_global_var(ic_string name)
+    ic_var* get_var(ic_string name)
     {
-        for (ic_var& var : global_vars)
+        for (ic_var& var : vars)
         {
             if (string_compare(var.name, name))
                 return &var;
@@ -604,9 +530,9 @@ struct ic_expr_result
 
 struct ic_compiler
 {
+    ic_global_scope* global_scope;
     std::vector<unsigned char>* bytecode;
     ic_function* function;
-    ic_parser* parser;
     std::vector<ic_function*>* active_functions;
     bool generate_bytecode;
     std::vector<ic_scope> scopes;
@@ -725,7 +651,7 @@ struct ic_compiler
 
     ic_struct* get_struct(ic_string name)
     {
-        ic_struct* _struct = parser->get_struct(name);
+        ic_struct* _struct = global_scope->get_struct(name);
         assert(_struct);
         return _struct;
     }
@@ -733,7 +659,7 @@ struct ic_compiler
     ic_function* get_function(ic_string name, int* idx)
     {
         assert(idx);
-        ic_function* function = parser->get_function(name);
+        ic_function* function = global_scope->get_function(name);
         assert(function);
 
         if (!generate_bytecode)
@@ -765,15 +691,19 @@ struct ic_compiler
             }
         }
 
-        ic_var* global_var = parser->get_global_var(name);
+        ic_var* global_var = global_scope->get_var(name);
         assert(global_var);
         *is_global = true;
         return *global_var;
     }
 };
 
-void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions,
+// todo, return false on error
+// I prefer to pass by reference and pass additional flag if generate or not,
+// and I also have this idea, fill compiler strcuture and pass it to the function, it will be much better
+void compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode);
+
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);

@@ -1,6 +1,6 @@
 #include "ic_impl.h"
 
-void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions,
+void compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode)
 {
     assert(function.type == IC_FUN_SOURCE);
@@ -11,7 +11,7 @@ void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_f
     ic_compiler compiler;
     compiler.bytecode = bytecode;
     compiler.function = &function;
-    compiler.parser = parser;
+    compiler.global_scope = &gscope;
     compiler.active_functions = active_functions;
     compiler.generate_bytecode = bytecode != nullptr;
     compiler.stack_size = 0;
@@ -165,13 +165,13 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         compiler.bc_set_int(idx_resolve_else, idx_else);
         return result_if < result_else ? result_if : result_else;
     }
-    case IC_STMT_VAR_DECLARATION:
+    case IC_STMT_VAR_DECL:
     {
-        ic_var var = compiler.declare_var(stmt->_var_declaration.type, stmt->_var_declaration.token.string);
+        ic_var var = compiler.declare_var(stmt->_var_decl.type, stmt->_var_decl.token.string);
 
-        if (stmt->_var_declaration.expr)
+        if (stmt->_var_decl.expr)
         {
-            ic_expr_result result = compile_expr(stmt->_var_declaration.expr, compiler);
+            ic_expr_result result = compile_expr(stmt->_var_decl.expr, compiler);
             compile_implicit_conversion(var.type, result.type, compiler);
             compiler.add_opcode(IC_OPC_ADDRESS);
             compiler.add_s32(var.idx);
