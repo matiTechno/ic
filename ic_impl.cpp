@@ -49,29 +49,17 @@ void ic_buf_free(unsigned char* buf)
 
 ic_type non_pointer_type(ic_basic_type btype)
 {
-    ic_type type;
-    type.basic_type = btype;
-    type.indirection_level = 0;
-    type.const_mask = 0; // doesn't matter but it makes debugging easier
-    return type;
+    return { btype, 0 };
 }
 
 ic_type const_pointer1_type(ic_basic_type btype)
 {
-    ic_type type;
-    type.basic_type = btype;
-    type.indirection_level = 1;
-    type.const_mask = 1 << 2;
-    return type;
+    return { btype, 1, 1 << 2 };
 }
 
 ic_type pointer1_type(ic_basic_type btype)
 {
-    ic_type type;
-    type.basic_type = btype;
-    type.indirection_level = 1;
-    type.const_mask = 0;
-    return type;
+    return { btype, 1};
 }
 
 bool is_struct(ic_type type)

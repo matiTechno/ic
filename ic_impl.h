@@ -341,10 +341,10 @@ struct ic_token
 
 struct ic_type
 {
-    ic_string struct_name; // keep pointer instead
     ic_basic_type basic_type;
     char indirection_level;
     unsigned char const_mask;
+    ic_string struct_name; // keep pointer instead
 };
 
 struct ic_expr;
