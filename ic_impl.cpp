@@ -1,5 +1,38 @@
 #include "ic_impl.h"
 
+bool string_compare(ic_string str1, ic_string str2)
+{
+    if (str1.len != str2.len)
+        return false;
+
+    return (strncmp(str1.data, str2.data, str1.len) == 0);
+}
+
+bool is_struct(ic_type type)
+{
+    return !type.indirection_level && type.basic_type == IC_TYPE_STRUCT;
+}
+
+bool is_void(ic_type type)
+{
+    return !type.indirection_level && type.basic_type == IC_TYPE_VOID;
+}
+
+ic_type non_pointer_type(ic_basic_type btype)
+{
+    return { btype, 0 };
+}
+
+ic_type const_pointer1_type(ic_basic_type btype)
+{
+    return { btype, 1, 1 << 2 };
+}
+
+ic_type pointer1_type(ic_basic_type btype)
+{
+    return { btype, 1};
+}
+
 int read_int(unsigned char** buf_it)
 {
     int v;
@@ -36,152 +69,6 @@ void read_bytes(void* dst, unsigned char** buf_it, int bytes)
     *buf_it += bytes;
 }
 
-void ic_program_free(ic_program& program)
-{
-    free(program.data);
-    free(program.functions);
-}
-
-void ic_buf_free(unsigned char* buf)
-{
-    free(buf);
-}
-
-ic_type non_pointer_type(ic_basic_type btype)
-{
-    return { btype, 0 };
-}
-
-ic_type const_pointer1_type(ic_basic_type btype)
-{
-    return { btype, 1, 1 << 2 };
-}
-
-ic_type pointer1_type(ic_basic_type btype)
-{
-    return { btype, 1};
-}
-
-bool is_struct(ic_type type)
-{
-    return !type.indirection_level && type.basic_type == IC_TYPE_STRUCT;
-}
-
-bool is_void(ic_type type)
-{
-    return !type.indirection_level && type.basic_type == IC_TYPE_VOID;
-}
-
-void ic_print_error(int line, int col, const char* fmt, ...)
-{
-    printf("error; line: %d; col: %d; ", line, col);
-    va_list list;
-    va_start(list, fmt);
-    vprintf(fmt, list);
-    va_end(list);
-    printf("\n");
-}
-
-ic_data ic_host_prints(ic_data* argv, void*)
-{
-    printf("prints: %s\n", (const char*)argv->pointer);
-    return {};
-}
-
-ic_data ic_host_printf(ic_data* argv, void*)
-{
-    printf("printf: %f\n", argv->f64);
-    return {};
-}
-
-ic_data ic_host_printp(ic_data* argv, void*)
-{
-    printf("printp: %p\n", argv->pointer);
-    return {};
-}
-
-ic_data ic_host_malloc(ic_data* argv, void*)
-{
-    void* ptr = malloc(argv->s32);
-    ic_data data;
-    data.pointer = ptr;
-    return data;
-}
-
-ic_data ic_host_tan(ic_data* argv, void*)
-{
-    ic_data data;
-    data.f64 = tan(argv->f64);
-    return data;
-}
-
-ic_data ic_host_sqrt(ic_data* argv, void*)
-{
-    ic_data data;
-    data.f64 = sqrt(argv->f64);
-    return data;
-}
-
-ic_data ic_host_pow(ic_data* argv, void*)
-{
-    ic_data data;
-    data.f64 = pow(argv[0].f64, argv[1].f64);
-    return data;
-}
-
-ic_data ic_host_exit(ic_data*, void*)
-{
-    exit(0);
-}
-
-bool string_compare(ic_string str1, ic_string str2)
-{
-    if (str1.len != str2.len)
-        return false;
-
-    return (strncmp(str1.data, str2.data, str1.len) == 0);
-}
-
-static ic_host_function core_lib[] =
-{
-    {"void prints(const s8*)", ic_host_prints},
-    {"void printf(f64)", ic_host_printf},
-    {"void printp(const void*)", ic_host_printp},
-    {"void* malloc(s32)", ic_host_malloc},
-    {"f64 tan(f64)", ic_host_tan},
-    {"f64 sqrt(f64)", ic_host_sqrt},
-    {"f64 pow(f64, f64)", ic_host_pow},
-    {"void exit()", ic_host_exit},
-    nullptr
-};
-
- unsigned int hash_string (const char* str)
-{
-    unsigned int hash = 5381;
-    int c;
-
-    while (c = *str++)
-        hash = ((hash << 5) + hash) + c;
-
-    return hash;
-}
-
- void resolve_function(ic_vm_function& vmfun, ic_host_function* it)
- {
-     assert(it);
-     while (it->prototype_str)
-     {
-         if (vmfun.hash == hash_string(it->prototype_str))
-         {
-             vmfun.callback = it->callback;
-             vmfun.host_data = it->host_data;
-             return;
-         }
-         ++it;
-     }
-     assert(false);
- }
-
 void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size)
 {
     size = sizeof(ic_program) + program.data_size + program.functions_size * sizeof(ic_vm_function);
@@ -192,6 +79,104 @@ void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size)
     for(int i = 0; i < program.functions_size; ++i)
         write_bytes(&buf_it, program.functions + i, sizeof(ic_vm_function));
 }
+
+void ic_buf_free(unsigned char* buf)
+{
+    free(buf);
+}
+
+ unsigned int hash_string (const char* str)
+{
+    unsigned int hash = 5381;
+    int c;
+    while (c = *str)
+    {
+        hash = ((hash << 5) + hash) + c;
+        ++str;
+    }
+    return hash;
+}
+
+ void resolve_vm_function(ic_vm_function& fun, ic_host_function* it)
+ {
+     assert(it);
+     while (it->prototype_str)
+     {
+         if (fun.hash == hash_string(it->prototype_str))
+         {
+             fun.callback = it->callback;
+             fun.host_data = it->host_data;
+             return;
+         }
+         ++it;
+     }
+     assert(false);
+ }
+
+ic_data host_prints(ic_data* argv, void*)
+{
+    printf("prints: %s\n", (const char*)argv->pointer);
+    return {};
+}
+
+ic_data host_printf(ic_data* argv, void*)
+{
+    printf("printf: %f\n", argv->f64);
+    return {};
+}
+
+ic_data host_printp(ic_data* argv, void*)
+{
+    printf("printp: %p\n", argv->pointer);
+    return {};
+}
+
+ic_data host_malloc(ic_data* argv, void*)
+{
+    void* ptr = malloc(argv->s32);
+    ic_data data;
+    data.pointer = ptr;
+    return data;
+}
+
+ic_data host_tan(ic_data* argv, void*)
+{
+    ic_data data;
+    data.f64 = tan(argv->f64);
+    return data;
+}
+
+ic_data host_sqrt(ic_data* argv, void*)
+{
+    ic_data data;
+    data.f64 = sqrt(argv->f64);
+    return data;
+}
+
+ic_data host_pow(ic_data* argv, void*)
+{
+    ic_data data;
+    data.f64 = pow(argv[0].f64, argv[1].f64);
+    return data;
+}
+
+ic_data host_exit(ic_data*, void*)
+{
+    exit(0);
+}
+
+static ic_host_function _core_lib[] =
+{
+    {"void prints(const s8*)", host_prints},
+    {"void printf(f64)", host_printf},
+    {"void printp(const void*)", host_printp},
+    {"void* malloc(s32)", host_malloc},
+    {"f64 tan(f64)", host_tan},
+    {"f64 sqrt(f64)", host_sqrt},
+    {"f64 pow(f64, f64)", host_pow},
+    {"void exit()", host_exit},
+    nullptr
+};
 
 void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions)
 {
@@ -204,42 +189,63 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
 
     for (int i = 0; i < program.functions_size; ++i)
     {
-        ic_vm_function& vmfun = program.functions[i];
-        read_bytes(&vmfun, &buf_it, sizeof(ic_vm_function));
+        ic_vm_function& fun = program.functions[i];
+        read_bytes(&fun, &buf_it, sizeof(ic_vm_function));
 
-        if (!vmfun.host_impl)
+        if (!fun.host_impl)
             continue;
 
-        if (vmfun.origin == IC_LIB_CORE)
-            resolve_function(vmfun, core_lib);
-        else if (vmfun.origin == IC_USER_FUNCTION)
-            resolve_function(vmfun, host_functions);
+        if (fun.origin == IC_LIB_CORE)
+            resolve_vm_function(fun, _core_lib);
+        else if (fun.origin == IC_USER_FUNCTION)
+            resolve_vm_function(fun, host_functions);
         else
             assert(false);
     }
 }
 
-bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
-// create new function produce_host_decl, and don't use bool flag
-ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration);
-
- // todo, better name
-// + it would be better if it run over array of functions
-ic_function produce_function_from_host(ic_host_function& host_function, ic_parser& parser)
+void ic_program_free(ic_program& program)
 {
-    std::vector<ic_token> tokens;
-    std::vector<unsigned char> string_data;
-    bool success = ic_tokenize(host_function.prototype_str, tokens, string_data);
-    assert(success);
-    assert(string_data.size() == 0);
-
-    const ic_token* tok_ptr = tokens.data();
-    ic_global global = produce_global(&tok_ptr, parser, true); // todo, produce_function_prototype
-    assert(global.type == IC_GLOBAL_FUNCTION);
-    return global.function;
+    free(program.data);
+    free(program.functions);
 }
 
-// todo cleanup on early return
+bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
+// create another function for parsing prototypes
+ic_global produce_global(const ic_token** it, ic_parser& parser, bool fun_prototype);
+
+void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
+{
+    assert(it);
+    std::vector<ic_token> tokens;
+    std::vector<unsigned char> string_data;
+
+    while (it->prototype_str)
+    {
+        tokens.clear();
+        bool success = tokenize(it->prototype_str, tokens, string_data);
+        assert(success);
+        const ic_token* tok_ptr = tokens.data();
+        ic_global global = produce_global(&tok_ptr, parser, true); // todo, error check, this throws
+        assert(global.type == IC_GLOBAL_FUNCTION);
+        global.function.type = IC_FUN_HOST;
+        global.function.host_function = it;
+        global.function.origin = IC_LIB_CORE;
+        parser.functions.push_back(global.function);
+        ++it;
+    }
+}
+
+void print_error(int line, int col, const char* fmt, ...)
+{
+    printf("error; line: %d; col: %d; ", line, col);
+    va_list list;
+    va_start(list, fmt);
+    vprintf(fmt, list);
+    va_end(list);
+    printf("\n");
+}
+
 bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
 {
     assert(source);
@@ -247,51 +253,28 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
     std::vector<ic_token> tokens;
     std::vector<unsigned char> program_data;
 
-    if (!ic_tokenize(source, tokens, program_data))
+    if (!tokenize(source, tokens, program_data))
         return false;
 
     program.strings_byte_size = program_data.size();
     program.global_data_size = program_data.size() / sizeof(ic_data) + 1;
-    ic_parser parser;
+    ic_parser parser; // todo, free parser resource
     parser.init();
 
     if (libs & IC_LIB_CORE)
-    {
-        ic_host_function* it = core_lib;
-        while (it->prototype_str)
-        {
-            ic_function fun = produce_function_from_host(*it, parser);
-            fun.host_function = it;
-            fun.origin = IC_LIB_CORE;
-            parser.functions.push_back(fun);
-            ++it;
-        }
-    }
+        load_host_functions(_core_lib, IC_LIB_CORE, parser);
     if (host_functions)
-    {
-        ic_host_function* it = host_functions;
-        while (it->prototype_str)
-        {
-            ic_function fun = produce_function_from_host(*it, parser);
-            fun.host_function = it;
-            fun.origin = IC_USER_FUNCTION;
-            parser.functions.push_back(fun);
-            ++it;
-        }
-    }
+        load_host_functions(host_functions, IC_USER_FUNCTION, parser);
 
     const ic_token* token_it = tokens.data();
-
+    // todo, move this to a separate function to simplify cleanup code
     while (token_it->type != IC_TOK_EOF)
     {
         ic_global global;
 
-        try
-        {
+        try {
             global = produce_global(&token_it, parser, false);
-        }
-        catch (ic_exception_parsing)
-        {
+        } catch (ic_exception_parse) {
             return false;
         }
 
@@ -305,9 +288,9 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
             if (prev_function)
             {
                 if(prev_function->type == IC_FUN_HOST)
-                    ic_print_error(token.line, token.col, "function (provided by host) with such name already exists");
+                    print_error(token.line, token.col, "function (provided by host) with such name already exists");
                 else
-                    ic_print_error(token.line, token.col, "function with such name already exists");
+                    print_error(token.line, token.col, "function with such name already exists");
 
                 return false;
             }
@@ -320,7 +303,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
 
             if (parser.get_struct(token.string))
             {
-                ic_print_error(token.line, token.col, "struct with such name already exists");
+                print_error(token.line, token.col, "struct with such name already exists");
                 return false;
             }
             parser.structs.push_back(global._struct);
@@ -332,7 +315,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
 
             if (parser.get_global_var(token.string))
             {
-                ic_print_error(token.line, token.col, "global variable with such name already exists");
+                print_error(token.line, token.col, "global variable with such name already exists");
                 return false;
             }
             ic_var var;
@@ -369,7 +352,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
                 assert(is_void(function.return_type));
                 active_functions.push_back(&function);
             }
-            function.data_idx = -1;
+            function.data_idx = -1; // this is important
         }
     }
 
@@ -381,11 +364,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
             compile_function(*active_functions[i], &parser, &active_functions, &program_data);
     }
 
-    program.data_size = program_data.size();
-    program.data = (unsigned char*)malloc(program.data_size);
-    memcpy(program.data, program_data.data(), program.data_size);
-
-    // compile inactive function for code corectness, these will not be included in returned program
+    // compile inactive functions for code corectness, these will not be included in returned program
     for (ic_function& function : parser.functions)
     {
         if (function.type == IC_FUN_HOST || function.data_idx != -1)
@@ -394,20 +373,24 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         compile_function(function, &parser, nullptr, nullptr);
     }
 
-    std::vector<ic_vm_function> vm_functions;
+    program.data_size = program_data.size();
+    program.data = (unsigned char*)malloc(program.data_size);
+    memcpy(program.data, program_data.data(), program.data_size);
+    program.functions_size = active_functions.size();
+    program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
-    for (ic_function* _ptr : active_functions)
+    for(int i = 0; i < active_functions.size(); ++i)
     {
-        ic_function& function = *_ptr;
-        ic_vm_function vmfun;
+        ic_function& fun = *active_functions[i];
+        ic_vm_function& vmfun = program.functions[i];
+        vmfun.host_impl = fun.type == IC_FUN_HOST;
         vmfun.param_size = 0;
-        vmfun.host_impl = function.type == IC_FUN_HOST;
 
-        for (int j = 0; j < function.param_count; ++j)
+        for (int j = 0; j < fun.param_count; ++j)
         {
-            if (is_struct(function.params[j].type)) // use function for this
+            if (is_struct(fun.params[j].type))
             {
-                ic_struct* _struct = parser.get_struct(function.params[j].type.struct_name);
+                ic_struct* _struct = parser.get_struct(fun.params[j].type.struct_name);
                 assert(_struct);
                 vmfun.param_size += _struct->num_data;
             }
@@ -417,26 +400,21 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
 
         if (vmfun.host_impl)
         {
-            vmfun.callback = function.host_function->callback;
-            vmfun.host_data = function.host_function->host_data;
-            vmfun.hash = hash_string(function.host_function->prototype_str);
-            vmfun.origin = function.origin;
-            vmfun.returns_value = is_void(function.return_type) ? 0 : 1;
-
-            // make sure there is no hash collision
-            for (ic_vm_function& other : vm_functions)
-                assert(other.hash != vmfun.hash);
+            vmfun.callback = fun.host_function->callback;
+            vmfun.host_data = fun.host_function->host_data;
+            vmfun.hash = hash_string(fun.host_function->prototype_str);
+            vmfun.origin = fun.origin;
+            vmfun.returns_value = is_void(fun.return_type) ? 0 : 1;
+            // make sure there is no hash collision with previously initialized vm functions
+            for(int j = 0; j < i; ++j)
+                assert(vmfun.hash != program.functions[j].hash);
         }
         else
         {
-            vmfun.data_idx = function.data_idx;
-            vmfun.stack_size = function.stack_size;
+            vmfun.data_idx = fun.data_idx;
+            vmfun.stack_size = fun.stack_size;
         }
-        vm_functions.push_back(vmfun);
     }
-    program.functions = (ic_vm_function*)malloc(vm_functions.size() * sizeof(ic_vm_function));
-    memcpy(program.functions, vm_functions.data(), vm_functions.size() * sizeof(ic_vm_function));
-    program.functions_size = vm_functions.size();
     return true;
 }
 
@@ -518,31 +496,31 @@ struct ic_keyword
     ic_token_type token_type;
 };
 
-bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data)
-{
-    ic_keyword _keywords[] = {
-        {"for", IC_TOK_FOR},
-        {"while", IC_TOK_WHILE},
-        {"if", IC_TOK_IF},
-        {"else", IC_TOK_ELSE},
-        {"return", IC_TOK_RETURN},
-        {"break", IC_TOK_BREAK},
-        {"continue", IC_TOK_CONTINUE},
-        {"true", IC_TOK_TRUE},
-        {"false", IC_TOK_FALSE},
-        {"bool", IC_TOK_BOOL},
-        {"s8", IC_TOK_S8},
-        {"u8", IC_TOK_U8},
-        {"s32", IC_TOK_S32},
-        {"f32", IC_TOK_F32},
-        {"f64", IC_TOK_F64},
-        {"void", IC_TOK_VOID},
-        {"nullptr", IC_TOK_NULLPTR},
-        {"const", IC_TOK_CONST},
-        {"struct", IC_TOK_STRUCT},
-        {"sizeof", IC_TOK_SIZEOF},
-    };
+static ic_keyword _keywords[] = {
+    {"for", IC_TOK_FOR},
+    {"while", IC_TOK_WHILE},
+    {"if", IC_TOK_IF},
+    {"else", IC_TOK_ELSE},
+    {"return", IC_TOK_RETURN},
+    {"break", IC_TOK_BREAK},
+    {"continue", IC_TOK_CONTINUE},
+    {"true", IC_TOK_TRUE},
+    {"false", IC_TOK_FALSE},
+    {"bool", IC_TOK_BOOL},
+    {"s8", IC_TOK_S8},
+    {"u8", IC_TOK_U8},
+    {"s32", IC_TOK_S32},
+    {"f32", IC_TOK_F32},
+    {"f64", IC_TOK_F64},
+    {"void", IC_TOK_VOID},
+    {"nullptr", IC_TOK_NULLPTR},
+    {"const", IC_TOK_CONST},
+    {"struct", IC_TOK_STRUCT},
+    {"sizeof", IC_TOK_SIZEOF},
+};
 
+bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data)
+{
     ic_lexer lexer{ _tokens };
     lexer._source_it = source;
 
@@ -621,7 +599,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
                 lexer.add_token(IC_TOK_VBAR_VBAR);
             else // single | is not allowed in the source code
             {
-                ic_print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
+                print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
                 return false;
             }
 
@@ -648,7 +626,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
             if (lexer.end() && *lexer.pos() != '"')
             {
-                ic_print_error(lexer._token_line, lexer._token_col, "unterminated string literal");
+                print_error(lexer._token_line, lexer._token_col, "unterminated string literal");
                 return false;
             }
 
@@ -669,7 +647,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
             if (lexer.end() && *lexer.pos() != '\'')
             {
-                ic_print_error(lexer._token_line, lexer._token_col, "unterminated character literal");
+                print_error(lexer._token_line, lexer._token_col, "unterminated character literal");
                 return false;
             }
 
@@ -694,7 +672,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
 
             if (code == -1)
             {
-                ic_print_error(lexer._token_line, lexer._token_col,
+                print_error(lexer._token_line, lexer._token_col,
                     "invalid character literal; only printable, \\n and \\0 characters are supported");
                 return false;
             }
@@ -753,7 +731,7 @@ bool ic_tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector
             }
             else
             {
-                ic_print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
+                print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
                 return false;
             }
         }
@@ -780,7 +758,6 @@ enum ic_op_precedence
 
 // grammar, production rules hierarchy
 
-ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration);
 ic_stmt* produce_stmt(const ic_token** it, ic_parser& parser);
 ic_stmt* produce_stmt_var_declaration(const ic_token** it, ic_parser& parser);
 ic_expr* produce_expr_stmt(const ic_token** it, ic_parser& parser);
@@ -803,8 +780,8 @@ bool token_consume(const ic_token** it, ic_token_type type, const char* err_msg 
 
     if (err_msg)
     {
-        ic_print_error((**it).line, (**it).col, err_msg);
-        throw ic_exception_parsing{};
+        print_error((**it).line, (**it).col, err_msg);
+        throw ic_exception_parse{};
     }
 
     return false;
@@ -814,9 +791,9 @@ void exit_parsing(const ic_token** it, const char* err_msg, ...)
 {
     va_list list;
     va_start(list, err_msg);
-    ic_print_error((**it).line, (**it).col, err_msg, list);
+    print_error((**it).line, (**it).col, err_msg, list);
     va_end(list);
-    throw ic_exception_parsing{};
+    throw ic_exception_parse{};
 }
 
 #define IC_CMASK_MSB 7
@@ -889,7 +866,7 @@ bool produce_type(const ic_token** it, ic_type& type, ic_parser& parser)
 
 #define IC_MAX_MEMBERS 50
 
-ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_declaration)
+ic_global produce_global(const ic_token** it, ic_parser& parser, bool fun_prototype)
 {
     if (token_consume(it, IC_TOK_STRUCT))
     {
@@ -955,6 +932,7 @@ ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_decla
         ic_global global;
         global.type = IC_GLOBAL_FUNCTION;
         ic_function& function = global.function;
+        function.type = IC_FUN_SOURCE;
         function.token = token_id;
         function.return_type = type;
         function.param_count = 0;
@@ -992,14 +970,12 @@ ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_decla
             }
         }
 
-        if (host_declaration)
+        if (fun_prototype)
         {
-            function.type = IC_FUN_HOST;
             assert((**it).type == IC_TOK_EOF);
             return global;
         }
 
-        function.type = IC_FUN_SOURCE;
         function.body = produce_stmt(it, parser);
 
         if (function.body->type != IC_STMT_COMPOUND)
@@ -1010,7 +986,6 @@ ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_decla
     }
 
     // variable
-    // todo; redundant with produce_stmt_var_declaration()
     if (is_void(type))
         exit_parsing(it, "variables can't be of type void");
 
@@ -1020,7 +995,7 @@ ic_global produce_global(const ic_token** it, ic_parser& parser, bool host_decla
     global.var.token = token_id;
 
     if ((**it).type == IC_TOK_EQUAL)
-        exit_parsing(it, "global variables can't be initialized by an expression, they are set to 0 by default");
+        exit_parsing(it, "global variables can't be initialized by an expression, they are set to 0");
 
     token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
     return global;

@@ -509,15 +509,18 @@ struct ic_var
     int idx;
 };
 
-struct ic_exception_parsing {}; // todo, we can probably do without exceptions, just point a token iterator at the last
-// element and set a flag in runtime to not print further parsing errors when exiting the call stack
-
 bool string_compare(ic_string str1, ic_string str2);
 bool is_struct(ic_type type);
 bool is_void(ic_type type);
 ic_type non_pointer_type(ic_basic_type type);
 ic_type const_pointer1_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type);
+int read_int(unsigned char** buf_it);
+float read_float(unsigned char** buf_it);
+double read_double(unsigned char** buf_it);
+
+struct ic_exception_parse {};
+struct ic_exception_compie {};
 
 struct ic_parser
 {
@@ -617,7 +620,7 @@ struct ic_compiler
     int bc_size()
     {
         if (!generate_bytecode)
-            return 0;
+            return {};
         return bytecode->size();
     }
 
@@ -671,23 +674,26 @@ struct ic_compiler
     {
         if (!generate_bytecode)
             return;
-        bytecode->resize(bytecode->size() + 4);
-        memcpy(&bytecode->back() - 3, &data, 4);
+        int size = sizeof(int);
+        bytecode->resize(bytecode->size() + size);
+        memcpy(&bytecode->back() - size + 1, &data, size);
     }
     void add_f32(float data)
     {
         if (!generate_bytecode)
             return;
-        bytecode->resize(bytecode->size() + 4);
-        memcpy(&bytecode->back() - 3, &data, 4);
+        int size = sizeof(float);
+        bytecode->resize(bytecode->size() + size);
+        memcpy(&bytecode->back() - size + 1, &data, size);
     }
 
     void add_f64(double data)
     {
         if (!generate_bytecode)
             return;
-        bytecode->resize(bytecode->size() + 8);
-        memcpy(&bytecode->back() - 7, &data, 8);
+        int size = sizeof(double);
+        bytecode->resize(bytecode->size() + size);
+        memcpy(&bytecode->back() - size + 1, &data, size);
     }
 
     void declare_unused_param(ic_type type)
@@ -766,21 +772,14 @@ struct ic_compiler
     }
 };
 
-int read_int(unsigned char** buf_it);
-float read_float(unsigned char** buf_it);
-double read_double(unsigned char** buf_it);
-
-// todo, return false on error
 void compile_function(ic_function& function, ic_parser* parser, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode);
-// returnes true if all branches have a return statements
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
 ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_expr, ic_opcode opc, ic_compiler& compiler);
 ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue);
-
 // compile_auxiliary.cpp
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler);
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler);

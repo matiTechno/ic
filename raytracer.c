@@ -279,8 +279,8 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 num_spheres, s32 depth
 
 void main()
 {
-    s32 width = 100;
-    s32 height = 100;
+    s32 width = 1000;
+    s32 height = 1000;
     s32 samples_per_pixel = 10;
     u8* image_buf = (u8*)malloc(width * height * 3);
 
