@@ -29,6 +29,7 @@ void compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
         else
         {
             printf("warning unused param\n");
+            // even if unused must be declared to work with VM
             compiler.declare_unused_param(function.params[i].type);
         }
     }

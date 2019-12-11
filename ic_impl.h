@@ -1,4 +1,5 @@
 #pragma once
+// todo, remove some of these
 #include <assert.h>
 #include <stdio.h>
 #include <vector>
@@ -13,7 +14,8 @@
 // todo
 // comma, ternary, bitwise operators, switch, else if
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, preprocessor, enum, union
+// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, preprocessor, enum, union,
+//  /* comments
 // , structures and unions can be anonymous inside other structures and unions (I very like this feature)
 // host structures; struct alignment, packing; exposing ast - seamless data structure sharing between host and VM
 // not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of a call stack
@@ -33,7 +35,7 @@ static_assert(sizeof(float) == 4, "sizeof(float) == 4");
 static_assert(sizeof(double) == 8, "sizeof(double) == 8");
 static_assert(sizeof(void*) == 8, "sizeof(void*) == 8");
 
-#define IC_MAX_ARGC 10
+#define IC_MAX_ARGC 10 // todo
 
 // important: compare and logical_not push s32 not bool
 enum ic_opcode
@@ -155,6 +157,8 @@ enum ic_opcode
     IC_OPC_F64_F32,
 };
 
+// todo, is unsigned char any better than int? memory-wise yes,
+// but there are other aspects, I will need to profile
 enum ic_token_type: unsigned char
 {
     IC_TOK_EOF,
@@ -321,7 +325,7 @@ struct ic_expr
         {
             ic_expr* lhs;
             ic_expr* rhs;
-        } _binary;
+        } _binary; // remove _
 
         struct
         {
@@ -375,7 +379,7 @@ struct ic_stmt
         {
             bool push_scope;
             ic_stmt* body;
-        } _compound;
+        } _compound; // remove _ where not needed
 
         struct
         {
@@ -420,6 +424,7 @@ struct ic_function
     ic_type return_type;
     ic_token token;
     int param_count;
+    // todo, allocate, same as struct members?
     ic_param params[IC_MAX_ARGC];
 
     union
@@ -698,7 +703,6 @@ struct ic_compiler
     }
 };
 
-// todo, return false on error
 // I prefer to pass by reference and pass additional flag if generate or not,
 // and I also have this idea, fill compiler strcuture and pass it to the function, it will be much better
 void compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,

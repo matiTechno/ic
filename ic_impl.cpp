@@ -212,7 +212,7 @@ void ic_program_free(ic_program& program)
     free(program.functions);
 }
 
-// neded for statements and expressions, to not invalidate pointers and allocate from a pool
+// neded for e.g. statements and expressions to not invalidate pointers and allocate from a pool
 template<typename T, int N>
 struct ic_deque
 {
@@ -248,6 +248,16 @@ struct ic_deque
         return &get(size - 1);
     }
 };
+
+void print_error(int line, int col, const char* err_msg)
+{
+    printf("error; line: %d; col: %d; %s\n", line, col, err_msg);
+}
+
+void print_error(ic_token token, const char* err_msg)
+{
+    print_error(token.line, token.col, err_msg);
+}
 
 struct ic_parser
 {
@@ -289,112 +299,53 @@ struct ic_parser
         return expr;
     }
 
-    //void advance();
-    //void consume();
-    //bool try_consume();
+    void advance()
+    {
+        if (token_it->type != IC_TOK_EOF)
+            ++token_it;
+    }
+
+    void consume(ic_token_type type, const char* err_msg)
+    {
+        if (token_it->type == type)
+        {
+            advance();
+            return;
+        }
+        exit(err_msg);
+    }
+    
+    bool try_consume(ic_token_type type)
+    {
+        if (token_it->type == type)
+        {
+            advance();
+            return true;
+        }
+        return false;
+    }
+
+    void exit(const char* err_msg)
+    {
+        if (error)
+            return;
+
+        while (token_it->type != IC_TOK_EOF)
+            ++token_it;
+
+        print_error(*token_it, err_msg);
+        error = true;
+    }
+
     ic_token& get_token()
     {
         return *token_it;
     }
 };
 
-void print_error(int line, int col, const char* fmt, ...)
-{
-    printf("error; line: %d; col: %d; ", line, col);
-    va_list list;
-    va_start(list, fmt);
-    vprintf(fmt, list);
-    va_end(list);
-    printf("\n");
-}
-
-bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
-bool produce_type(ic_token** it, ic_type& type, ic_parser& parser);
-ic_decl produce_decl(ic_parser& parser); // remove tok_it, use parser for that
-
-void token_advance(ic_token** it)
-{
-    if((**it).type != IC_TOK_EOF)
-        ++(*it);
-}
-
-// todo, separate into token_consume and token_try_consume
-// move into parser
-bool token_consume(ic_token** it, ic_token_type type, const char* err_msg = nullptr, ic_parser* parser = nullptr)
-{
-    if ((**it).type == type)
-    {
-        token_advance(it);
-        return true;
-    }
-
-    if (!err_msg)
-        return false;
-
-    assert(parser);
-    if (parser->error) // parser is already in an error state, ignore
-        return false;
-
-    while ((**it).type != IC_TOK_EOF)
-        ++*it;
-
-    print_error((**it).line, (**it).col, err_msg);
-    return false;
-}
-
-void exit_parsing(ic_token** it, ic_parser& parser, const char* err_msg, ...)
-{
-    if (parser.error)
-        return; // same
-
-    while ((**it).type != IC_TOK_EOF)
-        ++*it;
-
-    parser.error = true;
-    va_list list;
-    va_start(list, err_msg);
-    print_error((**it).line, (**it).col, err_msg, list);
-    va_end(list);
-}
-
-void consume_parameter_list(ic_parser& parser, ic_function& function)
-{
-    token_consume(&parser.token_it, IC_TOK_LEFT_PAREN);
-    function.param_count = 0;
-
-    if(token_consume(&parser.token_it, IC_TOK_RIGHT_PAREN))
-        return;
-
-    // this is important; because exceptions are not used all loops must terminate on EOF token
-    while(parser.get_token().type != IC_TOK_EOF)
-    {
-        if (function.param_count >= IC_MAX_ARGC)
-            exit_parsing(&parser.token_it, parser, "exceeded maximal number of parameters (%d)", IC_MAX_ARGC);
-
-        ic_type param_type;
-
-        if (!produce_type(&parser.token_it, param_type, parser))
-            exit_parsing(&parser.token_it, parser, "expected parameter type");
-
-        if (is_void(param_type))
-            exit_parsing(&parser.token_it, parser, "parameter can't be of type void");
-
-        function.params[function.param_count].type = param_type;
-        const ic_token* id_token = parser.token_it;
-
-        if(token_consume(&parser.token_it, IC_TOK_IDENTIFIER))
-            function.params[function.param_count].name = id_token->string;
-        else
-            function.params[function.param_count].name = { nullptr };
-
-        function.param_count += 1;
-
-        if (token_consume(&parser.token_it, IC_TOK_RIGHT_PAREN))
-            break;
-
-        token_consume(&parser.token_it, IC_TOK_COMMA, "expected ',' or ')' after a function argument", &parser);
-    }
-}
+bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
+ic_type produce_type(ic_parser& parser);
+void produce_parameter_list(ic_parser& parser, ic_function& function);
 
 void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
 {
@@ -405,15 +356,17 @@ void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
     while (it->prototype_str)
     {
         tokens.clear();
-        bool success = tokenize(it->prototype_str, tokens, string_data);
+        bool success = lex(it->prototype_str, tokens, string_data);
         assert(success);
         parser.token_it = tokens.data();
         ic_function function;
         function.type = IC_FUN_HOST;
-        assert(produce_type(&parser.token_it, function.return_type, parser)); // don't assert, after implementing try_produce_type
+        function.return_type = produce_type(parser);
         function.token = parser.get_token();
-        token_consume(&parser.token_it, IC_TOK_IDENTIFIER, "fjdlfj", &parser);
-        consume_parameter_list(parser, function);
+        parser.consume(IC_TOK_IDENTIFIER, "expected function name");
+        parser.consume(IC_TOK_LEFT_PAREN, "expected '('"); // proudce_parameter_list assumes that ( is consumed
+        // this is to avoid redundancy in produce_decl()
+        produce_parameter_list(parser, function);
         assert(!parser.error);
         function.host_function = it;
         function.origin = origin;
@@ -422,7 +375,9 @@ void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
     }
 }
 
+ic_decl produce_decl(ic_parser& parser);
 
+// todo, struct members allocation is a big issue, use a pool for that
 bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
 {
     assert(source);
@@ -430,7 +385,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
     std::vector<ic_token> tokens;
     std::vector<unsigned char> program_data;
 
-    if (!tokenize(source, tokens, program_data))
+    if (!lex(source, tokens, program_data))
         return false;
 
     int strings_byte_size = program_data.size();
@@ -462,9 +417,9 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
             if (prev_function)
             {
                 if (prev_function->type == IC_FUN_HOST)
-                    print_error(token.line, token.col, "function (provided by host) with such name already exists");
+                    print_error(token, "function (provided by host) with such name already exists");
                 else
-                    print_error(token.line, token.col, "function with such name already exists");
+                    print_error(token, "function with such name already exists");
                 assert(false);
             }
             gscope.functions.push_back(decl.function);
@@ -475,7 +430,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
 
             if (gscope.get_struct(token.string))
             {
-                print_error(token.line, token.col, "struct with such name already exists");
+                print_error(token, "struct with such name already exists");
                 assert(false);
             }
             gscope.structs.push_back(decl._struct);
@@ -486,7 +441,7 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
 
             if (gscope.get_var(token.string))
             {
-                print_error(token.line, token.col, "global variable with such name already exists");
+                print_error(token, "global variable with such name already exists");
                 assert(false);
             }
             ic_var var;
@@ -591,50 +546,48 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
 
 struct ic_lexer
 {
-    std::vector<ic_token>& _tokens;
-    int _line = 1;
-    int _col = 1;
-    int _token_line;
-    int _token_col;
-    const char* _source_it;
+    std::vector<ic_token>* tokens;
+    int line;
+    int col;
+    int token_line;
+    int token_col;
+    const char* source_it;
 
     // when string.data is nullptr number is used
     void add_token_impl(ic_token_type type, ic_string string, double number)
     {
         ic_token token;
         token.type = type;
-        token.line = _token_line;
-        token.col = _token_col;
+        token.line = token_line;
+        token.col = token_col;
 
         if(string.data)
             token.string = string;
         else
             token.number = number;
-
-        _tokens.push_back(token);
+        tokens->push_back(token);
     }
 
     void add_token(ic_token_type type) { add_token_impl(type, {nullptr}, {}); }
     void add_token_string(ic_token_type type, ic_string string) { add_token_impl(type, string, {}); }
     void add_token_number(ic_token_type type, double number) { add_token_impl(type, {nullptr}, number); }
-    bool end() { return *_source_it == '\0'; }
-    char peek() { return *_source_it; }
-    const char* pos() { return _source_it - 1; } // this function name makes sense from the interface perspective
+    bool end() { return *source_it == '\0'; }
+    char peek() { return *source_it; }
+    const char* pos() { return source_it - 1; } // this function name makes sense from the interface perspective
 
     char advance()
     {
         assert(!end());
-        const char c = *_source_it;
-        ++_source_it;
+        const char c = *source_it;
+        ++source_it;
 
         if (c == '\n')
         {
-            ++_line;
-            _col = 1;
+            ++line;
+            col = 1;
         }
         else
-            ++_col;
-
+            ++col;
         return c;
     }
 
@@ -643,7 +596,7 @@ struct ic_lexer
         if (end())
             return false;
 
-        if (*_source_it != c)
+        if (*source_it != c)
             return false;
 
         advance();
@@ -690,15 +643,18 @@ static ic_keyword _keywords[] = {
     {"sizeof", IC_TOK_SIZEOF},
 };
 
-bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data)
+bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& string_data)
 {
-    ic_lexer lexer{ _tokens };
-    lexer._source_it = source;
+    ic_lexer lexer;
+    lexer.tokens = &_tokens;
+    lexer.line = 1;
+    lexer.col = 1;
+    lexer.source_it = source;
 
     while (!lexer.end())
     {
-        lexer._token_line = lexer._line;
-        lexer._token_col = lexer._col;
+        lexer.token_line = lexer.line;
+        lexer.token_col = lexer.col;
         const char c = lexer.advance();
         const char* const token_begin = lexer.pos();
 
@@ -770,7 +726,7 @@ bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<un
                 lexer.add_token(IC_TOK_VBAR_VBAR);
             else // single | is not allowed in the source code
             {
-                print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
+                print_error(lexer.line, lexer.col, "unexpected character");
                 return false;
             }
 
@@ -797,18 +753,18 @@ bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<un
 
             if (lexer.end() && *lexer.pos() != '"')
             {
-                print_error(lexer._token_line, lexer._token_col, "unterminated string literal");
+                print_error(lexer.token_line, lexer.token_col, "unterminated string literal");
                 return false;
             }
 
             // todo, if the same string literal already exists, reuse it
-            int idx_begin = _string_data.size();
+            int idx_begin = string_data.size();
             lexer.add_token_number(IC_TOK_STRING_LITERAL, idx_begin);
             const char* string_begin = token_begin + 1; // skip first "
             int len = lexer.pos() - string_begin; // this doesn't count last "
-            _string_data.resize(_string_data.size() + len + 1);
-            memcpy(&_string_data[idx_begin], string_begin, len);
-            _string_data.back() = '\0';
+            string_data.resize(string_data.size() + len + 1);
+            memcpy(&string_data[idx_begin], string_begin, len);
+            string_data.back() = '\0';
             break;
         }
         case '\'':
@@ -818,7 +774,7 @@ bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<un
 
             if (lexer.end() && *lexer.pos() != '\'')
             {
-                print_error(lexer._token_line, lexer._token_col, "unterminated character literal");
+                print_error(lexer.token_line, lexer.token_col, "unterminated character literal");
                 return false;
             }
 
@@ -843,7 +799,7 @@ bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<un
 
             if (code == -1)
             {
-                print_error(lexer._token_line, lexer._token_col,
+                print_error(lexer.token_line, lexer.token_col,
                     "invalid character literal; only printable, \\n and \\0 characters are supported");
                 return false;
             }
@@ -902,62 +858,35 @@ bool tokenize(const char* source, std::vector<ic_token>& _tokens, std::vector<un
             }
             else
             {
-                print_error(lexer._line, lexer._col, "unexpected character '%c'", c);
+                print_error(lexer.line, lexer.col, "unexpected character");
                 return false;
             }
         }
         } // switch
-    }
+    } // while
     ic_token token;
     token.type = IC_TOK_EOF;
-    token.line = lexer._line;
-    token.col = lexer._col;
-    lexer._tokens.push_back(token);
+    token.line = lexer.line;
+    token.col = lexer.col;
+    lexer.tokens->push_back(token);
     return true;
 }
 
-enum ic_op_precedence
-{
-    IC_PRECEDENCE_LOGICAL_OR,
-    IC_PRECEDENCE_LOGICAL_AND,
-    IC_PRECEDENCE_COMPARE_EQUAL,
-    IC_PRECEDENCE_COMPARE_GREATER,
-    IC_PRECEDENCE_ADD,
-    IC_PRECEDENCE_MULTIPLY,
-    IC_PRECEDENCE_UNARY,
-};
-
-// production rules hierarchy
-// todo, pass only parser
-ic_stmt* produce_stmt(ic_token** it, ic_parser& parser);
-ic_stmt* produce_stmt_var_declaration(ic_token** it, ic_parser& parser);
-ic_expr* produce_expr_stmt(ic_token** it, ic_parser& parser);
-ic_expr* produce_expr(ic_token** it, ic_parser& parser);
-ic_expr* produce_expr_assignment(ic_token** it, ic_parser& parser);
-ic_expr* produce_expr_binary(ic_token** it, ic_op_precedence precedence, ic_parser& parser);
-ic_expr* produce_expr_unary(ic_token** it, ic_parser& parser);
-ic_expr* produce_expr_subscript(ic_token** it, ic_parser& parser);
-ic_expr* produce_expr_primary(ic_token** it, ic_parser& parser);
-
-
-
-
 #define IC_CMASK_MSB 7
 
-// todo, split it into, produce_type, and try_produce_type for clarity
-bool produce_type(ic_token** it, ic_type& type, ic_parser& parser)
+bool try_produce_type(ic_parser& parser, ic_type& type)
 {
     bool init = false;
     type.indirection_level = 0;
     type.const_mask = 0;
 
-    if (token_consume(it, IC_TOK_CONST))
+    if (parser.try_consume(IC_TOK_CONST))
     {
         type.const_mask = 1 << IC_CMASK_MSB;
         init = true;
     }
 
-    switch ((**it).type)
+    switch (parser.get_token().type)
     {
     case IC_TOK_BOOL:
         type.basic_type = IC_TYPE_BOOL;
@@ -981,64 +910,131 @@ bool produce_type(ic_token** it, ic_type& type, ic_parser& parser)
         type.basic_type = IC_TYPE_VOID;
         break;
     case IC_TOK_IDENTIFIER:
-        if (parser.gscope->get_struct((**it).string))
+    {
+        ic_string name = parser.get_token().string;
+
+        if (parser.gscope->get_struct(name))
         {
             type.basic_type = IC_TYPE_STRUCT;
-            type.struct_name = (**it).string;
+            type.struct_name = name;
             break;
         }
-        // fall through
+        // fall through, not a type
+    }
     default:
         if (init)
-            exit_parsing(it, parser, "expected type name after const keyword");
+            parser.exit("expected type name after const keyword");
         return false;
     }
+    parser.advance();
 
-    token_advance(it);
-
-    while (token_consume(it, IC_TOK_STAR))
+    while (parser.try_consume(IC_TOK_STAR))
     {
         if (type.indirection_level == IC_CMASK_MSB)
-            exit_parsing(it, parser, "exceeded maximal level of indirection");
+            parser.exit("exceeded maximal level of indirection");
 
         type.indirection_level += 1;
 
-        if (token_consume(it, IC_TOK_CONST))
+        if (parser.try_consume(IC_TOK_CONST))
             type.const_mask += 1 << (IC_CMASK_MSB - type.indirection_level);
     }
-
     type.const_mask = type.const_mask >> (IC_CMASK_MSB - type.indirection_level);
     return true;
 }
 
+ic_type produce_type(ic_parser& parser)
+{
+    ic_type type;
+    if (!try_produce_type(parser, type))
+        parser.exit("expected type");
+    return type;
+}
+
+void produce_parameter_list(ic_parser& parser, ic_function& function)
+{
+    function.param_count = 0;
+
+    if(parser.try_consume(IC_TOK_RIGHT_PAREN))
+        return;
+
+    // this is important; because exceptions are not used all loops must terminate on EOF token
+    // either by condition fail or break that is guaranteed to execute
+    while(parser.get_token().type != IC_TOK_EOF)
+    {
+        if (function.param_count >= IC_MAX_ARGC)
+            parser.exit("exceeded maxial number of parameters");
+
+        ic_type param_type = produce_type(parser);
+
+        if (is_void(param_type))
+            parser.exit("parameter can't be of type void");
+
+        function.params[function.param_count].type = param_type;
+        const ic_token* id_token = parser.token_it;
+
+        if(parser.try_consume(IC_TOK_IDENTIFIER))
+            function.params[function.param_count].name = id_token->string;
+        else
+            function.params[function.param_count].name = { nullptr };
+
+        function.param_count += 1;
+
+        if (parser.try_consume(IC_TOK_RIGHT_PAREN))
+            break;
+
+        parser.consume(IC_TOK_COMMA, "expected ',' or ')' after a function argument");
+    }
+}
+
 #define IC_MAX_MEMBERS 50
+
+enum ic_op_precedence
+{
+    IC_PRECEDENCE_LOGICAL_OR,
+    IC_PRECEDENCE_LOGICAL_AND,
+    IC_PRECEDENCE_COMPARE_EQUAL,
+    IC_PRECEDENCE_COMPARE_GREATER,
+    IC_PRECEDENCE_ADD,
+    IC_PRECEDENCE_MULTIPLY,
+    IC_PRECEDENCE_UNARY,
+};
+
+// production rules hierarchy
+ic_stmt* produce_stmt(ic_parser& parser);
+ic_stmt* produce_stmt_var_decl(ic_parser& parser);
+ic_expr* produce_expr_stmt(ic_parser& parser);
+ic_expr* produce_expr(ic_parser& parser);
+ic_expr* produce_expr_assignment(ic_parser& parser);
+ic_expr* produce_expr_binary(ic_parser& parser, ic_op_precedence precedence);
+ic_expr* produce_expr_unary(ic_parser& parser);
+ic_expr* produce_expr_subscript(ic_parser& parser);
+ic_expr* produce_expr_primary(ic_parser& parser);
 
 ic_decl produce_decl(ic_parser& parser)
 {
-    ic_token** it = &parser.token_it;
-    if (token_consume(it, IC_TOK_STRUCT))
+    if (parser.try_consume(IC_TOK_STRUCT))
     {
         ic_decl decl;
         decl.type = IC_DECL_STRUCT;
         ic_struct& _struct = decl._struct;
-        _struct.token = **it;
-        token_consume(it, IC_TOK_IDENTIFIER, "expected struct name", &parser);
-        token_consume(it, IC_TOK_LEFT_BRACE, "expected '{'", &parser);
-        ic_param members[IC_MAX_MEMBERS]; // todo; this is only temp solution
+        _struct.token = parser.get_token();
+        parser.consume(IC_TOK_IDENTIFIER, "expected struct name");
+        parser.consume(IC_TOK_LEFT_BRACE, "expected '{'");
+        ic_param members[IC_MAX_MEMBERS]; // todo
         _struct.num_members = 0;
         _struct.num_data = 0;
         ic_type type;
 
-        while (produce_type(it, type, parser))
+        while (try_produce_type(parser, type))
         {
-            assert(_struct.num_members < IC_MAX_MEMBERS);
+            assert(_struct.num_members < IC_MAX_MEMBERS); // todo
 
-            // todo; support const members
+            // todo, support const members?
             if (type.const_mask & 1)
-                exit_parsing(it, parser, "struct member can't be const");
+                parser.exit("struct member can't be const");
 
             if (is_void(type))
-                exit_parsing(it, parser, "struct member can't be of type void");
+                parser.exit("struct member can't be of type void");
 
             if (is_struct(type))
             {
@@ -1051,30 +1047,30 @@ ic_decl produce_decl(ic_parser& parser)
 
             ic_param& member = members[_struct.num_members];
             member.type = type;
-            member.name = (**it).string;
+            member.name = parser.get_token().string;
             _struct.num_members += 1;
-            token_consume(it, IC_TOK_IDENTIFIER, "expected member name", &parser);
-            token_consume(it, IC_TOK_SEMICOLON, "expected ';' after struct member name", &parser);
+            parser.consume(IC_TOK_IDENTIFIER, "expected member name");
+            parser.consume(IC_TOK_SEMICOLON, "expected ';' after struct member name");
         }
 
         int bytes = sizeof(ic_param) * _struct.num_members;
-        _struct.members = (ic_param*)malloc(bytes);
+        _struct.members = (ic_param*)malloc(bytes); // todo TODO
         memcpy(_struct.members, members, bytes);
-        token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}'", &parser);
-        token_consume(it, IC_TOK_SEMICOLON, "expected ';'", &parser);
+        parser.consume(IC_TOK_RIGHT_BRACE, "expected '}'");
+        parser.consume(IC_TOK_SEMICOLON, "expected ';'");
         return decl;
     }
 
     // else produce function or variable declaration
     ic_type type;
 
-    if (!produce_type(it, type, parser))
-        exit_parsing(it, parser, "expected: a type of a global variable / return type of a function / 'struct' keyword");
+    if (!try_produce_type(parser, type)) // try_produce_type() is used to print nondefault error message
+        parser.exit("expected: a type of a global variable / return type of a function / 'struct' keyword");
 
-    ic_token token_id = **it;
-    token_consume(it, IC_TOK_IDENTIFIER, "expected identifier", &parser);
+    ic_token token_id = parser.get_token();
+    parser.consume(IC_TOK_IDENTIFIER, "expected identifier");
 
-    if ((**it).type == IC_TOK_LEFT_PAREN)
+    if (parser.try_consume(IC_TOK_LEFT_PAREN))
     {
         ic_decl decl;
         decl.type = IC_DECL_FUNCTION;
@@ -1082,11 +1078,11 @@ ic_decl produce_decl(ic_parser& parser)
         function.type = IC_FUN_SOURCE;
         function.token = token_id;
         function.return_type = type;
-        consume_parameter_list(parser, function);
-        function.body = produce_stmt(it, parser);
+        produce_parameter_list(parser, function);
+        function.body = produce_stmt(parser);
 
         if (function.body->type != IC_STMT_COMPOUND)
-            exit_parsing(it, parser, "expected compound stmt after function parameter list");
+            parser.exit("expected compound stmt after function parameter list");
 
         function.body->_compound.push_scope = false; // do not allow shadowing of arguments
         return decl;
@@ -1094,190 +1090,182 @@ ic_decl produce_decl(ic_parser& parser)
 
     // variable
     if (is_void(type))
-        exit_parsing(it, parser, "variables can't be of type void");
+        parser.exit("variables can't be of type void");
 
     ic_decl decl;
     decl.type = IC_DECL_VAR;
     decl.var.type = type;
     decl.var.token = token_id;
 
-    if ((**it).type == IC_TOK_EQUAL)
-        exit_parsing(it, parser, "global variables can't be initialized by an expression, they are set to 0");
+    if (parser.get_token().type == IC_TOK_EQUAL)
+        parser.exit("global variables can't be initialized by an expression, they are set to 0");
 
-    token_consume(it, IC_TOK_SEMICOLON, "expected ';'", &parser);
+    parser.consume(IC_TOK_SEMICOLON, "expected ';'");
     return decl;
 }
 
-ic_stmt* produce_stmt(ic_token** it, ic_parser& parser)
+ic_stmt* produce_stmt(ic_parser& parser)
 {
-    switch ((**it).type)
+    switch (parser.get_token().type)
     {
     case IC_TOK_LEFT_BRACE:
     {
-        token_advance(it);
+        parser.advance();
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_COMPOUND);
         stmt->_compound.push_scope = true;
         ic_stmt** body_tail  = &(stmt->_compound.body);
 
-        while ((**it).type != IC_TOK_RIGHT_BRACE && (**it).type != IC_TOK_EOF)
+        while (parser.get_token().type != IC_TOK_RIGHT_BRACE && parser.get_token().type != IC_TOK_EOF)
         {
-            *body_tail = produce_stmt(it, parser);
+            *body_tail = produce_stmt(parser);
             body_tail = &((*body_tail)->next);
         }
-
-        token_consume(it, IC_TOK_RIGHT_BRACE, "expected '}' to close a compound statement", &parser);
+        parser.consume(IC_TOK_RIGHT_BRACE, "expected '}' to close a compound statement");
         return stmt;
     }
     case IC_TOK_WHILE:
     {
-        token_advance(it);
+        parser.advance();
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_FOR);
-        token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after while keyword", &parser);
-        stmt->_for.header2 = produce_expr(it, parser);
-        token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after while condition", &parser);
-        stmt->_for.body = produce_stmt(it, parser);
+        parser.consume(IC_TOK_LEFT_PAREN, "expected '(' after while keyword");
+        stmt->_for.header2 = produce_expr(parser);
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after while condition");
+        stmt->_for.body = produce_stmt(parser);
 
         // be consistent with IC_TOK_FOR
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
             stmt->_for.body->_compound.push_scope = false;
-
         return stmt;
     }
     case IC_TOK_FOR:
     {
-        token_advance(it);
+        parser.advance();
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_FOR);
-        token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after for keyword", &parser);
-        stmt->_for.header1 = produce_stmt_var_declaration(it, parser); // only in header1 var declaration is allowed
-        stmt->_for.header2 = produce_expr_stmt(it, parser);
+        parser.consume(IC_TOK_LEFT_PAREN, "expected '(' after for keyword");
+        stmt->_for.header1 = produce_stmt_var_decl(parser); // only in header1 var declaration is allowed
+        stmt->_for.header2 = produce_expr_stmt(parser);
 
-        if ((**it).type != IC_TOK_RIGHT_PAREN)
-            stmt->_for.header3 = produce_expr(it, parser); // this one should not end with ';', that's why we don't use produce_stmt_expr()
+        if (parser.get_token().type != IC_TOK_RIGHT_PAREN)
+            stmt->_for.header3 = produce_expr(parser); // this one should not end with ';', that's why we don't use produce_stmt_expr()
 
-        token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after for header", &parser);
-        stmt->_for.body = produce_stmt(it, parser);
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after for header");
+        stmt->_for.body = produce_stmt(parser);
 
         // prevent shadowing of header variable
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
             stmt->_for.body->_compound.push_scope = false;
-
         return stmt;
     }
     case IC_TOK_IF:
     {
-        token_advance(it);
+        parser.advance();
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_IF);
-        token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after if keyword", &parser);
-        stmt->_if.header = produce_expr(it, parser);
+        parser.consume(IC_TOK_LEFT_PAREN, "expected '(' after if keyword");
+        stmt->_if.header = produce_expr(parser);
 
         if (stmt->_if.header->token.type == IC_TOK_EQUAL)
-            exit_parsing(it, parser, "assignment expression can't be used directly in if header, encolse it with ()");
+            parser.exit("assignment expression can't be used directly in if header, encolse it with ()");
 
-        token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after if condition", &parser);
-        stmt->_if.body_if = produce_stmt(it, parser);
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after if condition");
+        stmt->_if.body_if = produce_stmt(parser);
 
-        if (token_consume(it, IC_TOK_ELSE))
-            stmt->_if.body_else = produce_stmt(it, parser);
-
+        if (parser.try_consume(IC_TOK_ELSE))
+            stmt->_if.body_else = produce_stmt(parser);
         return stmt;
     }
     case IC_TOK_RETURN:
     {
-        token_advance(it);
+        parser.advance();
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_RETURN);
-        stmt->_return.expr = produce_expr_stmt(it, parser);
+        stmt->_return.expr = produce_expr_stmt(parser);
         return stmt;
     }
     case IC_TOK_BREAK:
     {
-        token_advance(it);
-        token_consume(it, IC_TOK_SEMICOLON, "expected ';' after break keyword", &parser);
+        parser.advance();
+        parser.consume(IC_TOK_SEMICOLON, "expected ';' after break keyword");
         return parser.allocate_stmt(IC_STMT_BREAK);
     }
     case IC_TOK_CONTINUE:
     {
-        token_advance(it);
-        token_consume(it, IC_TOK_SEMICOLON, "expected ';' after continue keyword", &parser);
+        parser.advance();
+        parser.consume(IC_TOK_SEMICOLON, "expected ';' after continue keyword");
         return parser.allocate_stmt(IC_STMT_CONTINUE);
     }
     } // switch
-
-    return produce_stmt_var_declaration(it, parser);
+    return produce_stmt_var_decl(parser);
 }
 
 // this function is seperate from produce_expr_assignment so we don't allow(): var x = var y = 5;
 // and: while(var x = 6);
-ic_stmt* produce_stmt_var_declaration(ic_token** it, ic_parser& parser)
+ic_stmt* produce_stmt_var_decl(ic_parser& parser)
 {
     ic_type type;
 
-    if (produce_type(it, type, parser))
+    if (try_produce_type(parser, type))
     {
         if (is_void(type))
-            exit_parsing(it, parser, "variables can't be of type void");
+            parser.exit("variables can't be of type void");
 
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_VAR_DECL);
         stmt->_var_decl.type = type;
-        stmt->_var_decl.token = **it;
-        token_consume(it, IC_TOK_IDENTIFIER, "expected variable name", &parser);
+        stmt->_var_decl.token = parser.get_token();
+        parser.consume(IC_TOK_IDENTIFIER, "expected variable name");
 
-        if (token_consume(it, IC_TOK_EQUAL))
+        if (parser.try_consume(IC_TOK_EQUAL))
         {
-            stmt->_var_decl.expr = produce_expr_stmt(it, parser);
+            stmt->_var_decl.expr = produce_expr_stmt(parser);
             return stmt;
         }
-
-        token_consume(it, IC_TOK_SEMICOLON, "expected ';' or '=' after variable name", &parser);
+        parser.consume(IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
         return stmt;
     }
     else
     {
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_EXPR);
-        stmt->_expr = produce_expr_stmt(it, parser);
+        stmt->_expr = produce_expr_stmt(parser);
         return stmt;
     }
 }
 
-ic_expr* produce_expr_stmt(ic_token** it, ic_parser& parser)
+ic_expr* produce_expr_stmt(ic_parser& parser)
 {
-    if (token_consume(it, IC_TOK_SEMICOLON))
+    if (parser.try_consume(IC_TOK_SEMICOLON))
         return nullptr;
-
-    ic_expr* expr = produce_expr(it, parser);
-    token_consume(it, IC_TOK_SEMICOLON, "expected ';' after expression", &parser);
+    ic_expr* expr = produce_expr(parser);
+    parser.consume(IC_TOK_SEMICOLON, "expected ';' after expression");
     return expr;
 }
 
-ic_expr* produce_expr(ic_token** it, ic_parser& parser)
+ic_expr* produce_expr(ic_parser& parser)
 {
-    return produce_expr_assignment(it, parser);
+    return produce_expr_assignment(parser);
 }
 
 // produce_expr_assignment() - grows down and right
 // produce_expr_binary() - grows up and right (given operators with the same precedence)
 
-ic_expr* produce_expr_assignment(ic_token** it, ic_parser& parser)
+ic_expr* produce_expr_assignment(ic_parser& parser)
 {
-    ic_expr* expr_lhs = produce_expr_binary(it, IC_PRECEDENCE_LOGICAL_OR, parser);
+    ic_expr* expr_lhs = produce_expr_binary(parser, IC_PRECEDENCE_LOGICAL_OR);
 
-    switch ((**it).type)
+    switch (parser.get_token().type)
     {
     case IC_TOK_EQUAL:
     case IC_TOK_PLUS_EQUAL:
     case IC_TOK_MINUS_EQUAL:
     case IC_TOK_STAR_EQUAL:
     case IC_TOK_SLASH_EQUAL:
-        ic_expr* expr = parser.allocate_expr(IC_EXPR_BINARY, **it);
-        token_advance(it);
-        expr->_binary.rhs = produce_expr(it, parser);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_BINARY, parser.get_token());
+        parser.advance();
+        expr->_binary.rhs = produce_expr(parser);
         expr->_binary.lhs = expr_lhs;
         return expr;
     }
-
     return expr_lhs;
 }
 
-ic_expr* produce_expr_binary(ic_token** it, ic_op_precedence precedence, ic_parser& parser)
+ic_expr* produce_expr_binary(ic_parser& parser, ic_op_precedence precedence)
 {
     ic_token_type target_token_types[5] = {}; // this is important, initialize all elements to IC_TOK_EOF
 
@@ -1321,10 +1309,10 @@ ic_expr* produce_expr_binary(ic_token** it, ic_op_precedence precedence, ic_pars
         break;
     }
     case IC_PRECEDENCE_UNARY:
-        return produce_expr_unary(it, parser);
+        return produce_expr_unary(parser);
     }
 
-    ic_expr* expr = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), parser);
+    ic_expr* expr = produce_expr_binary(parser, ic_op_precedence(int(precedence) + 1));
 
     for (;;)
     {
@@ -1333,7 +1321,7 @@ ic_expr* produce_expr_binary(ic_token** it, ic_op_precedence precedence, ic_pars
 
         while (*target_token_type != IC_TOK_EOF)
         {
-            if (*target_token_type == (**it).type)
+            if (*target_token_type == parser.get_token().type)
             {
                 match = true;
                 break;
@@ -1342,22 +1330,21 @@ ic_expr* produce_expr_binary(ic_token** it, ic_op_precedence precedence, ic_pars
         }
 
         if (!match)
-            break;
+            break; // important, avoid infinite loop
 
         // operator matches given precedence
-        ic_expr* expr_parent = parser.allocate_expr(IC_EXPR_BINARY, **it);
-        token_advance(it);
-        expr_parent->_binary.rhs = produce_expr_binary(it, ic_op_precedence(int(precedence) + 1), parser);
+        ic_expr* expr_parent = parser.allocate_expr(IC_EXPR_BINARY, parser.get_token());
+        parser.advance();
+        expr_parent->_binary.rhs = produce_expr_binary(parser, ic_op_precedence(int(precedence) + 1));
         expr_parent->_binary.lhs = expr;
         expr = expr_parent;
     }
-
     return expr;
 }
 
-ic_expr* produce_expr_unary(ic_token** it, ic_parser& parser)
+ic_expr* produce_expr_unary(ic_parser& parser)
 {
-    switch ((**it).type)
+    switch (parser.get_token().type)
     {
     case IC_TOK_BANG:
     case IC_TOK_MINUS:
@@ -1366,79 +1353,73 @@ ic_expr* produce_expr_unary(ic_token** it, ic_parser& parser)
     case IC_TOK_AMPERSAND:
     case IC_TOK_STAR:
     {
-        ic_expr* expr = parser.allocate_expr(IC_EXPR_UNARY, **it);
-        token_advance(it);
-        expr->_unary.expr = produce_expr_unary(it, parser);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_UNARY, parser.get_token());
+        parser.advance();
+        expr->_unary.expr = produce_expr_unary(parser);
         return expr;
     }
     case IC_TOK_LEFT_PAREN:
     {
-        token_advance(it);
+        parser.advance();
         ic_type type;
 
-        if (produce_type(it, type, parser))
+        if (try_produce_type(parser, type))
         {
-            token_consume(it, IC_TOK_RIGHT_PAREN, "expected ) at the end of a cast operator", &parser);
-            ic_expr* expr = parser.allocate_expr(IC_EXPR_CAST_OPERATOR, **it);
+            parser.consume(IC_TOK_RIGHT_PAREN, "expected ) at the end of a cast operator");
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_CAST_OPERATOR, parser.get_token());
             expr->_cast_operator.type = type;
-            expr->_cast_operator.expr = produce_expr_unary(it, parser);
+            expr->_cast_operator.expr = produce_expr_unary(parser);
             return expr;
         }
-
-        *it -= 1; // go back by one
+        parser.token_it -= 1; // go back by one, parentheses expression also starts with '('
         break;
     }
     case IC_TOK_SIZEOF:
     {
-        ic_expr* expr = parser.allocate_expr(IC_EXPR_SIZEOF, **it);
-        token_advance(it);
-        token_consume(it, IC_TOK_LEFT_PAREN, "expected '(' after sizeof operator", &parser);
-        
-        if (!produce_type(it, expr->_sizeof.type, parser))
-            exit_parsing(it, parser, "expected type");
-
-        token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after type", &parser);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_SIZEOF, parser.get_token());
+        parser.advance();
+        parser.consume(IC_TOK_LEFT_PAREN, "expected '(' after sizeof operator");
+        expr->_sizeof.type = produce_type(parser);
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after type");
         return expr;
     }
     } // switch
-
-    return produce_expr_subscript(it, parser);
+    return produce_expr_subscript(parser);
 }
 
-ic_expr* produce_expr_subscript(ic_token** it, ic_parser& parser)
+ic_expr* produce_expr_subscript(ic_parser& parser)
 {
-    ic_expr* lhs = produce_expr_primary(it, parser);
+    ic_expr* lhs = produce_expr_primary(parser);
 
     for (;;)
     {
-        if ((**it).type == IC_TOK_LEFT_BRACKET)
+        if (parser.get_token().type == IC_TOK_LEFT_BRACKET)
         {
-            ic_expr* expr = parser.allocate_expr(IC_EXPR_SUBSCRIPT, **it);
-            token_advance(it);
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_SUBSCRIPT, parser.get_token());
+            parser.advance();
             expr->_subscript.lhs = lhs;
-            expr->_subscript.rhs = produce_expr(it, parser);
-            token_consume(it, IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator", &parser);
+            expr->_subscript.rhs = produce_expr(parser);
+            parser.consume(IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator");
             lhs = expr;
         }
-        else if ((**it).type == IC_TOK_DOT || (**it).type == IC_TOK_ARROW)
+        else if (parser.get_token().type == IC_TOK_DOT || parser.get_token().type == IC_TOK_ARROW)
         {
-            ic_expr* expr = parser.allocate_expr(IC_EXPR_MEMBER_ACCESS, **it);
-            token_advance(it);
+            ic_expr* expr = parser.allocate_expr(IC_EXPR_MEMBER_ACCESS, parser.get_token());
+            parser.advance();
             expr->_member_access.lhs = lhs;
-            expr->_member_access.rhs_token = **it;
-            token_consume(it, IC_TOK_IDENTIFIER, "expected member name after '.' operator", &parser);
+            expr->_member_access.rhs_token = parser.get_token();
+            parser.consume(IC_TOK_IDENTIFIER, "expected member name after '.' operator");
             lhs = expr;
         }
         else
-            break;
+            break; // important, avoid infinite loop
     }
-
     return lhs;
 }
 
-ic_expr* produce_expr_primary(ic_token** it, ic_parser& parser)
+ic_expr* produce_expr_primary(ic_parser& parser)
 {
-    switch ((**it).type)
+    switch (parser.get_token().type)
     {
     case IC_TOK_INT_NUMBER_LITERAL:
     case IC_TOK_FLOAT_NUMBER_LITERAL:
@@ -1448,56 +1429,52 @@ ic_expr* produce_expr_primary(ic_token** it, ic_parser& parser)
     case IC_TOK_FALSE:
     case IC_TOK_NULLPTR:
     {
-        ic_expr* expr = parser.allocate_expr(IC_EXPR_PRIMARY, **it);
-        token_advance(it);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_PRIMARY, parser.get_token());
+        parser.advance();
         return expr;
     }
-
     case IC_TOK_IDENTIFIER:
     {
-        ic_token token_id = **it;
-        token_advance(it);
+        ic_token token_id = parser.get_token();
+        parser.advance();
 
-        if (token_consume(it, IC_TOK_LEFT_PAREN))
+        if (parser.try_consume(IC_TOK_LEFT_PAREN))
         {
             ic_expr* expr = parser.allocate_expr(IC_EXPR_FUNCTION_CALL, token_id);
 
-            if (token_consume(it, IC_TOK_RIGHT_PAREN))
+            if (parser.try_consume(IC_TOK_RIGHT_PAREN))
                 return expr;
 
             ic_expr** arg_tail = &expr->_function_call.arg;
             int argc = 0;
 
-            for(;;)
+            while(parser.get_token().type != IC_TOK_EOF) // important, avoid infinite loop
             {
-                *arg_tail = produce_expr(it, parser);
+                *arg_tail = produce_expr(parser);
                 arg_tail = &((*arg_tail)->next);
                 ++argc;
 
                 if(argc > IC_MAX_ARGC)
-                    exit_parsing(it, parser, "exceeded maximal number of arguments (%d)", IC_MAX_ARGC);
+                    parser.exit("exceeded maximal number of arguments");
 
-                if (token_consume(it, IC_TOK_RIGHT_PAREN))
+                if (parser.try_consume(IC_TOK_RIGHT_PAREN))
                     break;
 
-                token_consume(it, IC_TOK_COMMA, "expected ',' or ')' after a function argument", &parser);
+                parser.consume(IC_TOK_COMMA, "expected ',' or ')' after a function argument");
             }
-
             return expr;
         }
-
         return parser.allocate_expr(IC_EXPR_PRIMARY, token_id);
     }
     case IC_TOK_LEFT_PAREN:
     {
-        ic_expr* expr = parser.allocate_expr(IC_EXPR_PARENTHESES, **it);
-        token_advance(it);
-        expr->_parentheses.expr = produce_expr(it, parser);
-        token_consume(it, IC_TOK_RIGHT_PAREN, "expected ')' after expression", &parser);
+        ic_expr* expr = parser.allocate_expr(IC_EXPR_PARENTHESES, parser.get_token());
+        parser.advance();
+        expr->_parentheses.expr = produce_expr(parser);
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after expression");
         return expr;
     }
     } // switch
-
-    exit_parsing(it, parser, "expected literal / indentifier / parentheses / function call");
-    return {};
+    parser.exit("expected literal / indentifier / parentheses / function call");
+    return parser.allocate_expr({}, {}); // don't return nullptr, may be dereferenced
 }
