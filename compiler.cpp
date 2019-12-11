@@ -1,7 +1,7 @@
 #include "ic_impl.h"
 
 bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
-    std::vector<unsigned char>* bytecode)
+    std::vector<unsigned char>* bytecode, ic_string* source_lines)
 {
     assert(function.type == IC_FUN_SOURCE);
 
@@ -17,6 +17,8 @@ bool compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
     compiler.stack_size = 0;
     compiler.max_stack_size = 0;
     compiler.loop_count = 0;
+    compiler.error = false;
+    compiler.source_lines = source_lines;
     compiler.push_scope();
 
     if (compiler.generate_bytecode)
@@ -24,11 +26,13 @@ bool compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
 
     for (int i = 0; i < function.param_count; ++i)
     {
-        if(function.params[i].name.data)
-            compiler.declare_var(function.params[i].type, function.params[i].name);
+        ic_param& param = function.params[i];
+
+        if(param.name.data)
+            compiler.declare_var(param.type, param.name);
         else
         {
-            printf("warning unused param\n");
+            compiler.warn(function.token, "unused function parameter"); // todo, param.token would be better
             // even if unused must be declared to work with VM
             compiler.declare_unused_param(function.params[i].type);
         }
@@ -61,7 +65,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         ic_stmt_result result = IC_STMT_RESULT_NULL;
         int prev_gen_bc = compiler.generate_bytecode;
 
-        while (stmt_it)
+        while (stmt_it && !compiler.error)
         {
             ic_stmt_result inner_result = compile_stmt(stmt_it, compiler);
 
@@ -71,7 +75,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
                 if (stmt_it->next) // if this is not the last statement of a compound statement
                 {
                     compiler.generate_bytecode = false; // don't generate unreachable code, but compile for correctness
-                    printf("warning: compiling unreachable code\n"); // todo, print on which line
+                    compiler.warn(stmt_it->next->token, "unreachable code");
                 }
             }
             stmt_it = stmt_it->next;

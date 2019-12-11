@@ -286,6 +286,12 @@ enum ic_stmt_result
     IC_STMT_RESULT_RETURN = 2,
 };
 
+enum ic_print_type
+{
+    IC_PERROR,
+    IC_PWARN,
+};
+
 struct ic_string
 {
     const char* data;
@@ -313,6 +319,7 @@ struct ic_type
     ic_string struct_name;
 };
 
+// todo, combine ic_expr and ic_stmt into a single ast_node structure
 struct ic_expr
 {
     ic_expr_type type;
@@ -370,7 +377,7 @@ struct ic_expr
 struct ic_stmt
 {
     ic_stmt_type type;
-    // todo, token for error reporting
+    ic_token token;
     ic_stmt* next;
 
     union
@@ -482,6 +489,7 @@ ic_type pointer1_type(ic_basic_type type);
 int read_int(unsigned char** buf_it);
 float read_float(unsigned char** buf_it);
 double read_double(unsigned char** buf_it);
+void print(ic_print_type type, int line, int col, ic_string* source_lines, const char* err_msg);
 
 struct ic_global_scope
 {
@@ -533,6 +541,8 @@ struct ic_expr_result
     bool lvalue;
 };
 
+// todo, move the implementation to a source file are removed not needed function declarations
+// and headers from this file
 struct ic_compiler
 {
     ic_global_scope* global_scope;
@@ -547,6 +557,21 @@ struct ic_compiler
     int stack_size;
     int max_stack_size;
     int loop_count;
+    bool error;
+    ic_string* source_lines;
+
+    void exit(ic_token token, const char* err_msg)
+    {
+        if (error)
+            return;
+        error = true;
+        print(IC_PERROR, token.line, token.col, source_lines, err_msg);
+    }
+
+    void warn(ic_token token, const char* msg)
+    {
+        print(IC_PWARN, token.line, token.col, source_lines, msg);
+    }
 
     int bc_size()
     {
@@ -706,7 +731,7 @@ struct ic_compiler
 // I prefer to pass by reference and pass additional flag if generate or not,
 // and I also have this idea, fill compiler strcuture and pass it to the function, it will be much better
 bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
-    std::vector<unsigned char>* bytecode);
+    std::vector<unsigned char>* bytecode, ic_string* source_lines);
 
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
