@@ -325,12 +325,12 @@ struct ic_expr
         {
             ic_expr* lhs;
             ic_expr* rhs;
-        } _binary; // remove _
+        } binary;
 
         struct
         {
             ic_expr* expr;
-        } _unary;
+        } unary;
 
         struct
         {
@@ -341,29 +341,29 @@ struct ic_expr
         {
             ic_type type;
             ic_expr* expr;
-        } _cast_operator;
+        } cast_operator;
 
         struct
         {
             ic_expr* lhs;
             ic_expr* rhs;
-        } _subscript;
+        } subscript;
 
         struct
         {
             ic_expr* lhs;
             ic_token rhs_token;
-        } _member_access;
+        } member_access;
 
         struct
         {
             ic_expr* expr;
-        } _parentheses;
+        } parentheses;
 
         struct
         {
             ic_expr* arg;
-        } _function_call;
+        } function_call;
     };
 };
 
@@ -379,7 +379,7 @@ struct ic_stmt
         {
             bool push_scope;
             ic_stmt* body;
-        } _compound; // remove _ where not needed
+        } compound;
 
         struct
         {
@@ -401,14 +401,14 @@ struct ic_stmt
             ic_type type;
             ic_token token;
             ic_expr* expr;
-        } _var_decl;
+        } var_decl;
 
         struct
         {
             ic_expr* expr;
         } _return;
         
-        ic_expr* _expr;
+        ic_expr* expr;
     };
 };
 

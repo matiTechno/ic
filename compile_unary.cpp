@@ -18,7 +18,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     {
     case IC_TOK_MINUS:
     {
-        ic_type type = compile_expr(expr->_unary.expr, compiler).type;
+        ic_type type = compile_expr(expr->unary.expr, compiler).type;
         ic_type atype = arithmetic_expr_type(type);
         compile_implicit_conversion(atype, type, compiler);
 
@@ -38,7 +38,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     }
     case IC_TOK_BANG:
     {
-        ic_type type = compile_expr(expr->_unary.expr, compiler).type;
+        ic_type type = compile_expr(expr->unary.expr, compiler).type;
 
         if (type.indirection_level)
             compiler.add_opcode(IC_OPC_LOGICAL_NOT_PTR);
@@ -67,7 +67,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     {
         // this is quite a complicated operation
         int add_value = expr->token.type == IC_TOK_PLUS_PLUS ? 1 : -1;
-        ic_expr_result result = compile_expr(expr->_unary.expr, compiler, false);
+        ic_expr_result result = compile_expr(expr->unary.expr, compiler, false);
         assert_modifiable_lvalue(result);
         compiler.add_opcode(IC_OPC_CLONE);
         compiler.add_opcode(IC_OPC_CLONE);
@@ -121,7 +121,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     }
     case IC_TOK_AMPERSAND:
     {
-        ic_expr_result result = compile_expr(expr->_unary.expr, compiler, false);
+        ic_expr_result result = compile_expr(expr->unary.expr, compiler, false);
         assert(result.lvalue);
         result.type.indirection_level += 1;
         result.type.const_mask = result.type.const_mask << 1;
@@ -129,7 +129,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     }
     case IC_TOK_STAR:
     {
-        ic_type type = compile_expr(expr->_unary.expr, compiler).type;
+        ic_type type = compile_expr(expr->unary.expr, compiler).type;
         return compile_dereference(type, compiler, load_lvalue);
     }
     default:

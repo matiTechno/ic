@@ -1084,7 +1084,7 @@ ic_decl produce_decl(ic_parser& parser)
         if (function.body->type != IC_STMT_COMPOUND)
             parser.exit("expected compound stmt after function parameter list");
 
-        function.body->_compound.push_scope = false; // do not allow shadowing of arguments
+        function.body->compound.push_scope = false; // do not allow shadowing of arguments
         return decl;
     }
 
@@ -1112,8 +1112,8 @@ ic_stmt* produce_stmt(ic_parser& parser)
     {
         parser.advance();
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_COMPOUND);
-        stmt->_compound.push_scope = true;
-        ic_stmt** body_tail  = &(stmt->_compound.body);
+        stmt->compound.push_scope = true;
+        ic_stmt** body_tail  = &(stmt->compound.body);
 
         while (parser.get_token().type != IC_TOK_RIGHT_BRACE && parser.get_token().type != IC_TOK_EOF)
         {
@@ -1134,7 +1134,7 @@ ic_stmt* produce_stmt(ic_parser& parser)
 
         // be consistent with IC_TOK_FOR
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
-            stmt->_for.body->_compound.push_scope = false;
+            stmt->_for.body->compound.push_scope = false;
         return stmt;
     }
     case IC_TOK_FOR:
@@ -1153,7 +1153,7 @@ ic_stmt* produce_stmt(ic_parser& parser)
 
         // prevent shadowing of header variable
         if (stmt->_for.body->type == IC_STMT_COMPOUND)
-            stmt->_for.body->_compound.push_scope = false;
+            stmt->_for.body->compound.push_scope = false;
         return stmt;
     }
     case IC_TOK_IF:
@@ -1208,13 +1208,13 @@ ic_stmt* produce_stmt_var_decl(ic_parser& parser)
             parser.exit("variables can't be of type void");
 
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_VAR_DECL);
-        stmt->_var_decl.type = type;
-        stmt->_var_decl.token = parser.get_token();
+        stmt->var_decl.type = type;
+        stmt->var_decl.token = parser.get_token();
         parser.consume(IC_TOK_IDENTIFIER, "expected variable name");
 
         if (parser.try_consume(IC_TOK_EQUAL))
         {
-            stmt->_var_decl.expr = produce_expr_stmt(parser);
+            stmt->var_decl.expr = produce_expr_stmt(parser);
             return stmt;
         }
         parser.consume(IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
@@ -1223,7 +1223,7 @@ ic_stmt* produce_stmt_var_decl(ic_parser& parser)
     else
     {
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_EXPR);
-        stmt->_expr = produce_expr_stmt(parser);
+        stmt->expr = produce_expr_stmt(parser);
         return stmt;
     }
 }
@@ -1258,8 +1258,8 @@ ic_expr* produce_expr_assignment(ic_parser& parser)
     case IC_TOK_SLASH_EQUAL:
         ic_expr* expr = parser.allocate_expr(IC_EXPR_BINARY, parser.get_token());
         parser.advance();
-        expr->_binary.rhs = produce_expr(parser);
-        expr->_binary.lhs = expr_lhs;
+        expr->binary.rhs = produce_expr(parser);
+        expr->binary.lhs = expr_lhs;
         return expr;
     }
     return expr_lhs;
@@ -1335,8 +1335,8 @@ ic_expr* produce_expr_binary(ic_parser& parser, ic_op_precedence precedence)
         // operator matches given precedence
         ic_expr* expr_parent = parser.allocate_expr(IC_EXPR_BINARY, parser.get_token());
         parser.advance();
-        expr_parent->_binary.rhs = produce_expr_binary(parser, ic_op_precedence(int(precedence) + 1));
-        expr_parent->_binary.lhs = expr;
+        expr_parent->binary.rhs = produce_expr_binary(parser, ic_op_precedence(int(precedence) + 1));
+        expr_parent->binary.lhs = expr;
         expr = expr_parent;
     }
     return expr;
@@ -1355,7 +1355,7 @@ ic_expr* produce_expr_unary(ic_parser& parser)
     {
         ic_expr* expr = parser.allocate_expr(IC_EXPR_UNARY, parser.get_token());
         parser.advance();
-        expr->_unary.expr = produce_expr_unary(parser);
+        expr->unary.expr = produce_expr_unary(parser);
         return expr;
     }
     case IC_TOK_LEFT_PAREN:
@@ -1367,8 +1367,8 @@ ic_expr* produce_expr_unary(ic_parser& parser)
         {
             parser.consume(IC_TOK_RIGHT_PAREN, "expected ) at the end of a cast operator");
             ic_expr* expr = parser.allocate_expr(IC_EXPR_CAST_OPERATOR, parser.get_token());
-            expr->_cast_operator.type = type;
-            expr->_cast_operator.expr = produce_expr_unary(parser);
+            expr->cast_operator.type = type;
+            expr->cast_operator.expr = produce_expr_unary(parser);
             return expr;
         }
         parser.token_it -= 1; // go back by one, parentheses expression also starts with '('
@@ -1397,8 +1397,8 @@ ic_expr* produce_expr_subscript(ic_parser& parser)
         {
             ic_expr* expr = parser.allocate_expr(IC_EXPR_SUBSCRIPT, parser.get_token());
             parser.advance();
-            expr->_subscript.lhs = lhs;
-            expr->_subscript.rhs = produce_expr(parser);
+            expr->subscript.lhs = lhs;
+            expr->subscript.rhs = produce_expr(parser);
             parser.consume(IC_TOK_RIGHT_BRACKET, "expected a closing bracket for a subscript operator");
             lhs = expr;
         }
@@ -1406,8 +1406,8 @@ ic_expr* produce_expr_subscript(ic_parser& parser)
         {
             ic_expr* expr = parser.allocate_expr(IC_EXPR_MEMBER_ACCESS, parser.get_token());
             parser.advance();
-            expr->_member_access.lhs = lhs;
-            expr->_member_access.rhs_token = parser.get_token();
+            expr->member_access.lhs = lhs;
+            expr->member_access.rhs_token = parser.get_token();
             parser.consume(IC_TOK_IDENTIFIER, "expected member name after '.' operator");
             lhs = expr;
         }
@@ -1445,7 +1445,7 @@ ic_expr* produce_expr_primary(ic_parser& parser)
             if (parser.try_consume(IC_TOK_RIGHT_PAREN))
                 return expr;
 
-            ic_expr** arg_tail = &expr->_function_call.arg;
+            ic_expr** arg_tail = &expr->function_call.arg;
             int argc = 0;
 
             while(parser.get_token().type != IC_TOK_EOF) // important, avoid infinite loop
@@ -1470,7 +1470,7 @@ ic_expr* produce_expr_primary(ic_parser& parser)
     {
         ic_expr* expr = parser.allocate_expr(IC_EXPR_PARENTHESES, parser.get_token());
         parser.advance();
-        expr->_parentheses.expr = produce_expr(parser);
+        expr->parentheses.expr = produce_expr(parser);
         parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after expression");
         return expr;
     }

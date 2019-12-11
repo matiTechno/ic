@@ -53,10 +53,10 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     {
     case IC_STMT_COMPOUND:
     {
-        if (stmt->_compound.push_scope)
+        if (stmt->compound.push_scope)
             compiler.push_scope();
 
-        ic_stmt* stmt_it = stmt->_compound.body;
+        ic_stmt* stmt_it = stmt->compound.body;
         ic_stmt_result result = IC_STMT_RESULT_NULL;
         int prev_gen_bc = compiler.generate_bytecode;
 
@@ -76,7 +76,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             stmt_it = stmt_it->next;
         }
 
-        if (stmt->_compound.push_scope)
+        if (stmt->compound.push_scope)
             compiler.pop_scope();
         compiler.generate_bytecode = prev_gen_bc;
         return result;
@@ -168,11 +168,11 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     }
     case IC_STMT_VAR_DECL:
     {
-        ic_var var = compiler.declare_var(stmt->_var_decl.type, stmt->_var_decl.token.string);
+        ic_var var = compiler.declare_var(stmt->var_decl.type, stmt->var_decl.token.string);
 
-        if (stmt->_var_decl.expr)
+        if (stmt->var_decl.expr)
         {
-            ic_expr_result result = compile_expr(stmt->_var_decl.expr, compiler);
+            ic_expr_result result = compile_expr(stmt->var_decl.expr, compiler);
             compile_implicit_conversion(var.type, result.type, compiler);
             compiler.add_opcode(IC_OPC_ADDRESS);
             compiler.add_s32(var.idx);
@@ -224,9 +224,9 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     }
     case IC_STMT_EXPR:
     {
-        if (stmt->_expr)
+        if (stmt->expr)
         {
-            ic_expr_result result = compile_expr(stmt->_expr, compiler);
+            ic_expr_result result = compile_expr(stmt->expr, compiler);
             compile_pop_expr_result(result, compiler);
         }
         return IC_STMT_RESULT_NULL;
@@ -261,8 +261,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     }
     case IC_EXPR_CAST_OPERATOR:
     {
-        ic_expr_result result = compile_expr(expr->_cast_operator.expr, compiler);
-        ic_type target_type = expr->_cast_operator.type;
+        ic_expr_result result = compile_expr(expr->cast_operator.expr, compiler);
+        ic_type target_type = expr->cast_operator.type;
 
         if (target_type.indirection_level)
             assert(result.type.indirection_level);
@@ -273,13 +273,13 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     }
     case IC_EXPR_SUBSCRIPT:
     {
-        ic_type lhs_type = get_expr_result_type(expr->_subscript.lhs, compiler);
-        ic_type rhs_type = get_expr_result_type(expr->_subscript.rhs, compiler);
+        ic_type lhs_type = get_expr_result_type(expr->subscript.lhs, compiler);
+        ic_type rhs_type = get_expr_result_type(expr->subscript.rhs, compiler);
         ic_type ptr_type;
         if (lhs_type.indirection_level)
-            ptr_type = compile_pointer_offset_expr(expr->_subscript.lhs, expr->_subscript.rhs, IC_OPC_ADD_PTR_S32, compiler).type;
+            ptr_type = compile_pointer_offset_expr(expr->subscript.lhs, expr->subscript.rhs, IC_OPC_ADD_PTR_S32, compiler).type;
         else
-            ptr_type = compile_pointer_offset_expr(expr->_subscript.rhs, expr->_subscript.lhs, IC_OPC_ADD_PTR_S32, compiler).type;
+            ptr_type = compile_pointer_offset_expr(expr->subscript.rhs, expr->subscript.lhs, IC_OPC_ADD_PTR_S32, compiler).type;
         return compile_dereference(ptr_type, compiler, load_lvalue);
     }
     case IC_EXPR_MEMBER_ACCESS:
@@ -289,10 +289,10 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         switch (expr->token.type)
         {
         case IC_TOK_DOT:
-            result = compile_expr(expr->_member_access.lhs, compiler, false);
+            result = compile_expr(expr->member_access.lhs, compiler, false);
             break;
         case IC_TOK_ARROW:
-            result = compile_expr(expr->_member_access.lhs, compiler);
+            result = compile_expr(expr->member_access.lhs, compiler);
             result = compile_dereference(result.type, compiler, false);
             assert(!result.type.indirection_level);
             break;
@@ -301,7 +301,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         }
 
         assert(result.type.basic_type == IC_TYPE_STRUCT);
-        ic_string target_name = expr->_member_access.rhs_token.string;
+        ic_string target_name = expr->member_access.rhs_token.string;
         ic_type target_type;
         ic_struct* _struct = compiler.get_struct(result.type.struct_name);
         int data_offset = 0;
@@ -356,14 +356,14 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     }
     case IC_EXPR_PARENTHESES:
     {
-        return compile_expr(expr->_parentheses.expr, compiler, load_lvalue);
+        return compile_expr(expr->parentheses.expr, compiler, load_lvalue);
     }
     case IC_EXPR_FUNCTION_CALL:
     {
         int argc = 0;
         int idx;
         ic_function* function = compiler.get_function(expr->token.string, &idx);
-        ic_expr* expr_arg = expr->_function_call.arg;
+        ic_expr* expr_arg = expr->function_call.arg;
 
         while (expr_arg)
         {
