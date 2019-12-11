@@ -1,6 +1,6 @@
 #include "ic_impl.h"
 
-void compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
+bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode)
 {
     assert(function.type == IC_FUN_SOURCE);
@@ -43,6 +43,7 @@ void compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
         compiler.add_opcode(IC_OPC_RETURN);
 
     function.stack_size = compiler.max_stack_size;
+    return true; // todo
 }
 
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)

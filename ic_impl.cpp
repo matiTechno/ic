@@ -346,8 +346,9 @@ struct ic_parser
 bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
 ic_type produce_type(ic_parser& parser);
 void produce_parameter_list(ic_parser& parser, ic_function& function);
+ic_decl produce_decl(ic_parser& parser);
 
-void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
+bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
 {
     assert(it);
     std::vector<ic_token> tokens;
@@ -356,60 +357,65 @@ void load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
     while (it->prototype_str)
     {
         tokens.clear();
-        bool success = lex(it->prototype_str, tokens, string_data);
-        assert(success);
+
+        if (!lex(it->prototype_str, tokens, string_data))
+            return false;
         parser.token_it = tokens.data();
         ic_function function;
         function.type = IC_FUN_HOST;
         function.return_type = produce_type(parser);
         function.token = parser.get_token();
         parser.consume(IC_TOK_IDENTIFIER, "expected function name");
-        parser.consume(IC_TOK_LEFT_PAREN, "expected '('"); // proudce_parameter_list assumes that ( is consumed
-        // this is to avoid redundancy in produce_decl()
+        // proudce_parameter_list assumes that ( is consumed this is to avoid redundancy in produce_decl()
+        parser.consume(IC_TOK_LEFT_PAREN, "expected '('");
         produce_parameter_list(parser, function);
-        assert(!parser.error);
+
+        if (parser.error)
+            return false;
         function.host_function = it;
         function.origin = origin;
         parser.gscope->functions.push_back(function);
         ++it;
     }
+    return true;
 }
 
-ic_decl produce_decl(ic_parser& parser);
-
-// todo, struct members allocation is a big issue, use a pool for that
-bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
+bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
 {
     assert(source);
+    ic_global_scope gscope;
+    ic_parser parser;
+    parser.init(gscope);
+    bool success = true;
+
+    if (libs & IC_LIB_CORE)
+        success = load_host_functions(_core_lib, IC_LIB_CORE, parser);
+    if (host_functions)
+        success = success && load_host_functions(host_functions, IC_USER_FUNCTION, parser);
+    if (!success)
+        return false;
 
     std::vector<ic_token> tokens;
     std::vector<unsigned char> program_data;
+    success = lex(source, tokens, program_data);
 
-    if (!lex(source, tokens, program_data))
+    if (!success)
         return false;
 
-    int strings_byte_size = program_data.size();
-    ic_global_scope gscope;
-    gscope.global_data_size = program_data.size() / sizeof(ic_data) + 1;
-    ic_parser parser;
-    parser.init(gscope);
-
-    // error handling of these
-    if (libs & IC_LIB_CORE)
-        load_host_functions(_core_lib, IC_LIB_CORE, parser);
-    if (host_functions)
-        load_host_functions(host_functions, IC_USER_FUNCTION, parser);
-
+    const int strings_byte_size = program_data.size();
+    gscope.global_data_size = strings_byte_size / sizeof(ic_data) + 1;
     parser.token_it = tokens.data();
 
-    // todo, move this to a separate function to simplify cleanup code, don't want to handle errors in multiple branches
-    // when resources must be freed
     while (parser.get_token().type != IC_TOK_EOF)
     {
         ic_decl decl = produce_decl(parser);
-        assert(!parser.error);
 
-        if (decl.type == IC_DECL_FUNCTION)
+        if (parser.error)
+            return false;
+
+        switch (decl.type)
+        {
+        case IC_DECL_FUNCTION:
         {
             ic_token token = decl.function.token;
             ic_function* prev_function = gscope.get_function(token.string);
@@ -420,32 +426,34 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
                     print_error(token, "function (provided by host) with such name already exists");
                 else
                     print_error(token, "function with such name already exists");
-                assert(false);
+                return false;
             }
             gscope.functions.push_back(decl.function);
+            break;
         }
-        else if (decl.type == IC_DECL_STRUCT)
+        case IC_DECL_STRUCT:
         {
             ic_token token = decl._struct.token;
 
             if (gscope.get_struct(token.string))
             {
                 print_error(token, "struct with such name already exists");
-                assert(false);
+                return false;
             }
             gscope.structs.push_back(decl._struct);
+            break;
         }
-        else if (decl.type == IC_DECL_VAR)
+        case IC_DECL_VAR:
         {
             ic_token token = decl.var.token;
 
             if (gscope.get_var(token.string))
             {
                 print_error(token, "global variable with such name already exists");
-                assert(false);
+                return false;
             }
             ic_var var;
-            var.idx = program.global_data_size * sizeof(ic_data);
+            var.idx = gscope.global_data_size * sizeof(ic_data);
             var.type = decl.var.type;
             var.name = token.string;
 
@@ -453,16 +461,18 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
             {
                 ic_struct* _struct = gscope.get_struct(var.type.struct_name);
                 assert(_struct);
-                program.global_data_size += _struct->num_data;
+                gscope.global_data_size += _struct->num_data;
             }
             else
-                program.global_data_size += 1;
+                gscope.global_data_size += 1;
 
             gscope.vars.push_back(var);
+            break;
         }
-        else
+        default:
             assert(false);
-    }
+        }
+    } // while
 
     std::vector<ic_function*> active_functions;
 
@@ -472,20 +482,26 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         {
             if (string_compare(function.token.string, { "main", 4 }))
             {
-                assert(function.param_count == 0);
-                assert(is_void(function.return_type));
+                success = function.param_count == 0;
+                success = success && is_void(function.return_type);
                 active_functions.push_back(&function);
             }
             function.data_idx = -1; // this is important
         }
     }
 
-    assert(active_functions.size());
+    if (!success || !active_functions.size())
+        return false;
+
     // important, active_functions.size() changes during loop execution
     for (int i = 0; i < active_functions.size(); ++i)
     {
         if (active_functions[i]->type == IC_FUN_SOURCE)
-            compile_function(*active_functions[i], gscope, &active_functions, &program_data);
+        {
+            success = compile_function(*active_functions[i], gscope, &active_functions, &program_data);
+            if (!success)
+                return false;
+        }
     }
 
     // compile inactive functions for code corectness, these will not be included in returned program
@@ -494,7 +510,9 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         if (function.type == IC_FUN_HOST || function.data_idx != -1)
             continue;
         printf("warning: function '%.*s' not used but compiled\n", function.token.string.len, function.token.string.data);
-        compile_function(function, gscope, nullptr, nullptr);
+        success = compile_function(function, gscope, nullptr, nullptr);
+        if (!success)
+            return false;
     }
 
     program.strings_byte_size = strings_byte_size;
@@ -542,6 +560,14 @@ bool ic_program_init_compile(ic_program& program, const char* source, int libs, 
         }
     }
     return true;
+}
+
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
+{
+    // keep all the memory resources here and pass down to implementation, deallocate on exit
+    // remove all std::vector usage and replace with ic_array
+    // but first implement error line printing
+    return program_init_compile_impl(program, source, libs, host_functions);
 }
 
 struct ic_lexer

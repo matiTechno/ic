@@ -705,7 +705,7 @@ struct ic_compiler
 
 // I prefer to pass by reference and pass additional flag if generate or not,
 // and I also have this idea, fill compiler strcuture and pass it to the function, it will be much better
-void compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
+bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode);
 
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
