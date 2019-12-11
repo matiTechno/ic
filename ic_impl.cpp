@@ -249,14 +249,26 @@ struct ic_deque
     }
 };
 
-void print_error(int line, int col, const char* err_msg)
+struct ic_source_line
 {
-    printf("error; line: %d; col: %d; %s\n", line, col, err_msg);
+    const char* str;
+    int len;
+};
+
+void print_error(int line, int col, ic_source_line* source_lines, const char* err_msg)
+{
+    assert(source_lines);
+    ic_source_line source_line = source_lines[line];
+    printf("error; line: %d; col: %d; %s\n%.*s\n", line, col, err_msg, source_line.len, source_line.str);
+
+    for (int i = 1; i < col; ++i)
+        printf("-");
+    printf("^\n");
 }
 
-void print_error(ic_token token, const char* err_msg)
+void print_error(ic_token token, ic_source_line* source_lines, const char* err_msg)
 {
-    print_error(token.line, token.col, err_msg);
+    print_error(token.line, token.col, source_lines, err_msg);
 }
 
 struct ic_parser
@@ -266,7 +278,7 @@ struct ic_parser
     ic_global_scope* gscope;
     bool error;
     ic_token* token_it;
-    // token functions and token member
+    ic_source_line* source_lines;
 
     void init(ic_global_scope& global_scope)
     {
@@ -330,11 +342,11 @@ struct ic_parser
         if (error)
             return;
 
+        print_error(*token_it, source_lines, err_msg);
+        error = true;
+
         while (token_it->type != IC_TOK_EOF)
             ++token_it;
-
-        print_error(*token_it, err_msg);
-        error = true;
     }
 
     ic_token& get_token()
@@ -343,7 +355,8 @@ struct ic_parser
     }
 };
 
-bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data);
+bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data,
+    std::vector<ic_source_line>& source_lines);
 ic_type produce_type(ic_parser& parser);
 void produce_parameter_list(ic_parser& parser, ic_function& function);
 ic_decl produce_decl(ic_parser& parser);
@@ -353,14 +366,17 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
     assert(it);
     std::vector<ic_token> tokens;
     std::vector<unsigned char> string_data;
+    std::vector<ic_source_line> source_lines;
 
     while (it->prototype_str)
     {
         tokens.clear();
+        source_lines.clear();
 
-        if (!lex(it->prototype_str, tokens, string_data))
+        if (!lex(it->prototype_str, tokens, string_data, source_lines))
             return false;
         parser.token_it = tokens.data();
+        parser.source_lines = source_lines.data();
         ic_function function;
         function.type = IC_FUN_HOST;
         function.return_type = produce_type(parser);
@@ -397,7 +413,8 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
     std::vector<ic_token> tokens;
     std::vector<unsigned char> program_data;
-    success = lex(source, tokens, program_data);
+    std::vector<ic_source_line> source_lines;
+    success = lex(source, tokens, program_data, source_lines);
 
     if (!success)
         return false;
@@ -405,6 +422,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     const int strings_byte_size = program_data.size();
     gscope.global_data_size = strings_byte_size / sizeof(ic_data) + 1;
     parser.token_it = tokens.data();
+    parser.source_lines = source_lines.data();
 
     while (parser.get_token().type != IC_TOK_EOF)
     {
@@ -423,9 +441,9 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             if (prev_function)
             {
                 if (prev_function->type == IC_FUN_HOST)
-                    print_error(token, "function (provided by host) with such name already exists");
+                    print_error(token, source_lines.data(), "function (provided by host) with such name already exists");
                 else
-                    print_error(token, "function with such name already exists");
+                    print_error(token, source_lines.data(), "function with such name already exists");
                 return false;
             }
             gscope.functions.push_back(decl.function);
@@ -437,7 +455,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
             if (gscope.get_struct(token.string))
             {
-                print_error(token, "struct with such name already exists");
+                print_error(token, source_lines.data(), "struct with such name already exists");
                 return false;
             }
             gscope.structs.push_back(decl._struct);
@@ -449,7 +467,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
             if (gscope.get_var(token.string))
             {
-                print_error(token, "global variable with such name already exists");
+                print_error(token, source_lines.data(), "global variable with such name already exists");
                 return false;
             }
             ic_var var;
@@ -669,8 +687,30 @@ static ic_keyword _keywords[] = {
     {"sizeof", IC_TOK_SIZEOF},
 };
 
-bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& string_data)
+bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& string_data,
+    std::vector<ic_source_line>& source_lines)
 {
+    assert(source);
+    {
+        source_lines.push_back({}); // dummy line for index 0
+        const char* it = source;
+        const char* line_begin = it;
+        int len = 0;
+
+        while (*it)
+        {
+            if (*it == '\n')
+            {
+                source_lines.push_back({ line_begin, len });
+                len = 0;
+                line_begin = it + 1;
+            }
+            else
+                len += 1;
+            it += 1;
+        }
+    }
+
     ic_lexer lexer;
     lexer.tokens = &_tokens;
     lexer.line = 1;
@@ -752,7 +792,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
                 lexer.add_token(IC_TOK_VBAR_VBAR);
             else // single | is not allowed in the source code
             {
-                print_error(lexer.line, lexer.col, "unexpected character");
+                print_error(lexer.line, lexer.col, source_lines.data(), "unexpected character");
                 return false;
             }
 
@@ -779,7 +819,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
             if (lexer.end() && *lexer.pos() != '"')
             {
-                print_error(lexer.token_line, lexer.token_col, "unterminated string literal");
+                print_error(lexer.token_line, lexer.token_col, source_lines.data(), "unterminated string literal");
                 return false;
             }
 
@@ -800,7 +840,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
             if (lexer.end() && *lexer.pos() != '\'')
             {
-                print_error(lexer.token_line, lexer.token_col, "unterminated character literal");
+                print_error(lexer.token_line, lexer.token_col, source_lines.data(), "unterminated character literal");
                 return false;
             }
 
@@ -825,7 +865,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
             if (code == -1)
             {
-                print_error(lexer.token_line, lexer.token_col,
+                print_error(lexer.token_line, lexer.token_col, source_lines.data(),
                     "invalid character literal; only printable, \\n and \\0 characters are supported");
                 return false;
             }
@@ -884,7 +924,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
             }
             else
             {
-                print_error(lexer.line, lexer.col, "unexpected character");
+                print_error(lexer.line, lexer.col, source_lines.data(), "unexpected character");
                 return false;
             }
         }
