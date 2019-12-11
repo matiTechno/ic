@@ -289,7 +289,7 @@ enum ic_stmt_result
 enum ic_print_type
 {
     IC_PERROR,
-    IC_PWARN,
+    IC_PWARNING,
 };
 
 struct ic_string
@@ -560,8 +560,9 @@ struct ic_compiler
     bool error;
     ic_string* source_lines;
 
-    void exit(ic_token token, const char* err_msg)
+    void set_error(ic_token token, const char* err_msg)
     {
+        // there is no real need to disable code gen on error, it won't be used anyway
         if (error)
             return;
         error = true;
@@ -570,7 +571,9 @@ struct ic_compiler
 
     void warn(ic_token token, const char* msg)
     {
-        print(IC_PWARN, token.line, token.col, source_lines, msg);
+        if (error)
+            return;
+        print(IC_PWARNING, token.line, token.col, source_lines, msg);
     }
 
     int bc_size()

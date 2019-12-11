@@ -315,7 +315,7 @@ struct ic_parser
             advance();
             return;
         }
-        exit(err_msg);
+        set_error(err_msg);
     }
     
     bool try_consume(ic_token_type type)
@@ -328,7 +328,7 @@ struct ic_parser
         return false;
     }
 
-    void exit(const char* err_msg)
+    void set_error(const char* err_msg)
     {
         if (error)
             return;
@@ -523,7 +523,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     {
         if (function.type == IC_FUN_HOST || function.data_idx != -1)
             continue;
-        print(IC_PWARN, function.token.line, function.token.col, source_lines.data(), "function defined but not used");
+        print(IC_PWARNING, function.token.line, function.token.col, source_lines.data(), "function defined but not used");
         success = compile_function(function, gscope, nullptr, nullptr, source_lines.data());
         if (!success)
             return false;
@@ -984,7 +984,7 @@ bool try_produce_type(ic_parser& parser, ic_type& type)
     }
     default:
         if (init)
-            parser.exit("expected type name after const keyword");
+            parser.set_error("expected type name after const keyword");
         return false;
     }
     parser.advance();
@@ -992,7 +992,7 @@ bool try_produce_type(ic_parser& parser, ic_type& type)
     while (parser.try_consume(IC_TOK_STAR))
     {
         if (type.indirection_level == IC_CMASK_MSB)
-            parser.exit("exceeded maximal level of indirection");
+            parser.set_error("exceeded maximal level of indirection");
 
         type.indirection_level += 1;
 
@@ -1007,7 +1007,7 @@ ic_type produce_type(ic_parser& parser)
 {
     ic_type type;
     if (!try_produce_type(parser, type))
-        parser.exit("expected type");
+        parser.set_error("expected type");
     return type;
 }
 
@@ -1023,12 +1023,12 @@ void produce_parameter_list(ic_parser& parser, ic_function& function)
     while(parser.get_token().type != IC_TOK_EOF)
     {
         if (function.param_count >= IC_MAX_ARGC)
-            parser.exit("exceeded maxial number of parameters");
+            parser.set_error("exceeded maxial number of parameters");
 
         ic_type param_type = produce_type(parser);
 
         if (is_void(param_type))
-            parser.exit("parameter can't be of type void");
+            parser.set_error("parameter can't be of type void");
 
         function.params[function.param_count].type = param_type;
         const ic_token* id_token = parser.token_it;
@@ -1092,10 +1092,10 @@ ic_decl produce_decl(ic_parser& parser)
 
             // todo, support const members?
             if (type.const_mask & 1)
-                parser.exit("struct member can't be const");
+                parser.set_error("struct member can't be const");
 
             if (is_void(type))
-                parser.exit("struct member can't be of type void");
+                parser.set_error("struct member can't be of type void");
 
             if (is_struct(type))
             {
@@ -1126,7 +1126,7 @@ ic_decl produce_decl(ic_parser& parser)
     ic_type type;
 
     if (!try_produce_type(parser, type)) // try_produce_type() is used to print nondefault error message
-        parser.exit("expected: a type of a global variable / return type of a function / 'struct' keyword");
+        parser.set_error("expected: a type of a global variable / return type of a function / 'struct' keyword");
 
     ic_token token_id = parser.get_token();
     parser.consume(IC_TOK_IDENTIFIER, "expected identifier");
@@ -1143,7 +1143,7 @@ ic_decl produce_decl(ic_parser& parser)
         function.body = produce_stmt(parser);
 
         if (function.body->type != IC_STMT_COMPOUND)
-            parser.exit("expected compound stmt after function parameter list");
+            parser.set_error("expected compound stmt after function parameter list");
 
         function.body->compound.push_scope = false; // do not allow shadowing of arguments
         return decl;
@@ -1151,7 +1151,7 @@ ic_decl produce_decl(ic_parser& parser)
 
     // variable
     if (is_void(type))
-        parser.exit("variables can't be of type void");
+        parser.set_error("variables can't be of type void");
 
     ic_decl decl;
     decl.type = IC_DECL_VAR;
@@ -1159,7 +1159,7 @@ ic_decl produce_decl(ic_parser& parser)
     decl.var.token = token_id;
 
     if (parser.get_token().type == IC_TOK_EQUAL)
-        parser.exit("global variables can't be initialized by an expression, they are set to 0");
+        parser.set_error("global variables can't be initialized by an expression, they are set to 0");
 
     parser.consume(IC_TOK_SEMICOLON, "expected ';'");
     return decl;
@@ -1225,7 +1225,7 @@ ic_stmt* produce_stmt(ic_parser& parser)
         stmt->_if.header = produce_expr(parser);
 
         if (stmt->_if.header->token.type == IC_TOK_EQUAL)
-            parser.exit("assignment expression can't be used directly in if header, encolse it with ()");
+            parser.set_error("assignment expression can't be used directly in if header, encolse it with ()");
 
         parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after if condition");
         stmt->_if.body_if = produce_stmt(parser);
@@ -1269,7 +1269,7 @@ ic_stmt* produce_stmt_var_decl(ic_parser& parser)
     if (try_produce_type(parser, type))
     {
         if (is_void(type))
-            parser.exit("variables can't be of type void");
+            parser.set_error("variables can't be of type void");
 
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_VAR_DECL, init_token);
         stmt->var_decl.type = type;
@@ -1519,7 +1519,7 @@ ic_expr* produce_expr_primary(ic_parser& parser)
                 ++argc;
 
                 if(argc > IC_MAX_ARGC)
-                    parser.exit("exceeded maximal number of arguments");
+                    parser.set_error("exceeded maximal number of arguments");
 
                 if (parser.try_consume(IC_TOK_RIGHT_PAREN))
                     break;
@@ -1539,6 +1539,6 @@ ic_expr* produce_expr_primary(ic_parser& parser)
         return expr;
     }
     } // switch
-    parser.exit("expected literal / indentifier / parentheses / function call");
+    parser.set_error("expected literal / indentifier / parentheses / function call");
     return parser.allocate_expr({}, {}); // don't return nullptr, may be dereferenced
 }
