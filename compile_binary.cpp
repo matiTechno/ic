@@ -1,5 +1,24 @@
 #include "ic_impl.h"
 
+bool comparison_compatible_pointer_types(ic_type lhs, ic_type rhs)
+{
+    if (!lhs.indirection_level || !rhs.indirection_level)
+        return false;
+
+    bool is_void = lhs.basic_type == IC_TYPE_VOID || rhs.basic_type == IC_TYPE_VOID;
+    bool is_nullptr = lhs.basic_type == IC_TYPE_NULLPTR || rhs.basic_type == IC_TYPE_NULLPTR;
+
+    if (is_void || is_nullptr)
+        return true;
+
+    if (lhs.basic_type != rhs.basic_type)
+        return false;
+
+    if (lhs.basic_type == IC_TYPE_STRUCT && lhs._struct != rhs._struct)
+        return false;
+    return true;
+}
+
 ic_expr_result compile_compound_assignment_mul_div(ic_expr* expr, ic_opcode opc_s32, ic_opcode opc_f32, ic_opcode opc_f64, ic_compiler& compiler)
 {
     ic_expr_result lhs = compile_expr(expr->binary.lhs, compiler, false);
@@ -44,12 +63,12 @@ ic_expr_result compile_compound_assignment_add_sub(ic_expr* expr, ic_opcode opc_
         ic_type atype = arithmetic_expr_type(rhs_type, compiler, expr->token);
 
         if (atype.basic_type != IC_TYPE_S32)
-            compiler.set_error(expr->token, "only integer types can be added to a pointer");
+            compiler.set_error(expr->token, "only integer values can be added to a pointer");
         compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
         int size = pointed_type_byte_size(lhs.type);
 
         if (!size)
-            compiler.set_error(expr->token, "pointers to void type can't be offset");
+            compiler.set_error(expr->token, "void pointers can't be offset");
         compiler.add_opcode(opc_ptr);
         compiler.add_s32(size);
     }
@@ -88,7 +107,9 @@ ic_expr_result compile_comparison(ic_expr* expr, ic_opcode opc_s32, ic_opcode op
     if (lhs_type.indirection_level)
     {
         ic_type rhs_type = compile_expr(expr->binary.rhs, compiler).type;
-        assert_comparison_compatible_pointer_types(lhs_type, rhs_type, compiler, expr->token);
+        
+        if (!comparison_compatible_pointer_types(lhs_type, rhs_type))
+            compiler.set_error(expr->token, "comparison incompatible types");
         compiler.add_opcode(opc_ptr);
     }
     else
@@ -174,13 +195,13 @@ ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_ex
     ic_type atype = arithmetic_expr_type(offset_type, compiler, offset_expr->token);
 
     if (atype.basic_type != IC_TYPE_S32)
-        compiler.set_error(offset_expr->token, "only integer types can be added to a pointer");
+        compiler.set_error(offset_expr->token, "only integer values can be added to a pointer");
 
     compile_implicit_conversion(atype, offset_type, compiler, offset_expr->token);
     int size = pointed_type_byte_size(ptr_type);
 
     if (!size)
-        compiler.set_error(ptr_expr->token, "pointers to void type can't be offset");
+        compiler.set_error(ptr_expr->token, "void pointers can't be offset");
     compiler.add_opcode(opc);
     compiler.add_s32(size);
     return { ptr_type, false };
@@ -251,7 +272,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
                 match = lhs_type._struct == rhs_type._struct;
 
             if(!match)
-                compiler.set_error(expr->token, "not compatible pointer types");
+                compiler.set_error(expr->token, "incompatible pointer types");
 
             compile_expr(expr->binary.lhs, compiler);
             compile_expr(expr->binary.rhs, compiler);
@@ -259,7 +280,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             int size = pointed_type_byte_size(lhs_type);
 
             if (size)
-                compiler.set_error(expr->token, "pointers to void type can't be subtracted");
+                compiler.set_error(expr->token, "void pointers can't be subtracted");
             compiler.add_s32(size);
             return { non_pointer_type(IC_TYPE_S32), false };
         }
@@ -285,7 +306,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
         ic_type atype = arithmetic_expr_type(lhs_type, rhs_type, compiler, expr->token);
 
         if (atype.basic_type != IC_TYPE_S32)
-            compiler.set_error(expr->token, "only integer types can be operands of a modulo operator");
+            compiler.set_error(expr->token, "expected an integer type expression");
         compile_implicit_conversion(atype, lhs_type, compiler, expr->token);
         compile_expr(expr->binary.rhs, compiler);
         compile_implicit_conversion(atype, rhs_type, compiler, expr->token);

@@ -18,7 +18,7 @@
 //  /* comments
 // , structures and unions can be anonymous inside other structures and unions (I very like this feature)
 // host structures; struct alignment, packing; exposing ast - seamless data structure sharing between host and VM
-// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of a call stack
+// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of a call stack and operand stack
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // tail call optimization
 // imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
@@ -498,6 +498,7 @@ void print(ic_print_type type, int line, int col, ic_string* source_lines, const
 int type_size(ic_type type);
 
 // this is used for data that must not be invalidated
+// todo, don't use T, return raw bytes
 template<typename T, int N>
 struct ic_deque
 {
@@ -804,7 +805,6 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler);
 ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic_token token);
 ic_type arithmetic_expr_type(ic_type operand_type, ic_compiler& compiler, ic_token token);
-void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic_token token);
 void assert_modifiable_lvalue(ic_expr_result result, ic_compiler& compiler, ic_token token);
 void compile_load(ic_type type, ic_compiler& compiler);
 void compile_store(ic_type type, ic_compiler& compiler);

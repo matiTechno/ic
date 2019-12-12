@@ -44,7 +44,7 @@ bool compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
     assert(!compiler.cont_ops.size());
 
     if (!is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
-        compiler.set_error(function.token, "all branches of a function must return a value");
+        compiler.set_error(function.token, "all branches of a non-void return type function must return a value");
 
     if(is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
         compiler.add_opcode(IC_OPC_RETURN);
@@ -212,7 +212,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             // don't pop the result, VM passes it to a parent stack_frame
         }
         else if (!is_void(return_type))
-            compiler.set_error(stmt->token, "function with non-void return type must return a value");
+            compiler.set_error(stmt->token, "function with a non-void return type must return a value");
 
         compiler.add_opcode(IC_OPC_RETURN);
         return IC_STMT_RESULT_RETURN;
@@ -221,7 +221,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     case IC_STMT_CONTINUE:
     {
         if (!compiler.loop_count)
-            compiler.set_error(stmt->token, "break / continue statements can be used only in loops");
+            compiler.set_error(stmt->token, "break / continue statements can be used only inside loops");
 
         compiler.add_opcode(IC_OPC_JUMP);
 
@@ -313,23 +313,20 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             assert(false);
         }
 
-        ic_struct _dummy;
-        _dummy.num_members = 0;
-        // returning an uninitialized value may trigger some asserts
-        ic_type target_type = non_pointer_type(IC_TYPE_S32);
-        ic_struct* _struct;
-        ic_string target_name = expr->member_access.rhs_token.string;
-        int data_offset = 0;
-        bool match = false;
-
         if (!is_struct(result.type))
         {
             compiler.set_error(expr->token, "member access operators can be used only on structs and struct pointers");
-            _struct = &_dummy; // prevent a dereference of a invalid pointer
+            // return to not dereference an invalid struct pointer
+            // it is important to not return a STRUCT type which could result in an invalid pointer dereference further in the execution
+            return { non_pointer_type(IC_TYPE_S32), false };
         }
-        else
-            _struct = result.type._struct;
+        // same, returning uninitialized value may crash the compiler, e.g. dereferencing an invalid struct pointer
+        ic_type target_type = non_pointer_type(IC_TYPE_S32);
 
+        ic_struct* _struct = result.type._struct;
+        ic_string target_name = expr->member_access.rhs_token.string;
+        int data_offset = 0;
+        bool match = false;
 
         for (int i = 0; i < _struct->num_members; ++i)
         {
@@ -345,7 +342,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         }
 
         if(!match)
-            compiler.set_error(expr->token, "accessed struct does not contain specified member");
+            compiler.set_error(expr->token, "an invalid struct member name");
         
         if (result.lvalue)
         {
@@ -356,9 +353,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
             if (!load_lvalue)
             {
-                // propagate constness to accessed data; non pointer type can have only one first bit set in a const mask
-                assert(result.type.const_mask == 0 || result.type.const_mask == 1);
-                target_type.const_mask |= result.type.const_mask; // & 1 is missing because we know only first bit may be set
+                target_type.const_mask |= result.type.const_mask & 1;
                 return { target_type, true };
             }
 

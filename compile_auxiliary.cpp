@@ -154,7 +154,7 @@ bool compile_implicit_conversion_impl(ic_type to, ic_type from, ic_compiler& com
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler, ic_token token)
 {
     if (!compile_implicit_conversion_impl(to, from, compiler))
-        compiler.set_error(token, "types are incompatible for an implicit conversion");
+        compiler.set_error(token, "implicit conversion incompatible types");
 }
 
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler)
@@ -169,7 +169,7 @@ ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler)
 ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic_token token)
 {
     if (lhs.indirection_level || rhs.indirection_level)
-        compiler.set_error(token, "expected arithmetic types");
+        compiler.set_error(token, "expected an arithmetic expression");
 
     switch (lhs.basic_type)
     {
@@ -181,7 +181,7 @@ ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic
     case IC_TYPE_F64:
         break;
     default:
-        compiler.set_error(token, "expected arithmetic types");
+        compiler.set_error(token, "expected an arithmetic expression");
     }
 
     if (lhs.basic_type <= IC_TYPE_S32 && rhs.basic_type <= IC_TYPE_S32)
@@ -193,31 +193,6 @@ ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic
 ic_type arithmetic_expr_type(ic_type operand_type, ic_compiler& compiler, ic_token token)
 {
     return arithmetic_expr_type(operand_type, non_pointer_type(IC_TYPE_BOOL), compiler, token);
-}
-
-bool assert_comparison_compatible_pointer_types_impl(ic_type lhs, ic_type rhs, ic_compiler& compiler)
-{
-    if (!lhs.indirection_level || !rhs.indirection_level)
-        return false;
-
-    bool is_void = lhs.basic_type == IC_TYPE_VOID || rhs.basic_type == IC_TYPE_VOID;
-    bool is_nullptr = lhs.basic_type == IC_TYPE_NULLPTR || rhs.basic_type == IC_TYPE_NULLPTR;
-
-    if (is_void || is_nullptr)
-        return true;
-
-    if (lhs.basic_type != rhs.basic_type)
-        return false;
-
-    if (lhs.basic_type == IC_TYPE_STRUCT && lhs._struct != rhs._struct)
-        return false;
-    return true;
-}
-
-void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic_token token)
-{
-    if (!assert_comparison_compatible_pointer_types_impl(lhs, rhs, compiler))
-        compiler.set_error(token, "types are incompatible for a comparison");
 }
 
 void assert_modifiable_lvalue(ic_expr_result result, ic_compiler& compiler, ic_token token)
@@ -253,7 +228,7 @@ void compile_load(ic_type type, ic_compiler& compiler)
         compiler.add_s32(type._struct->num_data);
         return;
     }
-    assert(false);
+    assert(compiler.error);
 }
 
 void compile_store(ic_type type, ic_compiler& compiler)
@@ -283,7 +258,7 @@ void compile_store(ic_type type, ic_compiler& compiler)
         compiler.add_s32(type._struct->num_data);
         return;
     }
-    assert(false);
+    assert(compiler.error);
 }
 
 void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
@@ -315,7 +290,7 @@ void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
         compiler.add_s32(result.type._struct->num_data);
         return;
     }
-    assert(false);
+    assert(compiler.error);
 }
 
 int pointed_type_byte_size(ic_type type)
@@ -339,6 +314,6 @@ int pointed_type_byte_size(ic_type type)
     case IC_TYPE_VOID:
         return 0;
     }
-    assert(false);
+    // compiler should be in an error states if this hits
     return {};
 }

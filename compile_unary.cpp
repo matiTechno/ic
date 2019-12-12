@@ -3,13 +3,13 @@
 ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue, ic_token token)
 {
     if (!type.indirection_level)
-        compiler.set_error(token, "expected pointer type");
+        compiler.set_error(token, "expected a pointer type");
 
     type.indirection_level -= 1;
     type.const_mask = type.const_mask >> 1;
 
     if (is_struct(type) && !type._struct->defined)
-        compiler.set_error(token, "cannot dereference incomplete type");
+        compiler.set_error(token, "cannot dereference an incomplete type");
 
     if (load_lvalue)
         compile_load(type, compiler);
@@ -83,7 +83,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
             int size = pointed_type_byte_size(result.type);
             
             if (!size)
-                compiler.set_error(expr->token, "pointer to type void can't be incremented");
+                compiler.set_error(expr->token, "void pointers can't be incremented / decremented");
             compiler.add_opcode(IC_OPC_PUSH_S32);
             compiler.add_s32(add_value);
             compiler.add_opcode(IC_OPC_ADD_PTR_S32);
@@ -131,7 +131,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
         ic_expr_result result = compile_expr(expr->unary.expr, compiler, false);
 
         if (!result.lvalue)
-            compiler.set_error(expr->token, "expected an lvalue");
+            compiler.set_error(expr->token, "expected an lvalue expression");
         result.type.indirection_level += 1;
         result.type.const_mask = result.type.const_mask << 1;
         return { result.type, false };

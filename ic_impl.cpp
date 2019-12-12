@@ -905,6 +905,11 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
     return true;
 }
 
+// these parsing functions must always terminate loops on EOF token,
+// never early return (there are some exceptions) to not leave behind any invalid pointers,
+// never allocate memory using malloc
+// I don't like this code, it feels bad. I don't really know what is the best way to handle this code.
+
 #define IC_CMASK_MSB 7
 
 bool try_produce_type(ic_parser& parser, ic_type& type, bool allow_void = false)
@@ -1008,7 +1013,7 @@ void produce_parameter_list(ic_parser& parser, ic_function& function)
         {
             parser.set_error("exceeded maxial number of parameters");
             assert(false); // todo
-            return; // don't write outside the buffer
+            //return; // don't write outside the buffer
         }
 
         ic_type param_type = produce_type(parser);
@@ -1081,7 +1086,8 @@ ic_decl produce_decl(ic_parser& parser)
             {
                 parser.set_error("exceeded maximal number of struct members");
                 assert(false); // todo
-                return {}; // don't write outside the buffer
+                //return {}; // don't write outside the buffer
+                // return {} may crash the program, e.g. dereferencing invalid pointer
             }
 
             // todo, support const members?
