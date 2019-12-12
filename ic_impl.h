@@ -311,12 +311,14 @@ struct ic_token
     };
 };
 
+struct ic_struct;
+
 struct ic_type
 {
     ic_basic_type basic_type;
     char indirection_level;
     unsigned char const_mask;
-    ic_string struct_name;
+    ic_struct* _struct;
 };
 
 // todo, combine ic_expr and ic_stmt into a single ast_node structure
@@ -456,6 +458,7 @@ struct ic_struct
     ic_param* members;
     int num_members;
     int num_data;
+    bool defined;
 };
 
 struct ic_decl
@@ -490,20 +493,71 @@ int read_int(unsigned char** buf_it);
 float read_float(unsigned char** buf_it);
 double read_double(unsigned char** buf_it);
 void print(ic_print_type type, int line, int col, ic_string* source_lines, const char* err_msg);
+int type_size(ic_type type);
+
+// this is used for data that must not be invalidated
+template<typename T, int N>
+struct ic_deque
+{
+    std::vector<T*> pools;
+    int size;
+
+    void init()
+    {
+        size = 0;
+    }
+
+    void free()
+    {
+        for (T* pool : pools)
+            ::free(pool);
+    }
+
+    T& get(int idx)
+    {
+        assert(idx < size);
+        return pools[idx / N][idx % N];
+    }
+
+    T* allocate()
+    {
+        if (pools.empty() || size == pools.size() * N)
+        {
+            T* new_pool = (T*)malloc(N * sizeof(T));
+            pools.push_back(new_pool);
+        }
+
+        size += 1;
+        return &get(size - 1);
+    }
+};
 
 struct ic_global_scope
 {
-    std::vector<ic_struct> structs;
+    ic_deque<ic_struct, 100> structs;
     std::vector<ic_function> functions;
     std::vector<ic_var> vars;
     int global_data_size;
 
+    void init()
+    {
+        structs.init();
+    }
+
+    void free()
+    {
+        structs.free();
+    }
+
     ic_struct* get_struct(ic_string name)
     {
-        for (ic_struct& _struct : structs)
+        for (int i = 0; i < structs.size; ++i)
         {
+            ic_struct& _struct = structs.get(i);
+
             if (string_compare(_struct.token.string, name))
                 return &_struct;
+
         }
         return nullptr;
     }
@@ -657,7 +711,7 @@ struct ic_compiler
 
     void declare_unused_param(ic_type type)
     {
-        stack_size += is_struct(type) ? get_struct(type.struct_name)->num_data : 1;
+        stack_size += type_size(type);
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
     }
 
@@ -672,7 +726,7 @@ struct ic_compiler
         }
 
         int byte_idx = stack_size * sizeof(ic_data);
-        stack_size += is_struct(type) ? get_struct(type.struct_name)->num_data : 1;
+        stack_size += type_size(type);
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
         ic_var var;
         var.idx = byte_idx;

@@ -57,6 +57,26 @@ double read_double(unsigned char** buf_it)
     return v;
 }
 
+void print(ic_print_type type, int line, int col, ic_string* source_lines, const char* err_msg)
+{
+    assert(source_lines);
+    ic_string source_line = source_lines[line];
+    printf("%s (line: %d, col: %d): %s\n%.*s\n%*s^\n", type == IC_PERROR ? "error" : "warning",
+        line, col, err_msg, source_line.len, source_line.data, col - 1, ""); // "" this is a trick to print multiple spaces
+}
+
+int type_size(ic_type type)
+{
+    if (is_struct(type))
+    {
+        assert(type._struct->defined);
+        return type._struct->num_data;
+    }
+    if (is_void(type))
+        assert(false); // currently this function is never used on a void type
+    return 1;
+}
+
 void write_bytes(unsigned char** buf_it, void* src, int bytes)
 {
     memcpy(*buf_it, src, bytes);
@@ -212,55 +232,6 @@ void ic_program_free(ic_program& program)
     free(program.functions);
 }
 
-// neded for e.g. statements and expressions to not invalidate pointers and allocate from a pool
-template<typename T, int N>
-struct ic_deque
-{
-    std::vector<T*> pools;
-    int size;
-
-    void init()
-    {
-        size = 0;
-    }
-
-    void free()
-    {
-        for (T* pool : pools)
-            ::free(pool);
-    }
-
-    T& get(int idx)
-    {
-        assert(idx < size);
-        return pools[idx / N][idx % N];
-    }
-
-    T* allocate()
-    {
-        if (pools.empty() || size == pools.size() * N)
-        {
-            T* new_pool = (T*)malloc(N * sizeof(T));
-            pools.push_back(new_pool);
-        }
-
-        size += 1;
-        return &get(size - 1);
-    }
-};
-
-void print(ic_print_type type, int line, int col, ic_string* source_lines, const char* err_msg)
-{
-    assert(source_lines);
-    ic_string source_line = source_lines[line];
-    printf("%s (line: %d, col: %d): %s\n%.*s\n", type == IC_PERROR ? "error" : "warning",
-        line, col, err_msg, source_line.len, source_line.data);
-
-    for (int i = 1; i < col; ++i)
-        printf("-");
-    printf("^\n");
-}
-
 struct ic_parser
 {
     ic_deque<ic_expr, 1000> expressions;
@@ -346,9 +317,11 @@ struct ic_parser
     }
 };
 
+#define IC_ALLOW_VOID 1
+
 bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data,
     std::vector<ic_string>& source_lines);
-ic_type produce_type(ic_parser& parser);
+ic_type produce_type(ic_parser& parser, bool allow_void);
 void produce_parameter_list(ic_parser& parser, ic_function& function);
 ic_decl produce_decl(ic_parser& parser);
 
@@ -370,7 +343,7 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
         parser.source_lines = source_lines.data();
         ic_function function;
         function.type = IC_FUN_HOST;
-        function.return_type = produce_type(parser);
+        function.return_type = produce_type(parser, IC_ALLOW_VOID);
         function.token = parser.get_token();
         parser.consume(IC_TOK_IDENTIFIER, "expected function name");
         // proudce_parameter_list assumes that ( is consumed this is to avoid redundancy in produce_decl()
@@ -396,6 +369,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 {
     assert(source);
     ic_global_scope gscope;
+    gscope.init();
     ic_parser parser;
     parser.init(gscope);
     bool success = true;
@@ -448,13 +422,27 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         case IC_DECL_STRUCT:
         {
             ic_token token = decl._struct.token;
+            ic_struct* prev_struct = gscope.get_struct(token.string);
 
-            if (gscope.get_struct(token.string))
+            if (!decl._struct.defined)
             {
-                print_error(token, source_lines, "struct with such name already exists");
-                return false;
+                if (prev_struct)
+                    break; // do nothing, multiple declarations are not an error
+                *gscope.structs.allocate() = decl._struct;
+                break;
             }
-            gscope.structs.push_back(decl._struct);
+            // if declaration is also a definition
+            if (prev_struct)
+            {
+                if (prev_struct->defined)
+                {
+                    print_error(token, source_lines, "struct with such name is already defined");
+                    return false;
+                }
+                *prev_struct = decl._struct; // replace forward declaration with definition
+                break;
+            }
+            *gscope.structs.allocate() = decl._struct;
             break;
         }
         case IC_DECL_VAR:
@@ -470,16 +458,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             var.idx = gscope.global_data_size * sizeof(ic_data);
             var.type = decl.var.type;
             var.name = token.string;
-
-            if (is_struct(var.type))
-            {
-                ic_struct* _struct = gscope.get_struct(var.type.struct_name);
-                assert(_struct);
-                gscope.global_data_size += _struct->num_data;
-            }
-            else
-                gscope.global_data_size += 1;
-
+            gscope.global_data_size += type_size(var.type);
             gscope.vars.push_back(var);
             break;
         }
@@ -544,16 +523,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         vmfun.param_size = 0;
 
         for (int j = 0; j < fun.param_count; ++j)
-        {
-            if (is_struct(fun.params[j].type))
-            {
-                ic_struct* _struct = gscope.get_struct(fun.params[j].type.struct_name);
-                assert(_struct);
-                vmfun.param_size += _struct->num_data;
-            }
-            else
-                vmfun.param_size += 1;
-        }
+            vmfun.param_size += type_size(fun.params[j].type);
 
         if (vmfun.host_impl)
         {
@@ -561,7 +531,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             vmfun.host_data = fun.host_function->host_data;
             vmfun.hash = hash_string(fun.host_function->prototype_str);
             vmfun.origin = fun.origin;
-            vmfun.returns_value = is_void(fun.return_type) ? 0 : 1;
+            vmfun.returns_value = is_void(fun.return_type) ? 0 : 1; // currently host function can't return struct value
             // make sure there is no hash collision with previously initialized vm functions
             for(int j = 0; j < i; ++j)
                 assert(vmfun.hash != program.functions[j].hash);
@@ -935,7 +905,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
 #define IC_CMASK_MSB 7
 
-bool try_produce_type(ic_parser& parser, ic_type& type)
+bool try_produce_type(ic_parser& parser, ic_type& type, bool allow_void = false)
 {
     bool init = false;
     type.indirection_level = 0;
@@ -972,12 +942,12 @@ bool try_produce_type(ic_parser& parser, ic_type& type)
         break;
     case IC_TOK_IDENTIFIER:
     {
-        ic_string name = parser.get_token().string;
+        ic_struct* _struct = parser.gscope->get_struct(parser.get_token().string);
 
-        if (parser.gscope->get_struct(name))
+        if (_struct)
         {
             type.basic_type = IC_TYPE_STRUCT;
-            type.struct_name = name;
+            type._struct = _struct;
             break;
         }
         // fall through, not a type
@@ -1000,13 +970,20 @@ bool try_produce_type(ic_parser& parser, ic_type& type)
             type.const_mask += 1 << (IC_CMASK_MSB - type.indirection_level);
     }
     type.const_mask = type.const_mask >> (IC_CMASK_MSB - type.indirection_level);
+
+    if (is_struct(type) && !type._struct->defined)
+        parser.set_error("struct definition missing");
+
+    if (is_void(type) && !allow_void)
+        parser.set_error("type can't be void");
+
     return true;
 }
 
-ic_type produce_type(ic_parser& parser)
+ic_type produce_type(ic_parser& parser, bool allow_void = false)
 {
     ic_type type;
-    if (!try_produce_type(parser, type))
+    if (!try_produce_type(parser, type, allow_void))
         parser.set_error("expected type");
     return type;
 }
@@ -1026,10 +1003,6 @@ void produce_parameter_list(ic_parser& parser, ic_function& function)
             parser.set_error("exceeded maxial number of parameters");
 
         ic_type param_type = produce_type(parser);
-
-        if (is_void(param_type))
-            parser.set_error("parameter can't be of type void");
-
         function.params[function.param_count].type = param_type;
         const ic_token* id_token = parser.token_it;
 
@@ -1080,6 +1053,13 @@ ic_decl produce_decl(ic_parser& parser)
         ic_struct& _struct = decl._struct;
         _struct.token = parser.get_token();
         parser.consume(IC_TOK_IDENTIFIER, "expected struct name");
+
+        if (parser.try_consume(IC_TOK_SEMICOLON))
+        {
+            _struct.defined = false;
+            return decl;
+        }
+        _struct.defined = true;
         parser.consume(IC_TOK_LEFT_BRACE, "expected '{'");
         ic_param members[IC_MAX_MEMBERS]; // todo
         _struct.num_members = 0;
@@ -1089,23 +1069,11 @@ ic_decl produce_decl(ic_parser& parser)
         while (try_produce_type(parser, type))
         {
             assert(_struct.num_members < IC_MAX_MEMBERS); // todo
-
             // todo, support const members?
             if (type.const_mask & 1)
                 parser.set_error("struct member can't be const");
 
-            if (is_void(type))
-                parser.set_error("struct member can't be of type void");
-
-            if (is_struct(type))
-            {
-                ic_struct* sub_struct = parser.gscope->get_struct(type.struct_name);
-                assert(sub_struct); //  todo, print nice error here
-                _struct.num_data += sub_struct->num_data;
-            }
-            else
-                _struct.num_data += 1;
-
+            _struct.num_data += type_size(type);
             ic_param& member = members[_struct.num_members];
             member.type = type;
             member.name = parser.get_token().string;
@@ -1125,7 +1093,8 @@ ic_decl produce_decl(ic_parser& parser)
     // else produce function or variable declaration
     ic_type type;
 
-    if (!try_produce_type(parser, type)) // try_produce_type() is used to print nondefault error message
+    // function can return type can be void
+    if (!try_produce_type(parser, type, IC_ALLOW_VOID)) // try_produce_type() is used to print nondefault error message
         parser.set_error("expected: a type of a global variable / return type of a function / 'struct' keyword");
 
     ic_token token_id = parser.get_token();
@@ -1149,9 +1118,9 @@ ic_decl produce_decl(ic_parser& parser)
         return decl;
     }
 
-    // variable
+    // variable, IC_ALLOW_VOID was used to produce type, we need to check if variable type is not void
     if (is_void(type))
-        parser.set_error("variables can't be of type void");
+        parser.set_error("type can't be void");
 
     ic_decl decl;
     decl.type = IC_DECL_VAR;
@@ -1268,9 +1237,6 @@ ic_stmt* produce_stmt_var_decl(ic_parser& parser)
 
     if (try_produce_type(parser, type))
     {
-        if (is_void(type))
-            parser.set_error("variables can't be of type void");
-
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_VAR_DECL, init_token);
         stmt->var_decl.type = type;
         stmt->var_decl.token = parser.get_token();

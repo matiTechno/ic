@@ -5,7 +5,7 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
     assert(to.indirection_level == from.indirection_level);
 
     if (to.basic_type == IC_TYPE_STRUCT && from.basic_type == IC_TYPE_STRUCT)
-        assert(string_compare(to.struct_name, from.struct_name));
+        assert(to._struct == from._struct);
 
     if (to.indirection_level)
     {
@@ -196,7 +196,7 @@ void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs)
     assert(lhs.basic_type == rhs.basic_type);
 
     if (lhs.basic_type == IC_TYPE_STRUCT)
-        assert(string_compare(lhs.struct_name, rhs.struct_name));
+        assert(lhs._struct == rhs._struct);
 }
 
 void assert_modifiable_lvalue(ic_expr_result result)
@@ -229,7 +229,7 @@ void compile_load(ic_type type, ic_compiler& compiler)
         return;
     case IC_TYPE_STRUCT:
         compiler.add_opcode(IC_OPC_LOAD_STRUCT);
-        compiler.add_s32(compiler.get_struct(type.struct_name)->num_data);
+        compiler.add_s32(type._struct->num_data);
         return;
     }
     assert(false);
@@ -259,7 +259,7 @@ void compile_store(ic_type type, ic_compiler& compiler)
         return;
     case IC_TYPE_STRUCT:
         compiler.add_opcode(IC_OPC_STORE_STRUCT);
-        compiler.add_s32(compiler.get_struct(type.struct_name)->num_data);
+        compiler.add_s32(type._struct->num_data);
         return;
     }
     assert(false);
@@ -291,7 +291,7 @@ void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
         return;
     case IC_TYPE_STRUCT:
         compiler.add_opcode(IC_OPC_POP_MANY);
-        compiler.add_s32(compiler.get_struct(result.type.struct_name)->num_data);
+        compiler.add_s32(result.type._struct->num_data);
         return;
     }
     assert(false);
@@ -314,7 +314,7 @@ int pointed_type_byte_size(ic_type type, ic_compiler& compiler)
     case IC_TYPE_F64:
         return sizeof(double);
     case IC_TYPE_STRUCT:
-        return compiler.get_struct(type.struct_name)->num_data * sizeof(ic_data);
+        return type._struct->num_data * sizeof(ic_data);
     case IC_TYPE_VOID:
         return 0;
     }

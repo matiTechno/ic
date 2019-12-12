@@ -185,7 +185,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             if (is_struct(var.type))
             {
                 compiler.add_opcode(IC_OPC_STORE_STRUCT);
-                compiler.add_s32(compiler.get_struct(var.type.struct_name)->num_data);
+                compiler.add_s32(var.type._struct->num_data);
             }
             else
                 compiler.add_opcode(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
@@ -308,7 +308,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         assert(result.type.basic_type == IC_TYPE_STRUCT);
         ic_string target_name = expr->member_access.rhs_token.string;
         ic_type target_type;
-        ic_struct* _struct = compiler.get_struct(result.type.struct_name);
+        ic_struct* _struct = result.type._struct;
         int data_offset = 0;
         bool match = false;
 
@@ -322,13 +322,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
                 match = true;
                 break;
             }
-
-            if (is_struct(member.type))
-                data_offset += compiler.get_struct(member.type.struct_name)->num_data;
-            else
-                data_offset += 1;
+            data_offset += type_size(member.type);
         }
-
         assert(match);
         
         if (result.lvalue)
@@ -350,7 +345,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { target_type, false };
         }
 
-        int size = is_struct(target_type) ? compiler.get_struct(target_type.struct_name)->num_data : 1;
+        int size = type_size(target_type);
         compiler.add_opcode(IC_OPC_MEMMOVE);
         compiler.add_s32(_struct->num_data);
         compiler.add_s32(_struct->num_data - data_offset);

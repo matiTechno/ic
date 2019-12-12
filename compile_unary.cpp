@@ -6,6 +6,12 @@ ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool loa
     type.indirection_level -= 1;
     type.const_mask = type.const_mask >> 1;
 
+    // todo, we must have some token here
+    /*
+    if (is_struct(type) && !type._struct->defined)
+        compiler.set_error("cannot dereference incomplete type");
+        */
+
     if (load_lvalue)
         compile_load(type, compiler);
 
