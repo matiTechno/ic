@@ -372,21 +372,24 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     gscope.init();
     ic_parser parser;
     parser.init(gscope);
-    bool success = true;
 
     if (libs & IC_LIB_CORE)
-        success = load_host_functions(_core_lib, IC_LIB_CORE, parser);
+    {
+        if (!load_host_functions(_core_lib, IC_LIB_CORE, parser))
+            return false;
+    }
+
     if (host_functions)
-        success = success && load_host_functions(host_functions, IC_USER_FUNCTION, parser);
-    if (!success)
-        return false;
+    {
+        if (!load_host_functions(host_functions, IC_USER_FUNCTION, parser))
+            return false;
+    }
 
     std::vector<ic_token> tokens;
     std::vector<unsigned char> program_data;
     std::vector<ic_string> source_lines;
-    success = lex(source, tokens, program_data, source_lines);
 
-    if (!success)
+    if (!lex(source, tokens, program_data, source_lines))
         return false;
 
     const int strings_byte_size = program_data.size();
@@ -475,15 +478,15 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         {
             if (string_compare(function.token.string, { "main", 4 }))
             {
-                success = function.param_count == 0;
-                success = success && is_void(function.return_type);
+                if (function.param_count != 0 || !is_void(function.return_type))
+                    return false;
                 active_functions.push_back(&function);
             }
             function.data_idx = -1; // this is important
         }
     }
 
-    if (!success || !active_functions.size())
+    if (!active_functions.size())
         return false;
 
     // important, active_functions.size() changes during loop execution
@@ -491,8 +494,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     {
         if (active_functions[i]->type == IC_FUN_SOURCE)
         {
-            success = compile_function(*active_functions[i], gscope, &active_functions, &program_data, source_lines.data());
-            if (!success)
+            if(!compile_function(*active_functions[i], gscope, &active_functions, &program_data, source_lines.data()))
                 return false;
         }
     }
@@ -503,8 +505,8 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         if (function.type == IC_FUN_HOST || function.data_idx != -1)
             continue;
         print(IC_PWARNING, function.token.line, function.token.col, source_lines.data(), "function defined but not used");
-        success = compile_function(function, gscope, nullptr, nullptr, source_lines.data());
-        if (!success)
+
+        if(!compile_function(function, gscope, nullptr, nullptr, source_lines.data()))
             return false;
     }
     program.strings_byte_size = strings_byte_size;
@@ -962,7 +964,10 @@ bool try_produce_type(ic_parser& parser, ic_type& type, bool allow_void = false)
     while (parser.try_consume(IC_TOK_STAR))
     {
         if (type.indirection_level == IC_CMASK_MSB)
+        {
             parser.set_error("exceeded maximal level of indirection");
+            assert(false); // todo
+        }
 
         type.indirection_level += 1;
 
@@ -1002,7 +1007,7 @@ void produce_parameter_list(ic_parser& parser, ic_function& function)
         if (function.param_count == IC_MAX_ARGC)
         {
             parser.set_error("exceeded maxial number of parameters");
-            assert(false); // todo, fix it
+            assert(false); // todo
             return; // don't write outside the buffer
         }
 
@@ -1075,7 +1080,7 @@ ic_decl produce_decl(ic_parser& parser)
             if (_struct.num_members == IC_MAX_MEMBERS)
             {
                 parser.set_error("exceeded maximal number of struct members");
-                assert(false); // todo, fix it
+                assert(false); // todo
                 return {}; // don't write outside the buffer
             }
 

@@ -29,6 +29,7 @@
 // I would like to support simple generics and plain struct functions
 // self-hosting
 // remove std::vector dependency - to keep POD and explicit initialization style consistent
+// error messages may point slightly off, at a wrong token
 
 static_assert(sizeof(int) == 4, "sizeof(int) == 4");
 static_assert(sizeof(float) == 4, "sizeof(float) == 4");
@@ -322,6 +323,7 @@ struct ic_type
 };
 
 // todo, combine ic_expr and ic_stmt into a single ast_node structure
+// maybe this way is better?
 struct ic_expr
 {
     ic_expr_type type;
@@ -790,20 +792,21 @@ struct ic_compiler
 bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
     std::vector<unsigned char>* bytecode, ic_string* source_lines);
 
+// todo, pass compiler as a first argument to be consistent with rest of the code
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);
 ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler);
 ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lvalue);
 ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_expr, ic_opcode opc, ic_compiler& compiler);
-ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue);
+ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool load_lvalue, ic_token token);
 // compile_auxiliary.cpp
-void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler);
+void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler, ic_token token);
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler);
-ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs);
-ic_type arithmetic_expr_type(ic_type operand_type);
-void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs);
-void assert_modifiable_lvalue(ic_expr_result result);
+ic_type arithmetic_expr_type(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic_token token);
+ic_type arithmetic_expr_type(ic_type operand_type, ic_compiler& compiler, ic_token token);
+void assert_comparison_compatible_pointer_types(ic_type lhs, ic_type rhs, ic_compiler& compiler, ic_token token);
+void assert_modifiable_lvalue(ic_expr_result result, ic_compiler& compiler, ic_token token);
 void compile_load(ic_type type, ic_compiler& compiler);
 void compile_store(ic_type type, ic_compiler& compiler);
 void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler);
-int pointed_type_byte_size(ic_type type, ic_compiler& compiler);
+int pointed_type_byte_size(ic_type type);

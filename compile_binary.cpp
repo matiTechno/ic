@@ -3,14 +3,14 @@
 ic_expr_result compile_compound_assignment_mul_div(ic_expr* expr, ic_opcode opc_s32, ic_opcode opc_f32, ic_opcode opc_f64, ic_compiler& compiler)
 {
     ic_expr_result lhs = compile_expr(expr->binary.lhs, compiler, false);
-    assert_modifiable_lvalue(lhs);
+    assert_modifiable_lvalue(lhs, compiler, expr->token);
     compiler.add_opcode(IC_OPC_CLONE);
     compile_load(lhs.type, compiler);
     ic_type rhs_type = get_expr_result_type(expr->binary.rhs, compiler);
-    ic_type atype = arithmetic_expr_type(lhs.type, rhs_type);
-    compile_implicit_conversion(atype, lhs.type, compiler);
+    ic_type atype = arithmetic_expr_type(lhs.type, rhs_type, compiler, expr->token);
+    compile_implicit_conversion(atype, lhs.type, compiler, expr->token);
     compile_expr(expr->binary.rhs, compiler);
-    compile_implicit_conversion(atype, rhs_type, compiler);
+    compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
 
     switch (atype.basic_type)
     {
@@ -24,7 +24,7 @@ ic_expr_result compile_compound_assignment_mul_div(ic_expr* expr, ic_opcode opc_
         compiler.add_opcode(opc_f64);
         break;
     }
-    compile_implicit_conversion(lhs.type, atype, compiler);
+    compile_implicit_conversion(lhs.type, atype, compiler, expr->token);
     compiler.add_opcode(IC_OPC_SWAP);
     compile_store(lhs.type, compiler);
     return { lhs.type, false };
@@ -34,28 +34,32 @@ ic_expr_result compile_compound_assignment_add_sub(ic_expr* expr, ic_opcode opc_
     ic_compiler& compiler)
 {
     ic_expr_result lhs = compile_expr(expr->binary.lhs, compiler, false);
-    assert_modifiable_lvalue(lhs);
+    assert_modifiable_lvalue(lhs, compiler, expr->token);
     compiler.add_opcode(IC_OPC_CLONE);
     compile_load(lhs.type, compiler);
 
     if (lhs.type.indirection_level)
     {
         ic_type rhs_type = compile_expr(expr->binary.rhs, compiler).type;
-        ic_type atype = arithmetic_expr_type(rhs_type);
-        assert(atype.basic_type == IC_TYPE_S32);
-        compile_implicit_conversion(atype, rhs_type, compiler);
-        int size = pointed_type_byte_size(lhs.type, compiler);
-        assert(size);
+        ic_type atype = arithmetic_expr_type(rhs_type, compiler, expr->token);
+
+        if (atype.basic_type != IC_TYPE_S32)
+            compiler.set_error(expr->token, "only integer types can be added to a pointer");
+        compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
+        int size = pointed_type_byte_size(lhs.type);
+
+        if (!size)
+            compiler.set_error(expr->token, "pointers to void type can't be offset");
         compiler.add_opcode(opc_ptr);
         compiler.add_s32(size);
     }
     else
     {
         ic_type rhs_type = get_expr_result_type(expr->binary.rhs, compiler);
-        ic_type atype = arithmetic_expr_type(lhs.type, rhs_type);
-        compile_implicit_conversion(atype, lhs.type, compiler);
+        ic_type atype = arithmetic_expr_type(lhs.type, rhs_type, compiler, expr->token);
+        compile_implicit_conversion(atype, lhs.type, compiler, expr->token);
         compile_expr(expr->binary.rhs, compiler);
-        compile_implicit_conversion(atype, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
 
         switch (atype.basic_type)
         {
@@ -69,7 +73,7 @@ ic_expr_result compile_compound_assignment_add_sub(ic_expr* expr, ic_opcode opc_
             compiler.add_opcode(opc_f64);
             break;
         }
-        compile_implicit_conversion(lhs.type, atype, compiler);
+        compile_implicit_conversion(lhs.type, atype, compiler, expr->token);
     }
 
     compiler.add_opcode(IC_OPC_SWAP);
@@ -84,16 +88,16 @@ ic_expr_result compile_comparison(ic_expr* expr, ic_opcode opc_s32, ic_opcode op
     if (lhs_type.indirection_level)
     {
         ic_type rhs_type = compile_expr(expr->binary.rhs, compiler).type;
-        assert_comparison_compatible_pointer_types(lhs_type, rhs_type);
+        assert_comparison_compatible_pointer_types(lhs_type, rhs_type, compiler, expr->token);
         compiler.add_opcode(opc_ptr);
     }
     else
     {
         ic_type rhs_type = get_expr_result_type(expr->binary.rhs, compiler);
-        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
-        compile_implicit_conversion(atype, lhs_type, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type, compiler, expr->token);
+        compile_implicit_conversion(atype, lhs_type, compiler, expr->token);
         compile_expr(expr->binary.rhs, compiler);
-        compile_implicit_conversion(atype, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
 
         switch (atype.basic_type)
         {
@@ -117,10 +121,10 @@ ic_expr_result compile_binary_arithmetic(ic_expr* expr, ic_type rhs_type, ic_opc
 {
     assert(expr->type == IC_EXPR_BINARY);
     ic_type lhs_type = compile_expr(expr->binary.lhs, compiler).type;
-    ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
-    compile_implicit_conversion(atype, lhs_type, compiler);
+    ic_type atype = arithmetic_expr_type(lhs_type, rhs_type, compiler, expr->token);
+    compile_implicit_conversion(atype, lhs_type, compiler, expr->token);
     compile_expr(expr->binary.rhs, compiler);
-    compile_implicit_conversion(atype, rhs_type, compiler);
+    compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
 
     switch (atype.basic_type)
     {
@@ -141,13 +145,13 @@ ic_expr_result compile_binary_logical(ic_expr* expr, ic_opcode opc_jump, int val
 {
     // lhs condition
     ic_type lhs_type = compile_expr(expr->binary.lhs, compiler).type;
-    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler);
+    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler, expr->token);
     compiler.add_opcode(opc_jump);
     int idx_resolve_condition = compiler.bc_size();
     compiler.add_s32({});
     // rhs condition
     ic_type rhs_type = compile_expr(expr->binary.rhs, compiler).type;
-    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler);
+    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler, expr->token);
     compiler.add_opcode(IC_OPC_JUMP);
     int idx_resolve_end = compiler.bc_size();
     compiler.add_s32({});
@@ -167,11 +171,16 @@ ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_ex
 {
     ic_type ptr_type = compile_expr(ptr_expr, compiler).type;
     ic_type offset_type = compile_expr(offset_expr, compiler).type;
-    ic_type atype = arithmetic_expr_type(offset_type);
-    assert(atype.basic_type == IC_TYPE_S32);
-    compile_implicit_conversion(atype, offset_type, compiler);
-    int size = pointed_type_byte_size(ptr_type, compiler);
-    assert(size);
+    ic_type atype = arithmetic_expr_type(offset_type, compiler, offset_expr->token);
+
+    if (atype.basic_type != IC_TYPE_S32)
+        compiler.set_error(offset_expr->token, "only integer types can be added to a pointer");
+
+    compile_implicit_conversion(atype, offset_type, compiler, offset_expr->token);
+    int size = pointed_type_byte_size(ptr_type);
+
+    if (!size)
+        compiler.set_error(ptr_expr->token, "pointers to void type can't be offset");
     compiler.add_opcode(opc);
     compiler.add_s32(size);
     return { ptr_type, false };
@@ -185,9 +194,9 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     {
         ic_type lhs_type = get_expr_result_type(expr->binary.lhs, compiler); // this is needed to convert rhs before lhs lvalue is pushed
         ic_type rhs_type = compile_expr(expr->binary.rhs, compiler).type;
-        compile_implicit_conversion(lhs_type, rhs_type, compiler);
+        compile_implicit_conversion(lhs_type, rhs_type, compiler, expr->token);
         ic_expr_result lhs = compile_expr(expr->binary.lhs, compiler, false);
-        assert_modifiable_lvalue(lhs);
+        assert_modifiable_lvalue(lhs, compiler, expr->token);
         compile_store(lhs.type, compiler);
         return { lhs_type, false };
     }
@@ -236,16 +245,21 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
 
         if (lhs_type.indirection_level && rhs_type.indirection_level)
         {
-            assert(lhs_type.indirection_level == rhs_type.indirection_level);
-            assert(lhs_type.basic_type == rhs_type.basic_type);
-            if (lhs_type.basic_type == IC_TYPE_STRUCT)
-                assert(lhs_type._struct == rhs_type._struct);
+            bool match = lhs_type.indirection_level == rhs_type.indirection_level && lhs_type.basic_type == rhs_type.basic_type;
+
+            if (match && lhs_type.basic_type == IC_TYPE_STRUCT)
+                match = lhs_type._struct == rhs_type._struct;
+
+            if(!match)
+                compiler.set_error(expr->token, "not compatible pointer types");
 
             compile_expr(expr->binary.lhs, compiler);
             compile_expr(expr->binary.rhs, compiler);
             compiler.add_opcode(IC_OPC_SUB_PTR_PTR);
-            int size = pointed_type_byte_size(lhs_type, compiler);
-            assert(size);
+            int size = pointed_type_byte_size(lhs_type);
+
+            if (size)
+                compiler.set_error(expr->token, "pointers to void type can't be subtracted");
             compiler.add_s32(size);
             return { non_pointer_type(IC_TYPE_S32), false };
         }
@@ -268,11 +282,13 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
     {
         ic_type lhs_type = compile_expr(expr->binary.lhs, compiler).type;
         ic_type rhs_type = get_expr_result_type(expr->binary.rhs, compiler);
-        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type);
-        assert(atype.basic_type == IC_TYPE_S32);
-        compile_implicit_conversion(atype, lhs_type, compiler);
+        ic_type atype = arithmetic_expr_type(lhs_type, rhs_type, compiler, expr->token);
+
+        if (atype.basic_type != IC_TYPE_S32)
+            compiler.set_error(expr->token, "only integer types can be operands of a modulo operator");
+        compile_implicit_conversion(atype, lhs_type, compiler, expr->token);
         compile_expr(expr->binary.rhs, compiler);
-        compile_implicit_conversion(atype, rhs_type, compiler);
+        compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
         compiler.add_opcode(IC_OPC_MODULO_S32);
         return { atype, false };
     }

@@ -40,14 +40,17 @@ bool compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
     ic_stmt_result result = compile_stmt(function.body, compiler);
     assert(compiler.scopes.size() == 1);
     assert(compiler.loop_count == 0);
+    assert(!compiler.break_ops.size());
+    assert(!compiler.cont_ops.size());
 
-    if(!is_void(function.return_type))
-        assert(result == IC_STMT_RESULT_RETURN);
-    else if(result != IC_STMT_RESULT_RETURN)
+    if (!is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
+        compiler.set_error(function.token, "all branches of a function must return a value");
+
+    if(is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
         compiler.add_opcode(IC_OPC_RETURN);
 
     function.stack_size = compiler.max_stack_size;
-    return true; // todo
+    return !compiler.error;
 }
 
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
@@ -104,7 +107,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             // no need to pop result, JUMP_FALSE instr pops it
             ic_expr_result result = compile_expr(stmt->_for.header2, compiler);
-            compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler, stmt->_for.header2->token);
             compiler.add_opcode(IC_OPC_JUMP_FALSE);
             idx_resolve_end = compiler.bc_size();
             compiler.add_s32({});
@@ -144,7 +147,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         ic_stmt_result result_else = IC_STMT_RESULT_NULL;
         // no need to pop result, JUMP_FALSE instr pops it
         ic_expr_result result = compile_expr(stmt->_if.header, compiler); // no need to push a scope here, expr can't declare a new variable
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler);
+        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler, stmt->_if.header->token);
         compiler.add_opcode(IC_OPC_JUMP_FALSE);
         int idx_resolve_else = compiler.bc_size();
         compiler.add_s32({});
@@ -178,7 +181,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->var_decl.expr)
         {
             ic_expr_result result = compile_expr(stmt->var_decl.expr, compiler);
-            compile_implicit_conversion(var.type, result.type, compiler);
+            compile_implicit_conversion(var.type, result.type, compiler, stmt->token);
             compiler.add_opcode(IC_OPC_ADDRESS);
             compiler.add_s32(var.idx);
 
@@ -193,8 +196,9 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             // STORE poppes an address, data is still left on the operand stack
             compile_pop_expr_result(result, compiler);
         }
-        else
-            assert((var.type.const_mask & 1) == 0); // const variable must be initialized
+        else if (var.type.const_mask & 1)
+            compiler.set_error(stmt->token, "const variable must be initialized");
+
         return IC_STMT_RESULT_NULL;
     }
     case IC_STMT_RETURN:
@@ -204,11 +208,11 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_return.expr)
         {
             ic_expr_result result = compile_expr(stmt->_return.expr, compiler);
-            compile_implicit_conversion(return_type, result.type, compiler);
+            compile_implicit_conversion(return_type, result.type, compiler, stmt->token);
             // don't pop the result, VM passes it to a parent stack_frame
         }
-        else
-            assert(is_void(return_type));
+        else if (!is_void(return_type))
+            compiler.set_error(stmt->token, "function with non-void return type must return a value");
 
         compiler.add_opcode(IC_OPC_RETURN);
         return IC_STMT_RESULT_RETURN;
@@ -216,7 +220,9 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     case IC_STMT_BREAK:
     case IC_STMT_CONTINUE:
     {
-        assert(compiler.loop_count);
+        if (!compiler.loop_count)
+            compiler.set_error(stmt->token, "break / continue statements can be used only in loops");
+
         compiler.add_opcode(IC_OPC_JUMP);
 
         if(stmt->type == IC_STMT_BREAK)
@@ -258,8 +264,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     {
         ic_type type = expr->_sizeof.type;
         type.indirection_level += 1; // this is quite a hack
-        int size = pointed_type_byte_size(type, compiler);
-        assert(size); // incomplete type is not allowed
+        int size = pointed_type_byte_size(type);
+        assert(size); // incomplete type is not allowed, parser already handles it
         compiler.add_opcode(IC_OPC_PUSH_S32);
         compiler.add_s32(size);
         return { non_pointer_type(IC_TYPE_S32), false };
@@ -270,9 +276,12 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         ic_type target_type = expr->cast_operator.type;
 
         if (target_type.indirection_level)
-            assert(result.type.indirection_level);
+        {
+            if (!result.type.indirection_level)
+                compiler.set_error(expr->token, "pointer types can't be casted to non-pointer types");
+        }
         else
-            compile_implicit_conversion(target_type, result.type, compiler);
+            compile_implicit_conversion(target_type, result.type, compiler, expr->token);
 
         return { target_type, false };
     }
@@ -285,7 +294,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             ptr_type = compile_pointer_offset_expr(expr->subscript.lhs, expr->subscript.rhs, IC_OPC_ADD_PTR_S32, compiler).type;
         else
             ptr_type = compile_pointer_offset_expr(expr->subscript.rhs, expr->subscript.lhs, IC_OPC_ADD_PTR_S32, compiler).type;
-        return compile_dereference(ptr_type, compiler, load_lvalue);
+        return compile_dereference(ptr_type, compiler, load_lvalue, expr->token);
     }
     case IC_EXPR_MEMBER_ACCESS:
     {
@@ -298,19 +307,29 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             break;
         case IC_TOK_ARROW:
             result = compile_expr(expr->member_access.lhs, compiler);
-            result = compile_dereference(result.type, compiler, false);
-            assert(!result.type.indirection_level);
+            result = compile_dereference(result.type, compiler, false, expr->token);
             break;
         default:
             assert(false);
         }
 
-        assert(result.type.basic_type == IC_TYPE_STRUCT);
+        ic_struct _dummy;
+        _dummy.num_members = 0;
+        // returning an uninitialized value may trigger some asserts
+        ic_type target_type = non_pointer_type(IC_TYPE_S32);
+        ic_struct* _struct;
         ic_string target_name = expr->member_access.rhs_token.string;
-        ic_type target_type;
-        ic_struct* _struct = result.type._struct;
         int data_offset = 0;
         bool match = false;
+
+        if (!is_struct(result.type))
+        {
+            compiler.set_error(expr->token, "member access operators can be used only on structs and struct pointers");
+            _struct = &_dummy; // prevent a dereference of a invalid pointer
+        }
+        else
+            _struct = result.type._struct;
+
 
         for (int i = 0; i < _struct->num_members; ++i)
         {
@@ -324,7 +343,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             }
             data_offset += type_size(member.type);
         }
-        assert(match);
+
+        if(!match)
+            compiler.set_error(expr->token, "accessed struct does not contain specified member");
         
         if (result.lvalue)
         {
@@ -368,12 +389,14 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         while (expr_arg)
         {
             ic_type arg_type = compile_expr(expr_arg, compiler).type;
-            compile_implicit_conversion(function->params[argc].type, arg_type, compiler);
+            compile_implicit_conversion(function->params[argc].type, arg_type, compiler, expr_arg->token);
             expr_arg = expr_arg->next;
             ++argc;
         }
 
-        assert(argc == function->param_count);
+        if (argc != function->param_count)
+            compiler.set_error(expr->token, "the number of arguments does not match the number of parameters");
+
         compiler.add_opcode(IC_OPC_CALL);
         compiler.add_s32(idx);
         return { function->return_type, false };
