@@ -999,8 +999,12 @@ void produce_parameter_list(ic_parser& parser, ic_function& function)
     // either by condition fail or break that is guaranteed to execute
     while(parser.get_token().type != IC_TOK_EOF)
     {
-        if (function.param_count >= IC_MAX_ARGC)
+        if (function.param_count == IC_MAX_ARGC)
+        {
             parser.set_error("exceeded maxial number of parameters");
+            assert(false); // todo, fix it
+            return; // don't write outside the buffer
+        }
 
         ic_type param_type = produce_type(parser);
         function.params[function.param_count].type = param_type;
@@ -1068,7 +1072,13 @@ ic_decl produce_decl(ic_parser& parser)
 
         while (try_produce_type(parser, type))
         {
-            assert(_struct.num_members < IC_MAX_MEMBERS); // todo
+            if (_struct.num_members == IC_MAX_MEMBERS)
+            {
+                parser.set_error("exceeded maximal number of struct members");
+                assert(false); // todo, fix it
+                return {}; // don't write outside the buffer
+            }
+
             // todo, support const members?
             if (type.const_mask & 1)
                 parser.set_error("struct member can't be const");
@@ -1483,9 +1493,6 @@ ic_expr* produce_expr_primary(ic_parser& parser)
                 *arg_tail = produce_expr(parser);
                 arg_tail = &((*arg_tail)->next);
                 ++argc;
-
-                if(argc > IC_MAX_ARGC)
-                    parser.set_error("exceeded maximal number of arguments");
 
                 if (parser.try_consume(IC_TOK_RIGHT_PAREN))
                     break;
