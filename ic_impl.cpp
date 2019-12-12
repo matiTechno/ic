@@ -994,7 +994,13 @@ ic_type produce_type(ic_parser& parser, bool allow_void = false)
 {
     ic_type type;
     if (!try_produce_type(parser, type, allow_void))
+    {
         parser.set_error("expected type");
+        // todo, one flaw of the current error handling design is that you have to be very careful with pointers,
+        // type._struct is not a valid pointer right now and it may happen that application will try to access it,
+        // make sure that is_struct(type) is false; try function is 'allowed' to fail and do not need to handle this case
+        type = non_pointer_type(IC_TYPE_S32);
+    }
     return type;
 }
 
