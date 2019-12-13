@@ -154,7 +154,7 @@ bool compile_implicit_conversion_impl(ic_type to, ic_type from, ic_compiler& com
 void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler, ic_token token)
 {
     if (!compile_implicit_conversion_impl(to, from, compiler))
-        compiler.set_error(token, "implicit conversion incompatible types");
+        compiler.set_error(token, "conversion incompatible types");
 }
 
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler)

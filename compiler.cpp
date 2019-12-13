@@ -26,7 +26,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
         ic_param& param = function.params[i];
 
         if(param.name.data)
-            compiler.declare_var(param.type, param.name);
+            compiler.declare_var(param.type, param.name, function.token); // todo, param.token
         else
         {
             compiler.warn(function.token, "unused function parameter"); // todo, param.token would be better
@@ -170,7 +170,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
     }
     case IC_STMT_VAR_DECL:
     {
-        ic_var var = compiler.declare_var(stmt->var_decl.type, stmt->var_decl.token.string);
+        ic_var var = compiler.declare_var(stmt->var_decl.type, stmt->var_decl.token.string, stmt->var_decl.token);
 
         if (stmt->var_decl.expr)
         {
@@ -314,6 +314,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             // it is important to not return a STRUCT type which could result in an invalid pointer dereference further in the execution
             return { non_pointer_type(IC_TYPE_S32), false };
         }
+        assert(result.type._struct->defined); // this would be an internal error
         // same, returning uninitialized value may crash the compiler, e.g. dereferencing an invalid struct pointer
         ic_type target_type = non_pointer_type(IC_TYPE_S32);
 
@@ -372,7 +373,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     {
         int argc = 0;
         int idx;
-        ic_function* function = compiler.get_function(expr->token.string, &idx);
+        ic_function* function = compiler.get_function(expr->token.string, &idx, expr->token);
         ic_expr* expr_arg = expr->function_call.arg;
 
         while (expr_arg)

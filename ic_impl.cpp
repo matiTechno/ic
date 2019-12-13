@@ -263,6 +263,9 @@ struct ic_parser
             ++token_it;
     }
 
+    // todo, in a lexer code, consume() or advance() positions iterator on a consumed object,
+    // I think it is a more natural design, currently token must be saved before calling consume
+    // yes, this would be a much better design, and peek() function would be useful in some cases
     void consume(ic_token_type type, const char* err_msg)
     {
         if (token_it->type == type)
@@ -548,6 +551,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
 bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
 {
+    assert(source);
     ic_memory memory;
     memory.init();
     bool success = program_init_compile_impl(program, source, libs, host_functions, memory);
@@ -659,6 +663,7 @@ bool lex(const char* source, ic_memory& memory)
     assert(source);
     memory.program_data.clear();
     memory.tokens.clear();
+    memory.source_lines.clear();
     {
         memory.source_lines.push_back(); // dummy line for index 0
         const char* it = source;
@@ -960,7 +965,7 @@ bool try_produce_type(ic_parser& parser, ic_type& type, bool allow_void = false)
     }
     default:
         if (init)
-            parser.set_error("expected type name after const keyword");
+            parser.set_error("expected a type name after const keyword");
         return false;
     }
     parser.advance();
@@ -969,7 +974,7 @@ bool try_produce_type(ic_parser& parser, ic_type& type, bool allow_void = false)
     {
         if (type.indirection_level == IC_CMASK_MSB)
         {
-            parser.set_error("exceeded maximal level of indirection");
+            parser.set_error("exceeded a maximum level of indirection");
             assert(false); // todo
         }
 
@@ -994,7 +999,7 @@ ic_type produce_type(ic_parser& parser, bool allow_void = false)
     ic_type type;
     if (!try_produce_type(parser, type, allow_void))
     {
-        parser.set_error("expected type");
+        parser.set_error("expected a type");
         // todo, one flaw of the current error handling design is that you have to be very careful with pointers,
         // type._struct is not a valid pointer right now and it may happen that application will try to access it,
         // make sure that is_struct(type) is false; try function is 'allowed' to fail and do not need to handle this case
@@ -1016,7 +1021,7 @@ void produce_parameter_list(ic_parser& parser, ic_function& function)
     {
         if (function.param_count == IC_MAX_ARGC)
         {
-            parser.set_error("exceeded maxial number of parameters");
+            parser.set_error("exceeded a maximum number of parameters");
             assert(false); // todo
             //return; // don't write outside the buffer
         }
@@ -1070,49 +1075,53 @@ ic_decl produce_decl(ic_parser& parser)
         ic_decl decl;
         decl.type = IC_DECL_STRUCT;
         ic_struct& _struct = decl._struct;
+        _struct.defined = false;
         _struct.token = parser.get_token();
-        parser.consume(IC_TOK_IDENTIFIER, "expected struct name");
+        parser.consume(IC_TOK_IDENTIFIER, "expected a struct name");
 
         if (parser.try_consume(IC_TOK_SEMICOLON))
-        {
-            _struct.defined = false;
             return decl;
-        }
+
+        // this is to support constructions like a linked list without a previous struct declaration
+        if (!get_struct(_struct.token.string, *parser.memory))
+            *parser.memory->structs.allocate() = _struct;
+
         _struct.defined = true;
         parser.consume(IC_TOK_LEFT_BRACE, "expected '{'");
         ic_param members[IC_MAX_MEMBERS]; // todo
         _struct.num_members = 0;
         _struct.num_data = 0;
-        ic_type type;
 
-        while (try_produce_type(parser, type))
+        while (parser.get_token().type != IC_TOK_RIGHT_BRACE && parser.get_token().type != IC_TOK_EOF)
         {
             if (_struct.num_members == IC_MAX_MEMBERS)
             {
-                parser.set_error("exceeded maximal number of struct members");
+                parser.set_error("exceeded a maximum number of struct members");
                 assert(false); // todo
                 //return {}; // don't write outside the buffer
                 // return {} may crash the program, e.g. dereferencing invalid pointer
             }
 
+            ic_param& member = members[_struct.num_members];
+            member.type = produce_type(parser);
+
             // todo, support const members?
-            if (type.const_mask & 1)
+            if (member.type.const_mask & 1)
                 parser.set_error("struct member can't be const");
 
-            _struct.num_data += type_size(type);
-            ic_param& member = members[_struct.num_members];
-            member.type = type;
             member.name = parser.get_token().string;
+            parser.consume(IC_TOK_IDENTIFIER, "expected a member name");
+            _struct.num_data += type_size(member.type);
             _struct.num_members += 1;
-            parser.consume(IC_TOK_IDENTIFIER, "expected member name");
-            parser.consume(IC_TOK_SEMICOLON, "expected ';' after struct member name");
+            parser.consume(IC_TOK_SEMICOLON, "expected ';' after a struct member name");
         }
-
-        int bytes = sizeof(ic_param) * _struct.num_members;
-        _struct.members = (ic_param*)parser.memory->generic_pool.allocate_continuous(bytes);
-        memcpy(_struct.members, members, bytes);
         parser.consume(IC_TOK_RIGHT_BRACE, "expected '}'");
         parser.consume(IC_TOK_SEMICOLON, "expected ';'");
+        int bytes = sizeof(ic_param) * _struct.num_members;
+
+        if(bytes)
+            _struct.members = (ic_param*)parser.memory->generic_pool.allocate_continuous(bytes);
+        memcpy(_struct.members, members, bytes);
         return decl;
     }
 
@@ -1121,10 +1130,10 @@ ic_decl produce_decl(ic_parser& parser)
 
     // function can return type can be void
     if (!try_produce_type(parser, type, IC_ALLOW_VOID)) // try_produce_type() is used to print nondefault error message
-        parser.set_error("expected: a type of a global variable / return type of a function / 'struct' keyword");
+        parser.set_error("expected: a type of a global variable / a return type of a function / struct keyword");
 
     ic_token token_id = parser.get_token();
-    parser.consume(IC_TOK_IDENTIFIER, "expected identifier");
+    parser.consume(IC_TOK_IDENTIFIER, "expected an identifier");
 
     if (parser.try_consume(IC_TOK_LEFT_PAREN))
     {
@@ -1138,7 +1147,7 @@ ic_decl produce_decl(ic_parser& parser)
         function.body = produce_stmt(parser);
 
         if (function.body->type != IC_STMT_COMPOUND)
-            parser.set_error("expected compound stmt after function parameter list");
+            parser.set_error("expected a compound stmt after function parameter list");
 
         function.body->compound.push_scope = false; // do not allow shadowing of arguments
         return decl;
@@ -1154,7 +1163,7 @@ ic_decl produce_decl(ic_parser& parser)
     decl.var.token = token_id;
 
     if (parser.get_token().type == IC_TOK_EQUAL)
-        parser.set_error("global variables can't be initialized by an expression, they are set to 0");
+        parser.set_error("global variables can't be initialized by an expression, they are memset to 0");
 
     parser.consume(IC_TOK_SEMICOLON, "expected ';'");
     return decl;
@@ -1220,7 +1229,7 @@ ic_stmt* produce_stmt(ic_parser& parser)
         stmt->_if.header = produce_expr(parser);
 
         if (stmt->_if.header->token.type == IC_TOK_EQUAL)
-            parser.set_error("assignment expression can't be used directly in if header, encolse it with ()");
+            parser.set_error("assignment expression can't be used directly in an if header, encolse it with ()");
 
         parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after if condition");
         stmt->_if.body_if = produce_stmt(parser);
@@ -1266,14 +1275,14 @@ ic_stmt* produce_stmt_var_decl(ic_parser& parser)
         ic_stmt* stmt = parser.allocate_stmt(IC_STMT_VAR_DECL, init_token);
         stmt->var_decl.type = type;
         stmt->var_decl.token = parser.get_token();
-        parser.consume(IC_TOK_IDENTIFIER, "expected variable name");
+        parser.consume(IC_TOK_IDENTIFIER, "expected a variable name");
 
         if (parser.try_consume(IC_TOK_EQUAL))
         {
             stmt->var_decl.expr = produce_expr_stmt(parser);
             return stmt;
         }
-        parser.consume(IC_TOK_SEMICOLON, "expected ';' or '=' after variable name");
+        parser.consume(IC_TOK_SEMICOLON, "expected ';' or '=' after a variable name");
         return stmt;
     }
     else
@@ -1289,7 +1298,7 @@ ic_expr* produce_expr_stmt(ic_parser& parser)
     if (parser.try_consume(IC_TOK_SEMICOLON))
         return nullptr;
     ic_expr* expr = produce_expr(parser);
-    parser.consume(IC_TOK_SEMICOLON, "expected ';' after expression");
+    parser.consume(IC_TOK_SEMICOLON, "expected ';' after an expression");
     return expr;
 }
 
@@ -1436,7 +1445,7 @@ ic_expr* produce_expr_unary(ic_parser& parser)
         parser.advance();
         parser.consume(IC_TOK_LEFT_PAREN, "expected '(' after sizeof operator");
         expr->_sizeof.type = produce_type(parser);
-        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after type");
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after a type");
         return expr;
     }
     } // switch
@@ -1464,7 +1473,7 @@ ic_expr* produce_expr_subscript(ic_parser& parser)
             parser.advance();
             expr->member_access.lhs = lhs;
             expr->member_access.rhs_token = parser.get_token();
-            parser.consume(IC_TOK_IDENTIFIER, "expected member name after '.' operator");
+            parser.consume(IC_TOK_IDENTIFIER, "expected a member name after a member access operator");
             lhs = expr;
         }
         else
@@ -1524,10 +1533,10 @@ ic_expr* produce_expr_primary(ic_parser& parser)
         ic_expr* expr = parser.allocate_expr(IC_EXPR_PARENTHESES, parser.get_token());
         parser.advance();
         expr->parentheses.expr = produce_expr(parser);
-        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after expression");
+        parser.consume(IC_TOK_RIGHT_PAREN, "expected ')' after an expression");
         return expr;
     }
     } // switch
-    parser.set_error("expected literal / indentifier / parentheses / function call");
+    parser.set_error("expected a literal / an indentifier / parentheses / a function call");
     return parser.allocate_expr({}, {}); // don't return nullptr, may be dereferenced
 }

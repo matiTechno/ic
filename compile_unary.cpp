@@ -8,7 +8,7 @@ ic_expr_result compile_dereference(ic_type type, ic_compiler& compiler, bool loa
     type.indirection_level -= 1;
     type.const_mask = type.const_mask >> 1;
 
-    if (is_struct(type) && !type._struct->defined)
+    if ( (is_struct(type) && !type._struct->defined) || is_void(type) || type.basic_type == IC_TYPE_NULLPTR)
         compiler.set_error(token, "cannot dereference an incomplete type");
 
     if (load_lvalue)

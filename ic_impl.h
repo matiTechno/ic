@@ -452,7 +452,7 @@ struct ic_struct
 {
     ic_token token;
     ic_param* members;
-    int num_members;
+    int num_members; // todo, rename to size to be consistent
     int num_data;
     bool defined;
 };
@@ -563,7 +563,7 @@ struct ic_array
     }
 };
 
-// this is used for data that must not be invalidated
+// used for data that must not be invalidated
 template<typename T, int N>
 struct ic_deque
 {
@@ -807,16 +807,18 @@ struct ic_compiler
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
     }
 
-    ic_var declare_var(ic_type type, ic_string name)
+    ic_var declare_var(ic_type type, ic_string name, ic_token token)
     {
         assert(memory->scopes.size);
 
         for (int i = memory->vars.size - 1; i >= memory->scopes.back().prev_var_count; --i)
         {
             if (string_compare(memory->vars.buf[i].name, name))
-                assert(false); // todo
+            {
+                set_error(token, "variable with such name is already declared in the current scope");
+                break;
+            }
         }
-
         int byte_idx = stack_size * sizeof(ic_data);
         stack_size += type_size(type);
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
@@ -828,11 +830,17 @@ struct ic_compiler
         return var;
     }
 
-    ic_function* get_function(ic_string name, int* idx)
+    ic_function* get_function(ic_string name, int* idx, ic_token token)
     {
         assert(idx);
         ic_function* function = ::get_function(name, *memory);
-        assert(function); // todo
+
+        if (!function)
+        {
+            set_error(token, "function with such name is not declared");
+            assert(memory->functions.size); // there must be at least one function (main); do not return nullptr
+            return memory->functions.buf;
+        }
 
         if (!code_gen)
             return function;
