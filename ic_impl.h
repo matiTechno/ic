@@ -1,13 +1,7 @@
 #pragma once
-// todo, remove some of these
-#include <assert.h>
-#include <stdio.h>
-#include <vector>
-#include <stdarg.h>
-#include <stdint.h>
-#include <string.h>
 #include <stdlib.h>
-#include <math.h>
+#include <string.h>
+#include <assert.h>
 #include "ic.h"
 
 // ic - interpreted C
@@ -485,46 +479,120 @@ struct ic_var
     int idx;
 };
 
-bool string_compare(ic_string str1, ic_string str2);
-bool is_struct(ic_type type);
-bool is_void(ic_type type);
-ic_type non_pointer_type(ic_basic_type type);
-ic_type const_pointer1_type(ic_basic_type type);
-ic_type pointer1_type(ic_basic_type type);
-int read_int(unsigned char** buf_it);
-float read_float(unsigned char** buf_it);
-double read_double(unsigned char** buf_it);
-void print(ic_print_type type, int line, int col, ic_string* source_lines, const char* err_msg);
-int type_size(ic_type type);
+template<typename T>
+struct ic_array
+{
+    int size;
+    int capacity;
+    T* buf;
+
+    void init()
+    {
+        size = 0;
+        capacity = 0;
+        buf = nullptr;
+        // give it a start
+        resize(20);
+        size = 0;
+    }
+
+    T* tansfer()
+    {
+        T* temp = buf;
+        buf = nullptr;
+        return temp;
+    }
+
+    void free()
+    {
+        ::free(buf);
+    }
+
+    void clear()
+    {
+        size = 0;
+    }
+
+    void resize(int new_size)
+    {
+        size = new_size;
+        _maybe_grow();
+    }
+
+    void push_back()
+    {
+        size += 1;
+        _maybe_grow();
+    }
+
+    void push_back(T t)
+    {
+        size += 1;
+        _maybe_grow();
+        back() = t;
+    }
+
+    void pop_back()
+    {
+        size -= 1;
+    }
+
+    T& back()
+    {
+        return *(buf + size - 1);
+    }
+
+    T* begin()
+    {
+        return buf;
+    }
+
+    T* end()
+    {
+        return buf + size;
+    }
+
+    void _maybe_grow()
+    {
+        if (size > capacity)
+        {
+            capacity = size * 2;
+            buf = (T*)realloc(buf, capacity * sizeof(T));
+            assert(buf);
+        }
+    }
+};
 
 // this is used for data that must not be invalidated
-// todo, don't use T, return raw bytes
 template<typename T, int N>
 struct ic_deque
 {
-    std::vector<T*> pools;
+    ic_array<T*> pools;
     int size;
 
     void init()
     {
         size = 0;
+        pools.init();
     }
 
     void free()
     {
         for (T* pool : pools)
             ::free(pool);
+
+        pools.free();
     }
 
     T& get(int idx)
     {
         assert(idx < size);
-        return pools[idx / N][idx % N];
+        return pools.buf[idx / N][idx % N];
     }
 
     T* allocate()
     {
-        if (pools.empty() || size == pools.size() * N)
+        if (!pools.size || size == pools.size * N)
         {
             T* new_pool = (T*)malloc(N * sizeof(T));
             pools.push_back(new_pool);
@@ -533,56 +601,25 @@ struct ic_deque
         size += 1;
         return &get(size - 1);
     }
-};
 
-struct ic_global_scope
-{
-    ic_deque<ic_struct, 100> structs;
-    std::vector<ic_function> functions;
-    std::vector<ic_var> vars;
-    int global_data_size;
-
-    void init()
+    T* allocate_continuous(int num)
     {
-        structs.init();
-    }
+        assert(num <= N);
+        assert(num);
 
-    void free()
-    {
-        structs.free();
-    }
-
-    ic_struct* get_struct(ic_string name)
-    {
-        for (int i = 0; i < structs.size; ++i)
+        if (!pools.size || size + num > pools.size * N)
         {
-            ic_struct& _struct = structs.get(i);
-
-            if (string_compare(_struct.token.string, name))
-                return &_struct;
-
+            T* new_pool = (T*)malloc(N * sizeof(T));
+            pools.push_back(new_pool);
         }
-        return nullptr;
-    }
 
-    ic_function* get_function(ic_string name)
-    {
-        for (ic_function& function : functions)
-        {
-            if (string_compare(function.token.string, name))
-                return &function;
-        }
-        return nullptr;
-    }
+        int current_pool_size = size % N;
 
-    ic_var* get_var(ic_string name)
-    {
-        for (ic_var& var : vars)
-        {
-            if (string_compare(var.name, name))
-                return &var;
-        }
-        return nullptr;
+        if (current_pool_size + num > N)
+            size += N - current_pool_size; // move to the next pool (we want continuous memory)
+
+        size += num;
+        return &get(size - num);
     }
 };
 
@@ -592,30 +629,83 @@ struct ic_scope
     int prev_var_count;
 };
 
+struct ic_memory
+{
+    ic_deque<char, 10000> generic_pool;
+    ic_deque<ic_struct, 100> structs;
+    ic_array<ic_string> source_lines;
+    ic_array<ic_token> tokens;
+    ic_array<ic_function*> active_functions;
+    ic_array<unsigned char> program_data;
+    ic_array<ic_function> functions;
+    ic_array<ic_var> global_vars;
+    ic_array<ic_scope> scopes;
+    ic_array<ic_var> vars;
+    ic_array<int> break_ops;
+    ic_array<int> cont_ops;
+
+    void init()
+    {
+        generic_pool.init();
+        structs.init();
+        source_lines.init();
+        tokens.init();
+        active_functions.init();
+        program_data.init();
+        functions.init();
+        global_vars.init();
+        scopes.init();
+        vars.init();
+        break_ops.init();
+        cont_ops.init();
+    }
+
+    void free()
+    {
+        generic_pool.free();
+        structs.free();
+        source_lines.free();
+        tokens.free();
+        active_functions.free();
+        program_data.free();
+        functions.free();
+        global_vars.free();
+        scopes.free();
+        vars.free();
+        break_ops.free();
+        cont_ops.free();
+    }
+};
+
+bool string_compare(ic_string str1, ic_string str2);
+bool is_struct(ic_type type);
+bool is_void(ic_type type);
+ic_type non_pointer_type(ic_basic_type type);
+ic_type const_pointer1_type(ic_basic_type type);
+ic_type pointer1_type(ic_basic_type type);
+int read_int(unsigned char** buf_it);
+float read_float(unsigned char** buf_it);
+double read_double(unsigned char** buf_it);
+void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_lines, const char* err_msg);
+int type_size(ic_type type);
+ic_var* get_global_var(ic_string name, ic_memory& memory);
+ic_function* get_function(ic_string name, ic_memory& memory);
+
 struct ic_expr_result
 {
     ic_type type;
     bool lvalue;
 };
 
-// todo, move the implementation to a source file are removed not needed function declarations
-// and headers from this file
 struct ic_compiler
 {
-    ic_global_scope* global_scope;
-    std::vector<unsigned char>* bytecode;
+    ic_memory* memory;
     ic_function* function;
-    std::vector<ic_function*>* active_functions;
-    bool generate_bytecode;
-    std::vector<ic_scope> scopes;
-    std::vector<ic_var> vars;
-    std::vector<int> break_ops;
-    std::vector<int> cont_ops;
+    bool code_gen;
     int stack_size;
     int max_stack_size;
     int loop_count;
     bool error;
-    ic_string* source_lines;
 
     void set_error(ic_token token, const char* err_msg)
     {
@@ -623,93 +713,92 @@ struct ic_compiler
         if (error)
             return;
         error = true;
-        print(IC_PERROR, token.line, token.col, source_lines, err_msg);
+        print(IC_PERROR, token.line, token.col, memory->source_lines, err_msg);
     }
 
     void warn(ic_token token, const char* msg)
     {
         if (error)
             return;
-        print(IC_PWARNING, token.line, token.col, source_lines, msg);
+        print(IC_PWARNING, token.line, token.col, memory->source_lines, msg);
     }
 
     int bc_size()
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return {};
-        return bytecode->size();
+        return memory->program_data.size;
     }
 
     void bc_set_int(int idx, int data)
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
-        void* dst = bytecode->data() + idx;
-        memcpy(dst, &data, sizeof(int));
+        memcpy(memory->program_data.buf + idx, &data, sizeof(int));
     }
 
     void push_scope()
     {
         ic_scope scope;
-        scope.prev_var_count = vars.size();
+        scope.prev_var_count = memory->vars.size;
         scope.prev_stack_size = stack_size;
-        scopes.push_back(scope);
+        memory->scopes.push_back(scope);
     }
 
     void pop_scope()
     {
-        vars.resize(scopes.back().prev_var_count);
-        stack_size = scopes.back().prev_stack_size;
-        scopes.pop_back();
+        memory->vars.resize(memory->scopes.back().prev_var_count);
+        stack_size = memory->scopes.back().prev_stack_size;
+        memory->scopes.pop_back();
     }
 
     void add_opcode(ic_opcode opcode)
     {
         assert(opcode >= 0 && opcode <= 255);
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
-        bytecode->push_back(opcode);
+        memory->program_data.push_back(opcode);
     }
 
     void add_s8(char data)
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
-        bytecode->emplace_back();
-        *(char*)&bytecode->back() = data;
+        memory->program_data.push_back();
+        *(char*)&memory->program_data.back() = data;
     }
 
     void add_u8(unsigned char data)
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
-        bytecode->push_back(data);
+        memory->program_data.push_back(data);
     }
 
     void add_s32(int data)
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
         int size = sizeof(int);
-        bytecode->resize(bytecode->size() + size);
-        memcpy(&bytecode->back() - size + 1, &data, size);
+        memory->program_data.resize(memory->program_data.size + size);
+        memcpy(memory->program_data.end() - size, &data, size);
     }
     void add_f32(float data)
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
         int size = sizeof(float);
-        bytecode->resize(bytecode->size() + size);
-        memcpy(&bytecode->back() - size + 1, &data, size);
+        memory->program_data.resize(memory->program_data.size + size);
+        memcpy(memory->program_data.end() - size, &data, size);
     }
 
     void add_f64(double data)
     {
-        if (!generate_bytecode)
+        if (!code_gen)
             return;
         int size = sizeof(double);
-        bytecode->resize(bytecode->size() + size);
-        memcpy(&bytecode->back() - size + 1, &data, size);
+        memory->program_data.resize(memory->program_data.size + size);
+        memcpy(memory->program_data.end() - size, &data, size);
     }
 
     void declare_unused_param(ic_type type)
@@ -720,12 +809,12 @@ struct ic_compiler
 
     ic_var declare_var(ic_type type, ic_string name)
     {
-        assert(scopes.size());
+        assert(memory->scopes.size);
 
-        for (int i = vars.size() - 1; i >= scopes.back().prev_var_count; --i)
+        for (int i = memory->vars.size - 1; i >= memory->scopes.back().prev_var_count; --i)
         {
-            if (string_compare(vars[i].name, name))
-                assert(false);
+            if (string_compare(memory->vars.buf[i].name, name))
+                assert(false); // todo
         }
 
         int byte_idx = stack_size * sizeof(ic_data);
@@ -735,64 +824,52 @@ struct ic_compiler
         var.idx = byte_idx;
         var.name = name;
         var.type = type;
-        vars.push_back(var);
+        memory->vars.push_back(var);
         return var;
-    }
-
-    ic_struct* get_struct(ic_string name)
-    {
-        ic_struct* _struct = global_scope->get_struct(name);
-        assert(_struct);
-        return _struct;
     }
 
     ic_function* get_function(ic_string name, int* idx)
     {
         assert(idx);
-        ic_function* function = global_scope->get_function(name);
-        assert(function);
+        ic_function* function = ::get_function(name, *memory);
+        assert(function); // todo
 
-        if (!generate_bytecode)
+        if (!code_gen)
             return function;
 
-        for(int i = 0; i < active_functions->size(); ++i)
+        for(int i = 0; i < memory->active_functions.size; ++i)
         {
-            ic_function* active = (*active_functions)[i];
-
+            ic_function* active = memory->active_functions.buf[i];
             if (active == function)
             {
                 *idx = i;
                 return function;
             }
         }
-        *idx = active_functions->size();
-        active_functions->push_back(function);
+        *idx = memory->active_functions.size;
+        memory->active_functions.push_back(function);
         return function;
     }
 
     ic_var get_var(ic_string name, bool* is_global)
     {
-        for (int i = vars.size() - 1; i >= 0; --i)
+        for (int i = memory->vars.size - 1; i >= 0; --i)
         {
-            if (string_compare(vars[i].name, name))
+            if (string_compare(memory->vars.buf[i].name, name))
             {
                 *is_global = false;
-                return vars[i];
+                return memory->vars.buf[i];
             }
         }
 
-        ic_var* global_var = global_scope->get_var(name);
+        ic_var* global_var = get_global_var(name, *memory);
         assert(global_var);
         *is_global = true;
         return *global_var;
     }
 };
 
-// I prefer to pass by reference and pass additional flag if generate or not,
-// and I also have this idea, fill compiler strcuture and pass it to the function, it will be much better
-bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
-    std::vector<unsigned char>* bytecode, ic_string* source_lines);
-
+bool compile_function(ic_function& function, ic_memory& memory, bool code_gen);
 // todo, pass compiler as a first argument to be consistent with rest of the code
 ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler);
 ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lvalue = true);

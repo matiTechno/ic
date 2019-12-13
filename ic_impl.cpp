@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <math.h>
 #include "ic_impl.h"
 
 bool string_compare(ic_string str1, ic_string str2)
@@ -57,10 +59,9 @@ double read_double(unsigned char** buf_it)
     return v;
 }
 
-void print(ic_print_type type, int line, int col, ic_string* source_lines, const char* err_msg)
+void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_lines, const char* err_msg)
 {
-    assert(source_lines);
-    ic_string source_line = source_lines[line];
+    ic_string source_line = source_lines.buf[line];
     printf("%s (line: %d, col: %d): %s\n%.*s\n%*s^\n", type == IC_PERROR ? "error" : "warning",
         line, col, err_msg, source_line.len, source_line.data, col - 1, ""); // "" this is a trick to print multiple spaces
 }
@@ -234,30 +235,13 @@ void ic_program_free(ic_program& program)
 
 struct ic_parser
 {
-    ic_deque<ic_expr, 1000> expressions;
-    ic_deque<ic_stmt, 1000> statements;
-    ic_global_scope* gscope;
+    ic_memory* memory;
     bool error;
     ic_token* token_it;
-    ic_string* source_lines;
-
-    void init(ic_global_scope& global_scope)
-    {
-        expressions.init();
-        statements.init();
-        gscope = &global_scope;
-        error = false;
-    }
-
-    void free()
-    {
-        expressions.free();
-        statements.free();
-    }
 
     ic_stmt* allocate_stmt(ic_stmt_type type, ic_token token)
     {
-        ic_stmt* stmt = statements.allocate();
+        ic_stmt* stmt = (ic_stmt*)memory->generic_pool.allocate_continuous(sizeof(ic_stmt));
         memset(stmt, 0, sizeof(ic_stmt));
         stmt->type = type;
         stmt->token = token;
@@ -266,7 +250,7 @@ struct ic_parser
 
     ic_expr* allocate_expr(ic_expr_type type, ic_token token)
     {
-        ic_expr* expr = expressions.allocate();
+        ic_expr* expr = (ic_expr*)memory->generic_pool.allocate_continuous(sizeof(ic_expr));
         memset(expr, 0, sizeof(ic_expr));
         expr->type = type;
         expr->token = token;
@@ -304,7 +288,7 @@ struct ic_parser
         if (error)
             return;
 
-        print(IC_PERROR, token_it->line, token_it->col, source_lines, err_msg);
+        print(IC_PERROR, token_it->line, token_it->col, memory->source_lines, err_msg);
         error = true;
 
         while (token_it->type != IC_TOK_EOF)
@@ -319,28 +303,21 @@ struct ic_parser
 
 #define IC_ALLOW_VOID 1
 
-bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& _string_data,
-    std::vector<ic_string>& source_lines);
+bool lex(const char* source, ic_memory& memory);
 ic_type produce_type(ic_parser& parser, bool allow_void);
 void produce_parameter_list(ic_parser& parser, ic_function& function);
 ic_decl produce_decl(ic_parser& parser);
 
-bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
+bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser, ic_memory& memory)
 {
     assert(it);
-    std::vector<ic_token> tokens;
-    std::vector<unsigned char> string_data;
-    std::vector<ic_string> source_lines;
 
     while (it->prototype_str)
     {
-        tokens.clear();
-        source_lines.clear();
-
-        if (!lex(it->prototype_str, tokens, string_data, source_lines))
+        if (!lex(it->prototype_str, memory))
             return false;
-        parser.token_it = tokens.data();
-        parser.source_lines = source_lines.data();
+        assert(!memory.program_data.size); // internal error check
+        parser.token_it = memory.tokens.buf;
         ic_function function;
         function.type = IC_FUN_HOST;
         function.return_type = produce_type(parser, IC_ALLOW_VOID);
@@ -354,48 +331,75 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser)
             return false;
         function.host_function = it;
         function.origin = origin;
-        parser.gscope->functions.push_back(function);
+        memory.functions.push_back(function);
         ++it;
     }
     return true;
 }
 
-void print_error(ic_token token, std::vector<ic_string>& lines, const char* msg)
+void print_error(ic_token token, ic_array<ic_string>& lines, const char* msg)
 {
-    print(IC_PERROR, token.line, token.col, lines.data(), msg);
+    print(IC_PERROR, token.line, token.col, lines, msg);
 }
 
-bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
+ic_function* get_function(ic_string name, ic_memory& memory)
+{
+    for (int i = 0; i < memory.functions.size; ++i)
+    {
+        ic_function* function = memory.functions.buf + i;
+        if (string_compare(name, function->token.string))
+            return function;
+    }
+    return nullptr;
+}
+
+ic_var* get_global_var(ic_string name, ic_memory& memory)
+{
+    for (int i = 0; i < memory.global_vars.size; ++i)
+    {
+        ic_var* var = memory.global_vars.buf + i;
+        if (string_compare(name, var->name))
+            return var;
+    }
+    return nullptr;
+}
+
+ic_struct* get_struct(ic_string name, ic_memory& memory)
+{
+    for (int i = 0; i < memory.structs.size; ++i)
+    {
+        ic_struct* _struct = &memory.structs.get(i);
+        if (string_compare(name, _struct->token.string))
+            return _struct;
+    }
+    return nullptr;
+}
+
+bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_function* host_functions, ic_memory& memory)
 {
     assert(source);
-    ic_global_scope gscope;
-    gscope.init();
     ic_parser parser;
-    parser.init(gscope);
+    parser.memory = &memory;
+    parser.error = false;
 
     if (libs & IC_LIB_CORE)
     {
-        if (!load_host_functions(_core_lib, IC_LIB_CORE, parser))
+        if (!load_host_functions(_core_lib, IC_LIB_CORE, parser, memory))
             return false;
     }
 
     if (host_functions)
     {
-        if (!load_host_functions(host_functions, IC_USER_FUNCTION, parser))
+        if (!load_host_functions(host_functions, IC_USER_FUNCTION, parser, memory))
             return false;
     }
 
-    std::vector<ic_token> tokens;
-    std::vector<unsigned char> program_data;
-    std::vector<ic_string> source_lines;
-
-    if (!lex(source, tokens, program_data, source_lines))
+    if (!lex(source, memory))
         return false;
 
-    const int strings_byte_size = program_data.size();
-    gscope.global_data_size = strings_byte_size / sizeof(ic_data) + 1;
-    parser.token_it = tokens.data();
-    parser.source_lines = source_lines.data();
+    program.strings_byte_size = memory.program_data.size;
+    program.global_data_size = program.strings_byte_size / sizeof(ic_data) + 1;
+    parser.token_it = memory.tokens.buf;
 
     while (parser.get_token().type != IC_TOK_EOF)
     {
@@ -409,29 +413,29 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         case IC_DECL_FUNCTION:
         {
             ic_token token = decl.function.token;
-            ic_function* prev_function = gscope.get_function(token.string);
+            ic_function* prev_function = get_function(token.string, memory);
 
             if (prev_function)
             {
                 if (prev_function->type == IC_FUN_HOST)
-                    print_error(token, source_lines, "function with such name (provided by host) already exists");
+                    print_error(token, memory.source_lines, "function with such name (provided by host) already exists");
                 else
-                    print_error(token, source_lines, "function with such name already exists");
+                    print_error(token, memory.source_lines, "function with such name already exists");
                 return false;
             }
-            gscope.functions.push_back(decl.function);
+            memory.functions.push_back(decl.function);
             break;
         }
         case IC_DECL_STRUCT:
         {
             ic_token token = decl._struct.token;
-            ic_struct* prev_struct = gscope.get_struct(token.string);
+            ic_struct* prev_struct = get_struct(token.string, memory);
 
             if (!decl._struct.defined)
             {
                 if (prev_struct)
                     break; // do nothing, multiple declarations are not an error
-                *gscope.structs.allocate() = decl._struct;
+                *memory.structs.allocate() = decl._struct;
                 break;
             }
             // if declaration is also a definition
@@ -439,30 +443,30 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             {
                 if (prev_struct->defined)
                 {
-                    print_error(token, source_lines, "struct with such name is already defined");
+                    print_error(token, memory.source_lines, "struct with such name is already defined");
                     return false;
                 }
                 *prev_struct = decl._struct; // replace forward declaration with definition
                 break;
             }
-            *gscope.structs.allocate() = decl._struct;
+            *memory.structs.allocate() = decl._struct;
             break;
         }
         case IC_DECL_VAR:
         {
             ic_token token = decl.var.token;
 
-            if (gscope.get_var(token.string))
+            if (get_global_var(token.string, memory))
             {
-                print_error(token, source_lines, "global variable with such name already exists");
+                print_error(token, memory.source_lines, "global variable with such name already exists");
                 return false;
             }
             ic_var var;
-            var.idx = gscope.global_data_size * sizeof(ic_data);
+            var.idx = program.global_data_size * sizeof(ic_data);
             var.type = decl.var.type;
             var.name = token.string;
-            gscope.global_data_size += type_size(var.type);
-            gscope.vars.push_back(var);
+            program.global_data_size += type_size(var.type);
+            memory.global_vars.push_back(var);
             break;
         }
         default:
@@ -470,9 +474,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         }
     } // while
 
-    std::vector<ic_function*> active_functions;
-
-    for (ic_function& function : gscope.functions)
+    for (ic_function& function : memory.functions)
     {
         if (function.type == IC_FUN_SOURCE)
         {
@@ -480,46 +482,43 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             {
                 if (function.param_count != 0 || !is_void(function.return_type))
                     return false;
-                active_functions.push_back(&function);
+                memory.active_functions.push_back(&function);
             }
             function.data_idx = -1; // this is important
         }
     }
 
-    if (!active_functions.size())
+    if (!memory.active_functions.size)
         return false;
 
-    // important, active_functions.size() changes during loop execution
-    for (int i = 0; i < active_functions.size(); ++i)
+    // important, active_functions.size changes during loop execution
+    for (int i = 0; i < memory.active_functions.size; ++i)
     {
-        if (active_functions[i]->type == IC_FUN_SOURCE)
+        if (memory.active_functions.buf[i]->type == IC_FUN_SOURCE)
         {
-            if(!compile_function(*active_functions[i], gscope, &active_functions, &program_data, source_lines.data()))
+            if (!compile_function(*memory.active_functions.buf[i], memory, true))
                 return false;
         }
     }
 
     // compile inactive functions for code corectness, these will not be included in returned program
-    for (ic_function& function : gscope.functions)
+    for (ic_function& function : memory.functions)
     {
         if (function.type == IC_FUN_HOST || function.data_idx != -1)
             continue;
-        print(IC_PWARNING, function.token.line, function.token.col, source_lines.data(), "function defined but not used");
+        print(IC_PWARNING, function.token.line, function.token.col, memory.source_lines, "function defined but not used");
 
-        if(!compile_function(function, gscope, nullptr, nullptr, source_lines.data()))
+        if (!compile_function(function, memory, false))
             return false;
     }
-    program.strings_byte_size = strings_byte_size;
-    program.data_size = program_data.size();
-    program.global_data_size = gscope.global_data_size;
-    program.data = (unsigned char*)malloc(program.data_size);
-    memcpy(program.data, program_data.data(), program.data_size);
-    program.functions_size = active_functions.size();
+    program.data_size = memory.program_data.size;
+    program.data = memory.program_data.tansfer();
+    program.functions_size = memory.active_functions.size;
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
-    for(int i = 0; i < active_functions.size(); ++i)
+    for(int i = 0; i < memory.active_functions.size; ++i)
     {
-        ic_function& fun = *active_functions[i];
+        ic_function& fun = *memory.active_functions.buf[i];
         ic_vm_function& vmfun = program.functions[i];
         vmfun.host_impl = fun.type == IC_FUN_HOST;
         vmfun.param_size = 0;
@@ -549,15 +548,16 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
 bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
 {
-    // keep all the memory resources here and pass down to implementation, deallocate on exit
-    // remove all std::vector usage and replace with ic_array
-    // but first implement error line printing
-    return program_init_compile_impl(program, source, libs, host_functions);
+    ic_memory memory;
+    memory.init();
+    bool success = program_init_compile_impl(program, source, libs, host_functions, memory);
+    memory.free();
+    return success;
 }
 
 struct ic_lexer
 {
-    std::vector<ic_token>* tokens;
+    ic_array<ic_token>* tokens;
     int line;
     int col;
     int token_line;
@@ -654,12 +654,13 @@ static ic_keyword _keywords[] = {
     {"sizeof", IC_TOK_SIZEOF},
 };
 
-bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigned char>& string_data,
-    std::vector<ic_string>& source_lines)
+bool lex(const char* source, ic_memory& memory)
 {
     assert(source);
+    memory.program_data.clear();
+    memory.tokens.clear();
     {
-        source_lines.push_back({}); // dummy line for index 0
+        memory.source_lines.push_back(); // dummy line for index 0
         const char* it = source;
         const char* line_begin = it;
         int len = 0;
@@ -668,7 +669,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
         {
             if (*it == '\n')
             {
-                source_lines.push_back({ line_begin, len });
+                memory.source_lines.push_back({ line_begin, len });
                 len = 0;
                 line_begin = it + 1;
             }
@@ -679,7 +680,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
     }
 
     ic_lexer lexer;
-    lexer.tokens = &_tokens;
+    lexer.tokens = &memory.tokens;
     lexer.line = 1;
     lexer.col = 1;
     lexer.source_it = source;
@@ -759,7 +760,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
                 lexer.add_token(IC_TOK_VBAR_VBAR);
             else // single | is not allowed in the source code
             {
-                print(IC_PERROR, lexer.line, lexer.col, source_lines.data(), "unexpected character");
+                print(IC_PERROR, lexer.line, lexer.col, memory.source_lines, "unexpected character");
                 return false;
             }
 
@@ -786,18 +787,18 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
             if (lexer.end() && *lexer.pos() != '"')
             {
-                print(IC_PERROR, lexer.token_line, lexer.token_col, source_lines.data(), "unterminated string literal");
+                print(IC_PERROR, lexer.token_line, lexer.token_col, memory.source_lines, "unterminated string literal");
                 return false;
             }
 
             // todo, if the same string literal already exists, reuse it
-            int idx_begin = string_data.size();
+            int idx_begin = memory.program_data.size;
             lexer.add_token_number(IC_TOK_STRING_LITERAL, idx_begin);
             const char* string_begin = token_begin + 1; // skip first "
             int len = lexer.pos() - string_begin; // this doesn't count last "
-            string_data.resize(string_data.size() + len + 1);
-            memcpy(&string_data[idx_begin], string_begin, len);
-            string_data.back() = '\0';
+            memory.program_data.resize(idx_begin + len + 1);
+            memcpy(memory.program_data.buf + idx_begin, string_begin, len);
+            memory.program_data.back() = '\0';
             break;
         }
         case '\'':
@@ -807,7 +808,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
             if (lexer.end() && *lexer.pos() != '\'')
             {
-                print(IC_PERROR, lexer.token_line, lexer.token_col, source_lines.data(), "unterminated character literal");
+                print(IC_PERROR, lexer.token_line, lexer.token_col, memory.source_lines, "unterminated character literal");
                 return false;
             }
 
@@ -832,7 +833,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
 
             if (code == -1)
             {
-                print(IC_PERROR, lexer.token_line, lexer.token_col, source_lines.data(),
+                print(IC_PERROR, lexer.token_line, lexer.token_col, memory.source_lines,
                     "invalid character literal; only printable, \\n and \\0 characters are supported");
                 return false;
             }
@@ -891,7 +892,7 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
             }
             else
             {
-                print(IC_PERROR, lexer.line, lexer.col, source_lines.data(), "unexpected character");
+                print(IC_PERROR, lexer.line, lexer.col, memory.source_lines, "unexpected character");
                 return false;
             }
         }
@@ -905,10 +906,9 @@ bool lex(const char* source, std::vector<ic_token>& _tokens, std::vector<unsigne
     return true;
 }
 
-// these parsing functions must always terminate loops on EOF token,
-// never early return (there are some exceptions) to not leave behind any invalid pointers,
-// never allocate memory using malloc
-// I don't like this code, it feels bad. I don't really know what is the best way to handle this code.
+// these parsing functions must always terminate loops on EOF token and
+// never early return (there are some exceptions) to not leave behind any invalid pointers;
+// I don't like this code, it feels bad.
 
 #define IC_CMASK_MSB 7
 
@@ -949,8 +949,7 @@ bool try_produce_type(ic_parser& parser, ic_type& type, bool allow_void = false)
         break;
     case IC_TOK_IDENTIFIER:
     {
-        ic_struct* _struct = parser.gscope->get_struct(parser.get_token().string);
-
+        ic_struct* _struct = get_struct(parser.get_token().string, *parser.memory);
         if (_struct)
         {
             type.basic_type = IC_TYPE_STRUCT;
@@ -1110,7 +1109,7 @@ ic_decl produce_decl(ic_parser& parser)
         }
 
         int bytes = sizeof(ic_param) * _struct.num_members;
-        _struct.members = (ic_param*)malloc(bytes); // todo TODO
+        _struct.members = (ic_param*)parser.memory->generic_pool.allocate_continuous(bytes);
         memcpy(_struct.members, members, bytes);
         parser.consume(IC_TOK_RIGHT_BRACE, "expected '}'");
         parser.consume(IC_TOK_SEMICOLON, "expected ';'");

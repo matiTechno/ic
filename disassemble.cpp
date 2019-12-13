@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "ic_impl.h"
 
 void print_bc(unsigned char* data, int offset, int size);

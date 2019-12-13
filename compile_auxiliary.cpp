@@ -159,10 +159,10 @@ void compile_implicit_conversion(ic_type to, ic_type from, ic_compiler& compiler
 
 ic_type get_expr_result_type(ic_expr* expr, ic_compiler& compiler)
 {
-    int prev = compiler.generate_bytecode;
-    compiler.generate_bytecode = false;
+    int prev = compiler.code_gen;
+    compiler.code_gen = false;
     ic_type type = compile_expr(expr, compiler).type;
-    compiler.generate_bytecode = prev;
+    compiler.code_gen = prev;
     return type;
 }
 

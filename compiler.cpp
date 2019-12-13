@@ -1,28 +1,25 @@
 #include "ic_impl.h"
 
-bool compile_function(ic_function& function, ic_global_scope& gscope, std::vector<ic_function*>* active_functions,
-    std::vector<unsigned char>* bytecode, ic_string* source_lines)
+bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
 {
     assert(function.type == IC_FUN_SOURCE);
-
-    if(bytecode)
-        function.data_idx = bytecode->size();
+    assert(!memory.scopes.size);
+    assert(!memory.vars.size);
+    assert(!memory.break_ops.size);
+    assert(!memory.cont_ops.size);
 
     ic_compiler compiler;
-    compiler.bytecode = bytecode;
+    compiler.memory = &memory;
     compiler.function = &function;
-    compiler.global_scope = &gscope;
-    compiler.active_functions = active_functions;
-    compiler.generate_bytecode = bytecode != nullptr;
+    compiler.code_gen = code_gen;
     compiler.stack_size = 0;
     compiler.max_stack_size = 0;
     compiler.loop_count = 0;
     compiler.error = false;
-    compiler.source_lines = source_lines;
-    compiler.push_scope();
 
-    if (compiler.generate_bytecode)
-        assert(active_functions);
+    if (code_gen)
+        function.data_idx = memory.program_data.size;
+    compiler.push_scope();
 
     for (int i = 0; i < function.param_count; ++i)
     {
@@ -38,10 +35,7 @@ bool compile_function(ic_function& function, ic_global_scope& gscope, std::vecto
         }
     }
     ic_stmt_result result = compile_stmt(function.body, compiler);
-    assert(compiler.scopes.size() == 1);
-    assert(compiler.loop_count == 0);
-    assert(!compiler.break_ops.size());
-    assert(!compiler.cont_ops.size());
+    compiler.pop_scope();
 
     if (!is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
         compiler.set_error(function.token, "all branches of a non-void return type function must return a value");
@@ -66,7 +60,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         ic_stmt* stmt_it = stmt->compound.body;
         ic_stmt_result result = IC_STMT_RESULT_NULL;
-        int prev_gen_bc = compiler.generate_bytecode;
+        int prev_gen_bc = compiler.code_gen;
 
         while (stmt_it && !compiler.error)
         {
@@ -77,7 +71,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
                 result = inner_result;
                 if (stmt_it->next) // if this is not the last statement of a compound statement
                 {
-                    compiler.generate_bytecode = false; // don't generate unreachable code, but compile for correctness
+                    compiler.code_gen = false; // don't generate unreachable code, but compile for correctness
                     compiler.warn(stmt_it->next->token, "unreachable code");
                 }
             }
@@ -86,14 +80,14 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         if (stmt->compound.push_scope)
             compiler.pop_scope();
-        compiler.generate_bytecode = prev_gen_bc;
+        compiler.code_gen = prev_gen_bc;
         return result;
     }
     case IC_STMT_FOR:
     {
         // outer loops may have unresolved break and continue operands
-        int break_ops_begin = compiler.break_ops.size();
-        int cont_ops_begin = compiler.cont_ops.size();
+        int break_ops_begin = compiler.memory->break_ops.size;
+        int cont_ops_begin = compiler.memory->cont_ops.size;
         compiler.loop_count += 1;
         compiler.push_scope();
 
@@ -129,16 +123,16 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         if (stmt->_for.header2)
             compiler.bc_set_int(idx_resolve_end, idx_end);
 
-        for(int i = break_ops_begin; i < compiler.break_ops.size(); ++i)
-            compiler.bc_set_int(compiler.break_ops[i], idx_end);
+        for(int i = break_ops_begin; i < compiler.memory->break_ops.size; ++i)
+            compiler.bc_set_int(compiler.memory->break_ops.buf[i], idx_end);
 
-        for(int i = cont_ops_begin; i < compiler.cont_ops.size(); ++i)
-            compiler.bc_set_int(compiler.cont_ops[i], idx_continue);
+        for(int i = cont_ops_begin; i < compiler.memory->cont_ops.size; ++i)
+            compiler.bc_set_int(compiler.memory->cont_ops.buf[i], idx_continue);
 
         compiler.pop_scope();
         compiler.loop_count -= 1;
-        compiler.break_ops.resize(break_ops_begin);
-        compiler.cont_ops.resize(cont_ops_begin);
+        compiler.memory->break_ops.resize(break_ops_begin);
+        compiler.memory->cont_ops.resize(cont_ops_begin);
         return IC_STMT_RESULT_NULL;
     }
     case IC_STMT_IF:
@@ -226,9 +220,9 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         compiler.add_opcode(IC_OPC_JUMP);
 
         if(stmt->type == IC_STMT_BREAK)
-            compiler.break_ops.push_back(compiler.bc_size());
+            compiler.memory->break_ops.push_back(compiler.bc_size());
         else
-            compiler.cont_ops.push_back(compiler.bc_size());
+            compiler.memory->cont_ops.push_back(compiler.bc_size());
 
         compiler.add_s32({});
         return IC_STMT_RESULT_BREAK_CONT;
