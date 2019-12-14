@@ -675,6 +675,14 @@ struct ic_memory
         break_ops.free();
         cont_ops.free();
     }
+
+    // add a padding so the next allocation is aligned to double (the largest type this code is using)
+    char* allocate_generic(int bytes)
+    {
+        int align = sizeof(double);
+        int padding = (align - (bytes % align)) % align;
+        return generic_pool.allocate_continuous(bytes + padding);
+    }
 };
 
 bool string_compare(ic_string str1, ic_string str2);

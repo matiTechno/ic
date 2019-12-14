@@ -241,7 +241,7 @@ struct ic_parser
 
     ic_stmt* allocate_stmt(ic_stmt_type type, ic_token token)
     {
-        ic_stmt* stmt = (ic_stmt*)memory->generic_pool.allocate_continuous(sizeof(ic_stmt));
+        ic_stmt* stmt = (ic_stmt*)memory->allocate_generic(sizeof(ic_stmt));
         memset(stmt, 0, sizeof(ic_stmt));
         stmt->type = type;
         stmt->token = token;
@@ -250,7 +250,7 @@ struct ic_parser
 
     ic_expr* allocate_expr(ic_expr_type type, ic_token token)
     {
-        ic_expr* expr = (ic_expr*)memory->generic_pool.allocate_continuous(sizeof(ic_expr));
+        ic_expr* expr = (ic_expr*)memory->allocate_generic(sizeof(ic_expr));
         memset(expr, 0, sizeof(ic_expr));
         expr->type = type;
         expr->token = token;
@@ -1120,7 +1120,7 @@ ic_decl produce_decl(ic_parser& parser)
         int bytes = sizeof(ic_param) * _struct.num_members;
 
         if(bytes)
-            _struct.members = (ic_param*)parser.memory->generic_pool.allocate_continuous(bytes);
+            _struct.members = (ic_param*)parser.memory->allocate_generic(bytes);
         memcpy(_struct.members, members, bytes);
         return decl;
     }
