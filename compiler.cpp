@@ -321,7 +321,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         int byte_offset = 0;
         bool match = false;
 
-        for (int i = 0; i < _struct->num_members; ++i)
+        for (int i = 0; i < _struct->members_size; ++i)
         {
             const ic_param& member = _struct->members[i];
 

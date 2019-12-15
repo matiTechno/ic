@@ -428,7 +428,7 @@ struct ic_function
     ic_function_type type;
     ic_type return_type;
     ic_token token;
-    int param_count; // params_size
+    int param_count;
     // todo, allocate, same as struct members?
     ic_param params[IC_MAX_ARGC];
 
@@ -443,7 +443,7 @@ struct ic_function
         {
             ic_stmt* body;
             int data_idx;
-            int stack_size; // stack_data_size
+            int stack_size;
         };
     };
 };
@@ -452,7 +452,7 @@ struct ic_struct
 {
     ic_token token;
     ic_param* members;
-    int num_members; // todo, rename to size to be consistent, members_size
+    int members_size;
     bool defined;
     int byte_size;
     int alignment;
@@ -603,12 +603,12 @@ struct ic_deque
         return &get(size - 1);
     }
 
-    T* allocate_continuous(int num)
+    T* allocate_chunk(int chunk_size)
     {
-        assert(num <= N);
-        assert(num);
+        assert(chunk_size <= N);
+        assert(chunk_size);
 
-        if (!pools.size || size + num > pools.size * N)
+        if (!pools.size || size + chunk_size > pools.size * N)
         {
             T* new_pool = (T*)malloc(N * sizeof(T));
             pools.push_back(new_pool);
@@ -616,11 +616,11 @@ struct ic_deque
 
         int current_pool_size = size % N;
 
-        if (current_pool_size + num > N)
+        if (current_pool_size + chunk_size > N)
             size += N - current_pool_size; // move to the next pool (we want continuous memory)
 
-        size += num;
-        return &get(size - num);
+        size += chunk_size;
+        return &get(size - chunk_size);
     }
 };
 
@@ -698,7 +698,7 @@ struct ic_memory
     // add a padding so the next allocation is aligned to double (the largest type this code is using)
     char* allocate_generic(int bytes)
     {
-        return generic_pool.allocate_continuous(align(bytes, sizeof(double)));
+        return generic_pool.allocate_chunk(align(bytes, sizeof(double)));
     }
 };
 

@@ -214,7 +214,7 @@ f64 get_collision_distance(rt_ray ray, rt_sphere sphere, f64 min_distance, f64 m
     return 0.0;
 }
 
-rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 num_spheres, s32 depth)
+rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 spheres_size, s32 depth)
 {
     if (depth > 9)
     {
@@ -226,7 +226,7 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 num_spheres, s32 depth
     f64 max_distance = 1000000.0; // todo; F64_MAX would be useful
     s32 sphere_idx = -1;
 
-    for(s32 i = 0; i < num_spheres; ++i)
+    for(s32 i = 0; i < spheres_size; ++i)
     {
         f64 distance = get_collision_distance(ray, spheres[i], 0.01, max_distance);
 
@@ -258,7 +258,7 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 num_spheres, s32 depth
         if (attenuation.x == 0.0 && attenuation.y == 0.0 && attenuation.z == 0.0)
             return attenuation;
         
-        return mul_vec3(attenuation, get_ray_color(scattered_ray, spheres, num_spheres, depth + 1));
+        return mul_vec3(attenuation, get_ray_color(scattered_ray, spheres, spheres_size, depth + 1));
     }
 
     // miss, render sky color (gradient)
@@ -322,8 +322,8 @@ void main()
     material_3.albedo.y = 1.0;
     material_3.albedo.z = 0.5;
 
-    s32 num_spheres = 3;
-    rt_sphere* spheres = (rt_sphere*)malloc(sizeof(rt_sphere) * num_spheres);
+    s32 spheres_size = 3;
+    rt_sphere* spheres = (rt_sphere*)malloc(sizeof(rt_sphere) * spheres_size);
 
     spheres[0].material = &material_1;
     spheres[0].radius = 1.5;
@@ -374,7 +374,7 @@ void main()
                 sensor_pos.z = 1.0 / tan(to_radians(camera.half_fov_y_deg));
 
                 ray.dir = normalize(transform_vec3(mat, sensor_pos));
-                color = add_vec3(color, get_ray_color(ray, spheres, num_spheres, 0));
+                color = add_vec3(color, get_ray_color(ray, spheres, spheres_size, 0));
             }
 
             color = div_vec3_scalar(color, samples_per_pixel); // average

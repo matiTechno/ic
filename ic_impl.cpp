@@ -1128,13 +1128,13 @@ ic_decl produce_decl(ic_parser& parser)
         _struct.defined = true;
         parser.consume(IC_TOK_LEFT_BRACE, "expected '{'");
         ic_param members[IC_MAX_MEMBERS]; // todo
-        _struct.num_members = 0;
+        _struct.members_size = 0;
         _struct.byte_size = 0;
         _struct.alignment = 1;
 
         while (parser.get_token().type != IC_TOK_RIGHT_BRACE && parser.get_token().type != IC_TOK_EOF)
         {
-            if (_struct.num_members == IC_MAX_MEMBERS)
+            if (_struct.members_size == IC_MAX_MEMBERS)
             {
                 parser.set_error("exceeded a maximum number of struct members");
                 assert(false); // todo
@@ -1142,7 +1142,7 @@ ic_decl produce_decl(ic_parser& parser)
                 // return {} may crash the program, e.g. dereferencing invalid pointer
             }
 
-            ic_param& member = members[_struct.num_members];
+            ic_param& member = members[_struct.members_size];
             member.type = produce_type(parser);
 
             // todo, support const members?
@@ -1155,7 +1155,7 @@ ic_decl produce_decl(ic_parser& parser)
             _struct.alignment = align_size > _struct.alignment ? align_size : _struct.alignment;
             _struct.byte_size = align(_struct.byte_size, align_size);
             _struct.byte_size += type_byte_size(member.type);
-            _struct.num_members += 1;
+            _struct.members_size += 1;
             parser.consume(IC_TOK_SEMICOLON, "expected ';' after a struct member name");
         }
         _struct.byte_size = align(_struct.byte_size, _struct.alignment);
@@ -1163,7 +1163,7 @@ ic_decl produce_decl(ic_parser& parser)
         _struct.byte_size = _struct.byte_size ? _struct.byte_size : 1;
         parser.consume(IC_TOK_RIGHT_BRACE, "expected '}'");
         parser.consume(IC_TOK_SEMICOLON, "expected ';'");
-        int bytes = sizeof(ic_param) * _struct.num_members;
+        int bytes = sizeof(ic_param) * _struct.members_size;
 
         if(bytes)
             _struct.members = (ic_param*)parser.memory->allocate_generic(bytes);
