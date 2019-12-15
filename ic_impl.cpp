@@ -721,6 +721,9 @@ bool lex(const char* source, ic_memory& memory)
                 len += 1;
             it += 1;
         }
+
+        if(len != 0) // useful for host functions prototype_str error reporting
+            memory.source_lines.push_back({ line_begin, len });
     }
 
     ic_lexer lexer;
