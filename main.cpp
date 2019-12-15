@@ -7,14 +7,12 @@
 #include <stdlib.h>
 #include "ic.h"
 
-ic_data host_random01(ic_data*, void*)
+void host_random01(ic_data*, ic_data* retv, void*)
 {
-    ic_data data;
-    data.f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
-    return data;
+    retv->f64 = (double)rand() / RAND_MAX; // todo; the distribution of numbers is probably not that good
 }
 
-ic_data host_write_ppm6(ic_data* argv, void*)
+void host_write_ppm6(ic_data* argv, ic_data*, void*)
 {
     FILE* file = fopen((char*)argv[0].pointer, "wb");
     assert(file);
@@ -26,7 +24,6 @@ ic_data host_write_ppm6(ic_data* argv, void*)
     fwrite(buf, 1, len, file);
     fwrite(argv[3].pointer, 1, width * height * 3, file);
     fclose(file);
-    return {};
 }
 
 void write_to_file(unsigned char* data, int size, const char* filename)
@@ -76,7 +73,7 @@ int main(int argc, const char** argv)
             ic_program program;
             {
                 auto t1 = std::chrono::high_resolution_clock::now();
-                bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, functions);
+                bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, { functions, nullptr });
                 assert(success);
                 auto t2 = std::chrono::high_resolution_clock::now();
                 printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
@@ -100,7 +97,7 @@ int main(int argc, const char** argv)
         ic_vm vm;
         ic_vm_init(vm);
         ic_program program;
-        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, functions);
+        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, { functions, nullptr });
         ic_vm_run(vm, program);
         ic_program_free(program);
         ic_vm_free(vm);
@@ -110,7 +107,7 @@ int main(int argc, const char** argv)
     {
         std::vector<unsigned char> file_data = load_file(argv[2]);
         ic_program program;
-        bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, functions);
+        bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, { functions, nullptr });
         assert(success);
         unsigned char* buf;
         int size;
@@ -124,7 +121,7 @@ int main(int argc, const char** argv)
     {
         std::vector<unsigned char> file_data = load_file(argv[2]);
         ic_program program;
-        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, functions);
+        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, { functions, nullptr });
         ic_program_print_disassembly(program);
         ic_program_free(program);
         return 0;

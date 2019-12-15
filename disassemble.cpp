@@ -33,7 +33,7 @@ void ic_program_print_disassembly(ic_program& program)
         {
             printf("hash: %x\n", fun.hash);
             printf("origin: %d\n", fun.origin);
-            printf("returns_value: %d\n", fun.returns_value);
+            printf("return_size: %d\n", fun.return_size);
         }
         else
         {

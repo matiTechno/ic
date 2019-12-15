@@ -15,13 +15,40 @@ union ic_data
     void* pointer;
 };
 
-using ic_host_function_ptr = ic_data(*)(ic_data* argv, void* host_data);
+// write to retv only after reading all the arguments
+// returning struct: *(copmlex*)retv = value;
+using ic_host_function_ptr = void(*)(ic_data* argv, ic_data* retv, void* host_data);
+
+// these are helpful if a function has struct parameters
+
+inline void* ic_get_arg(ic_data*& it, int size)
+{
+    int data_size = (size + sizeof(ic_data) - 1) / sizeof(ic_data);
+    ic_data* begin = it;
+    it += data_size;
+    return begin;
+}
+
+inline int ic_get_bool(ic_data*& it) { return *(char*)ic_get_arg(it, sizeof(char)); }
+inline int ic_get_char(ic_data*& it) { return *(char*)ic_get_arg(it, sizeof(char)); }
+inline int ic_get_uchar(ic_data*& it) { return *(unsigned char*)ic_get_arg(it, sizeof(char)); }
+inline int ic_get_int(ic_data*& it) { return *(int*)ic_get_arg(it, sizeof(int)); }
+inline float ic_get_float(ic_data*& it) { return *(float*)ic_get_arg(it, sizeof(float)); }
+inline double ic_get_double(ic_data*& it) { return *(double*)ic_get_arg(it, sizeof(double)); }
+inline void* ic_get_ptr(ic_data*& it) { return ic_get_arg(it, sizeof(void*)); }
 
 struct ic_host_function
 {
     const char* prototype_str;
     ic_host_function_ptr callback;
     void* host_data;
+};
+
+struct ic_host_decl
+{
+    ic_host_function* functions;
+    // both definitions and forward declarations are fine
+    const char* structures;
 };
 
 struct ic_vm_function
@@ -41,7 +68,7 @@ struct ic_vm_function
             void* host_data;
             unsigned int hash;
             int origin;
-            bool returns_value;
+            int return_size;
         };
     };
 };
@@ -84,8 +111,8 @@ struct ic_vm
     ic_data* end_op();
 };
 
-bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions);
-void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions);
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_decl host_decl);
+void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_decl host_decl);
 void ic_program_free(ic_program& program);
 void ic_program_print_disassembly(ic_program& program);
 void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size);

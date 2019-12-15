@@ -78,8 +78,8 @@ int type_data_size(ic_type type)
         assert(type._struct->defined);
         return bytes_to_data_size(type._struct->byte_size);
     }
-    if (is_void(type))
-        assert(false); // currently this function is never used on a void type
+    assert(!is_void(type));
+    assert(type.basic_type != IC_TYPE_NULLPTR);
     return 1;
 }
 
@@ -107,7 +107,6 @@ int type_byte_size(ic_type type)
     case IC_TYPE_F64:
         return sizeof(double);
     }
-    // this function is never used on a void or nullptr type
     assert(false);
 }
 
@@ -173,54 +172,42 @@ unsigned int hash_string(const char* str)
      assert(false);
  }
 
-ic_data host_prints(ic_data* argv, void*)
+void host_prints(ic_data* argv, ic_data*, void*)
 {
     printf("prints: %s\n", (const char*)argv->pointer);
-    return {};
 }
 
-ic_data host_printf(ic_data* argv, void*)
+void host_printf(ic_data* argv, ic_data*, void*)
 {
     printf("printf: %f\n", argv->f64);
-    return {};
 }
 
-ic_data host_printp(ic_data* argv, void*)
+void host_printp(ic_data* argv, ic_data*, void*)
 {
     printf("printp: %p\n", argv->pointer);
-    return {};
 }
 
-ic_data host_malloc(ic_data* argv, void*)
+void host_malloc(ic_data* argv, ic_data* retv, void*)
 {
-    void* ptr = malloc(argv->s32);
-    ic_data data;
-    data.pointer = ptr;
-    return data;
+    retv->pointer = malloc(argv->s32);
 }
 
-ic_data host_tan(ic_data* argv, void*)
+void host_tan(ic_data* argv, ic_data* retv, void*)
 {
-    ic_data data;
-    data.f64 = tan(argv->f64);
-    return data;
+    retv->f64 = tan(argv->f64);
 }
 
-ic_data host_sqrt(ic_data* argv, void*)
+void host_sqrt(ic_data* argv, ic_data* retv, void*)
 {
-    ic_data data;
-    data.f64 = sqrt(argv->f64);
-    return data;
+    retv->f64 = sqrt(argv->f64);
 }
 
-ic_data host_pow(ic_data* argv, void*)
+void host_pow(ic_data* argv, ic_data* retv, void*)
 {
-    ic_data data;
-    data.f64 = pow(argv[0].f64, argv[1].f64);
-    return data;
+    retv->f64 = pow(argv[0].f64, argv[1].f64);
 }
 
-ic_data host_exit(ic_data*, void*)
+void host_exit(ic_data*, ic_data*, void*)
 {
     exit(0);
 }
@@ -240,7 +227,7 @@ static ic_host_function _core_lib[] =
 
 #define IC_USER_FUNCTION -1
 
-void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions)
+void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_decl host_decl)
 {
     assert(buf);
     unsigned char* buf_it = buf;
@@ -260,7 +247,7 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
         if (fun.origin == IC_LIB_CORE)
             resolve_vm_function(fun, _core_lib);
         else if (fun.origin == IC_USER_FUNCTION)
-            resolve_vm_function(fun, host_functions);
+            resolve_vm_function(fun, host_decl.functions);
         else
             assert(false);
     }
@@ -417,7 +404,7 @@ ic_struct* get_struct(ic_string name, ic_memory& memory)
     return nullptr;
 }
 
-bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_function* host_functions, ic_memory& memory)
+bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_decl host_decl, ic_memory& memory)
 {
     assert(source);
     ic_parser parser;
@@ -430,9 +417,9 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             return false;
     }
 
-    if (host_functions)
+    if (host_decl.functions)
     {
-        if (!load_host_functions(host_functions, IC_USER_FUNCTION, parser, memory))
+        if (!load_host_functions(host_decl.functions, IC_USER_FUNCTION, parser, memory))
             return false;
     }
 
@@ -574,7 +561,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             vmfun.host_data = fun.host_function->host_data;
             vmfun.hash = hash_string(fun.host_function->prototype_str);
             vmfun.origin = fun.origin;
-            vmfun.returns_value = is_void(fun.return_type) ? 0 : 1; // currently host function can't return struct value
+            vmfun.return_size = is_void(fun.return_type) ? 0 : type_data_size(fun.return_type);
             // make sure there is no hash collision with previously initialized vm functions
             for(int j = 0; j < i; ++j)
                 assert(vmfun.hash != program.functions[j].hash);
@@ -588,12 +575,12 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     return true;
 }
 
-bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions)
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_decl host_decl)
 {
     assert(source);
     ic_memory memory;
     memory.init();
-    bool success = program_init_compile_impl(program, source, libs, host_functions, memory);
+    bool success = program_init_compile_impl(program, source, libs, host_decl, memory);
     memory.free();
     return success;
 }

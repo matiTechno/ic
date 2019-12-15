@@ -356,6 +356,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { target_type, false };
         }
 
+        // in VM's memmove, dst and src parameters are byte offsets from end pointer of call_stack ic_data array
         int begin_byte = bytes_to_data_size(_struct->byte_size) * sizeof(ic_data);
         int byte_size = type_byte_size(target_type);
         compiler.add_opcode(IC_OPC_MEMMOVE);

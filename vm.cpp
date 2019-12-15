@@ -157,11 +157,17 @@ void ic_vm_run(ic_vm& vm, ic_program& program)
 
             if (function.host_impl)
             {
-                ic_data return_data = function.callback(vm.end_op() - param_size, function.host_data);
-                vm.pop_op_many(function.param_size);
+                int vidx = vm.end_op() - param_size - vm.operand_stack;
+                int push_size = function.return_size - param_size;
 
-                if (function.returns_value)
-                    vm.push_op(return_data);
+                if (push_size > 0)
+                    vm.push_op_many(push_size);
+
+                ic_data* v = vm.operand_stack + vidx;
+                function.callback(v, v, function.host_data);
+
+                if(push_size < 0)
+                    vm.pop_op_many(-push_size);
             }
             else
             {
