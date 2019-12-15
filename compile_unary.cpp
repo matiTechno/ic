@@ -80,7 +80,7 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
 
         if (result.type.indirection_level)
         {
-            int size = pointed_type_byte_size(result.type);
+            int size = pointed_type_byte_size(result.type, compiler);
             
             if (!size)
                 compiler.set_error(expr->token, "void pointers can't be incremented / decremented");

@@ -27,7 +27,7 @@ struct ic_host_function
 struct ic_vm_function
 {
     bool host_impl;
-    int param_size;
+    int param_size; // param_data_size
     union
     {
         struct

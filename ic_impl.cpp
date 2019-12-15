@@ -66,16 +66,55 @@ void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_li
         line, col, err_msg, source_line.len, source_line.data, col - 1, ""); // "" this is a trick to print multiple spaces
 }
 
-int type_size(ic_type type)
+int bytes_to_data_size(int bytes)
+{
+    return (bytes + sizeof(ic_data) - 1 ) / sizeof(ic_data);
+}
+
+int type_data_size(ic_type type)
 {
     if (is_struct(type))
     {
         assert(type._struct->defined);
-        return type._struct->num_data;
+        return bytes_to_data_size(type._struct->byte_size);
     }
     if (is_void(type))
         assert(false); // currently this function is never used on a void type
     return 1;
+}
+
+int type_byte_size(ic_type type)
+{
+    if (is_struct(type))
+    {
+        assert(type._struct->defined);
+        return type._struct->byte_size;
+    }
+
+    if (type.indirection_level)
+        return sizeof(void*);
+
+    switch (type.basic_type)
+    {
+    case IC_TYPE_BOOL:
+    case IC_TYPE_S8:
+    case IC_TYPE_U8:
+        return sizeof(char);
+    case IC_TYPE_S32:
+        return sizeof(int);
+    case IC_TYPE_F32:
+        return sizeof(float);
+    case IC_TYPE_F64:
+        return sizeof(double);
+    }
+    // this function is never used on a void or nullptr type
+    assert(false);
+}
+
+int align(int bytes, int type_size)
+{
+    int padding = (type_size - (bytes % type_size)) % type_size;
+    return bytes + padding;
 }
 
 void write_bytes(unsigned char** buf_it, void* src, int bytes)
@@ -401,7 +440,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         return false;
 
     program.strings_byte_size = memory.program_data.size;
-    program.global_data_size = program.strings_byte_size / sizeof(ic_data) + 1;
+    program.global_data_size = bytes_to_data_size(program.strings_byte_size);
     parser.token_it = memory.tokens.buf;
 
     while (parser.get_token().type != IC_TOK_EOF)
@@ -468,7 +507,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             var.idx = program.global_data_size * sizeof(ic_data);
             var.type = decl.var.type;
             var.name = token.string;
-            program.global_data_size += type_size(var.type);
+            program.global_data_size += type_data_size(var.type);
             memory.global_vars.push_back(var);
             break;
         }
@@ -527,7 +566,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         vmfun.param_size = 0;
 
         for (int j = 0; j < fun.param_count; ++j)
-            vmfun.param_size += type_size(fun.params[j].type);
+            vmfun.param_size += type_data_size(fun.params[j].type);
 
         if (vmfun.host_impl)
         {
@@ -1090,7 +1129,8 @@ ic_decl produce_decl(ic_parser& parser)
         parser.consume(IC_TOK_LEFT_BRACE, "expected '{'");
         ic_param members[IC_MAX_MEMBERS]; // todo
         _struct.num_members = 0;
-        _struct.num_data = 0;
+        _struct.byte_size = 0;
+        _struct.alignment = 1;
 
         while (parser.get_token().type != IC_TOK_RIGHT_BRACE && parser.get_token().type != IC_TOK_EOF)
         {
@@ -1111,10 +1151,16 @@ ic_decl produce_decl(ic_parser& parser)
 
             member.name = parser.get_token().string;
             parser.consume(IC_TOK_IDENTIFIER, "expected a member name");
-            _struct.num_data += type_size(member.type);
+            int align_size = is_struct(member.type) ? member.type._struct->alignment : type_byte_size(member.type);
+            _struct.alignment = align_size > _struct.alignment ? align_size : _struct.alignment;
+            _struct.byte_size = align(_struct.byte_size, align_size);
+            _struct.byte_size += type_byte_size(member.type);
             _struct.num_members += 1;
             parser.consume(IC_TOK_SEMICOLON, "expected ';' after a struct member name");
         }
+        _struct.byte_size = align(_struct.byte_size, _struct.alignment);
+        // struct that has no members still needs to occupy some memory to have a unique address
+        _struct.byte_size = _struct.byte_size ? _struct.byte_size : 1;
         parser.consume(IC_TOK_RIGHT_BRACE, "expected '}'");
         parser.consume(IC_TOK_SEMICOLON, "expected ';'");
         int bytes = sizeof(ic_param) * _struct.num_members;

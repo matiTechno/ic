@@ -65,7 +65,7 @@ ic_expr_result compile_compound_assignment_add_sub(ic_expr* expr, ic_opcode opc_
         if (atype.basic_type != IC_TYPE_S32)
             compiler.set_error(expr->token, "only integer values can be added to a pointer");
         compile_implicit_conversion(atype, rhs_type, compiler, expr->token);
-        int size = pointed_type_byte_size(lhs.type);
+        int size = pointed_type_byte_size(lhs.type, compiler);
 
         if (!size)
             compiler.set_error(expr->token, "void pointers can't be offset");
@@ -198,7 +198,7 @@ ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_ex
         compiler.set_error(offset_expr->token, "only integer values can be added to a pointer");
 
     compile_implicit_conversion(atype, offset_type, compiler, offset_expr->token);
-    int size = pointed_type_byte_size(ptr_type);
+    int size = pointed_type_byte_size(ptr_type, compiler);
 
     if (!size)
         compiler.set_error(ptr_expr->token, "void pointers can't be offset");
@@ -277,7 +277,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compile_expr(expr->binary.lhs, compiler);
             compile_expr(expr->binary.rhs, compiler);
             compiler.add_opcode(IC_OPC_SUB_PTR_PTR);
-            int size = pointed_type_byte_size(lhs_type);
+            int size = pointed_type_byte_size(lhs_type, compiler);
 
             if (size)
                 compiler.set_error(expr->token, "void pointers can't be subtracted");

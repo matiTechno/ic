@@ -182,7 +182,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             if (is_struct(var.type))
             {
                 compiler.add_opcode(IC_OPC_STORE_STRUCT);
-                compiler.add_s32(var.type._struct->num_data);
+                compiler.add_s32(var.type._struct->byte_size);
             }
             else
                 compiler.add_opcode(IC_OPC_STORE_8); // variables of any non-struct type occupy 8 bytes
@@ -256,9 +256,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
     case IC_EXPR_SIZEOF:
     {
-        ic_type type = expr->_sizeof.type;
-        type.indirection_level += 1; // this is quite a hack
-        int size = pointed_type_byte_size(type);
+        int size = type_byte_size(expr->_sizeof.type);
         assert(size); // incomplete type is not allowed, parser already handles it
         compiler.add_opcode(IC_OPC_PUSH_S32);
         compiler.add_s32(size);
@@ -320,7 +318,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
         ic_struct* _struct = result.type._struct;
         ic_string target_name = expr->member_access.rhs_token.string;
-        int data_offset = 0;
+        int byte_offset = 0;
         bool match = false;
 
         for (int i = 0; i < _struct->num_members; ++i)
@@ -333,7 +331,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
                 match = true;
                 break;
             }
-            data_offset += type_size(member.type);
+            int align_size = is_struct(member.type) ? member.type._struct->alignment : type_byte_size(member.type);
+            byte_offset = align(byte_offset, align_size);
+            byte_offset += type_byte_size(member.type);
         }
 
         if(!match)
@@ -342,9 +342,9 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         if (result.lvalue)
         {
             compiler.add_opcode(IC_OPC_PUSH_S32);
-            compiler.add_s32(data_offset);
+            compiler.add_s32(byte_offset);
             compiler.add_opcode(IC_OPC_ADD_PTR_S32);
-            compiler.add_s32(sizeof(ic_data));
+            compiler.add_s32(sizeof(char));
 
             if (!load_lvalue)
             {
@@ -356,13 +356,14 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             return { target_type, false };
         }
 
-        int size = type_size(target_type);
+        int begin_byte = bytes_to_data_size(_struct->byte_size) * sizeof(ic_data);
+        int byte_size = type_byte_size(target_type);
         compiler.add_opcode(IC_OPC_MEMMOVE);
-        compiler.add_s32(_struct->num_data);
-        compiler.add_s32(_struct->num_data - data_offset);
-        compiler.add_s32(size);
+        compiler.add_s32(begin_byte);
+        compiler.add_s32(begin_byte - byte_offset);
+        compiler.add_s32(byte_size);
         compiler.add_opcode(IC_OPC_POP_MANY);
-        compiler.add_s32(_struct->num_data - size);
+        compiler.add_s32((_struct->byte_size - byte_size) / sizeof(ic_data));
         return { target_type, false };
     }
     case IC_EXPR_PARENTHESES:

@@ -138,10 +138,10 @@ void ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_MEMMOVE:
         {
-            void* dst = vm.end_op() - read_int(&frame->ip);
-            void* src = vm.end_op() - read_int(&frame->ip);
-            int size = read_int(&frame->ip);
-            memmove(dst, src, size * sizeof(ic_data));
+            void* dst = (char*)vm.end_op() - read_int(&frame->ip);
+            void* src = (char*)vm.end_op() - read_int(&frame->ip);
+            int byte_size = read_int(&frame->ip);
+            memmove(dst, src, byte_size);
             break;
         }
         case IC_OPC_CLONE:
@@ -240,8 +240,9 @@ void ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_STORE_STRUCT:
         {
             void* dst = vm.pop_op().pointer;
-            int size = read_int(&frame->ip);
-            memcpy(dst, vm.end_op() - size, size * sizeof(ic_data));
+            int byte_size = read_int(&frame->ip);
+            int data_size = bytes_to_data_size(byte_size);
+            memcpy(dst, vm.end_op() - data_size, byte_size);
             break;
         }
         case IC_OPC_LOAD_1:
@@ -265,9 +266,10 @@ void ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_LOAD_STRUCT:
         {
             void* ptr = vm.pop_op().pointer;
-            int size = read_int(&frame->ip);
-            vm.push_op_many(size);
-            memcpy(vm.end_op() - size, ptr, size * sizeof(ic_data));
+            int byte_size = read_int(&frame->ip);
+            int data_size = bytes_to_data_size(byte_size);
+            vm.push_op_many(data_size);
+            memcpy(vm.end_op() - data_size, ptr, byte_size);
             break;
         }
         case IC_OPC_COMPARE_E_S32:

@@ -225,7 +225,7 @@ void compile_load(ic_type type, ic_compiler& compiler)
         return;
     case IC_TYPE_STRUCT:
         compiler.add_opcode(IC_OPC_LOAD_STRUCT);
-        compiler.add_s32(type._struct->num_data);
+        compiler.add_s32(type._struct->byte_size);
         return;
     }
     assert(compiler.error);
@@ -255,7 +255,7 @@ void compile_store(ic_type type, ic_compiler& compiler)
         return;
     case IC_TYPE_STRUCT:
         compiler.add_opcode(IC_OPC_STORE_STRUCT);
-        compiler.add_s32(type._struct->num_data);
+        compiler.add_s32(type._struct->byte_size);
         return;
     }
     assert(compiler.error);
@@ -287,14 +287,17 @@ void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler)
         return;
     case IC_TYPE_STRUCT:
         compiler.add_opcode(IC_OPC_POP_MANY);
-        compiler.add_s32(result.type._struct->num_data);
+        compiler.add_s32(bytes_to_data_size(result.type._struct->byte_size));
         return;
     }
     assert(compiler.error);
 }
 
-int pointed_type_byte_size(ic_type type)
+int pointed_type_byte_size(ic_type type, ic_compiler& compiler)
 {
+    if (!type.indirection_level)
+        assert(compiler.error);
+
     if (type.indirection_level > 1)
         return sizeof(void*);
     switch (type.basic_type)
@@ -310,10 +313,10 @@ int pointed_type_byte_size(ic_type type)
     case IC_TYPE_F64:
         return sizeof(double);
     case IC_TYPE_STRUCT:
-        return type._struct->num_data * sizeof(ic_data);
+        return type._struct->byte_size;
     case IC_TYPE_VOID:
         return 0;
     }
-    // compiler should be in an error states if this hits
+    assert(compiler.error);
     return {};
 }

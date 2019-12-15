@@ -428,7 +428,7 @@ struct ic_function
     ic_function_type type;
     ic_type return_type;
     ic_token token;
-    int param_count;
+    int param_count; // params_size
     // todo, allocate, same as struct members?
     ic_param params[IC_MAX_ARGC];
 
@@ -443,7 +443,7 @@ struct ic_function
         {
             ic_stmt* body;
             int data_idx;
-            int stack_size;
+            int stack_size; // stack_data_size
         };
     };
 };
@@ -452,9 +452,10 @@ struct ic_struct
 {
     ic_token token;
     ic_param* members;
-    int num_members; // todo, rename to size to be consistent
-    int num_data;
+    int num_members; // todo, rename to size to be consistent, members_size
     bool defined;
+    int byte_size;
+    int alignment;
 };
 
 struct ic_decl
@@ -623,6 +624,24 @@ struct ic_deque
     }
 };
 
+bool string_compare(ic_string str1, ic_string str2);
+bool is_struct(ic_type type);
+bool is_void(ic_type type);
+ic_type non_pointer_type(ic_basic_type type);
+ic_type const_pointer1_type(ic_basic_type type);
+ic_type pointer1_type(ic_basic_type type);
+int read_int(unsigned char** buf_it);
+float read_float(unsigned char** buf_it);
+double read_double(unsigned char** buf_it);
+void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_lines, const char* err_msg);
+int bytes_to_data_size(int bytes);
+int type_data_size(ic_type type);
+int type_byte_size(ic_type type);
+int align(int bytes, int type_size);
+struct ic_memory;
+ic_var* get_global_var(ic_string name, ic_memory& memory);
+ic_function* get_function(ic_string name, ic_memory& memory);
+
 struct ic_scope
 {
     int prev_stack_size;
@@ -679,25 +698,9 @@ struct ic_memory
     // add a padding so the next allocation is aligned to double (the largest type this code is using)
     char* allocate_generic(int bytes)
     {
-        int align = sizeof(double);
-        int padding = (align - (bytes % align)) % align;
-        return generic_pool.allocate_continuous(bytes + padding);
+        return generic_pool.allocate_continuous(align(bytes, sizeof(double)));
     }
 };
-
-bool string_compare(ic_string str1, ic_string str2);
-bool is_struct(ic_type type);
-bool is_void(ic_type type);
-ic_type non_pointer_type(ic_basic_type type);
-ic_type const_pointer1_type(ic_basic_type type);
-ic_type pointer1_type(ic_basic_type type);
-int read_int(unsigned char** buf_it);
-float read_float(unsigned char** buf_it);
-double read_double(unsigned char** buf_it);
-void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_lines, const char* err_msg);
-int type_size(ic_type type);
-ic_var* get_global_var(ic_string name, ic_memory& memory);
-ic_function* get_function(ic_string name, ic_memory& memory);
 
 struct ic_expr_result
 {
@@ -811,7 +814,7 @@ struct ic_compiler
 
     void declare_unused_param(ic_type type)
     {
-        stack_size += type_size(type);
+        stack_size += type_data_size(type);
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
     }
 
@@ -828,7 +831,7 @@ struct ic_compiler
             }
         }
         int byte_idx = stack_size * sizeof(ic_data);
-        stack_size += type_size(type);
+        stack_size += type_data_size(type);
         max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
         ic_var var;
         var.idx = byte_idx;
@@ -902,4 +905,4 @@ void assert_modifiable_lvalue(ic_expr_result result, ic_compiler& compiler, ic_t
 void compile_load(ic_type type, ic_compiler& compiler);
 void compile_store(ic_type type, ic_compiler& compiler);
 void compile_pop_expr_result(ic_expr_result result, ic_compiler& compiler);
-int pointed_type_byte_size(ic_type type);
+int pointed_type_byte_size(ic_type type, ic_compiler& compiler);
