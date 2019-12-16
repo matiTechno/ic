@@ -4,33 +4,52 @@ struct lnode
     s32 data;
 };
 
-void add(lnode* head, s32 data)
+void add(lnode** it, s32 data)
 {
-    while(head->next)
-        head = head->next;
+    while (*it)
+        it = &(*it)->next;
 
-    head->next = (lnode*)malloc(sizeof(lnode));
-    head->next->data = data;
-    head->next->next = nullptr;
+    *it = (lnode*)malloc(sizeof(lnode));
+    (*it)->data = data;
 }
 
-s32 main()
+void print(lnode* it)
 {
-    lnode head;
-    head.data = 9;
-    head.next = nullptr;
-    add(&head, 1);
-    add(&head, 10);
-    add(&head, 3);
-    add(&head, 5);
-    add(&head, 6);
-
-    lnode* it = &head;
     while (it)
     {
         printf(it->data);
         it = it->next;
     }
+}
 
+void reverse(lnode** head)
+{
+    lnode* prev = nullptr;
+    lnode* it = *head;
+
+    while (it)
+    {
+        lnode* next = it->next;
+        it->next = prev;
+        prev = it;
+        it = next;
+    }
+    *head = prev;
+}
+
+s32 main()
+{
+    lnode* list = nullptr;
+    add(&list, 1);
+    reverse(&list);
+    add(&list, 10);
+    add(&list, 3);
+    add(&list, 5);
+    add(&list, 6);
+
+    print(list);
+    reverse(&list);
+    prints("after reverse");
+    print(list);
     return 0;
 }
