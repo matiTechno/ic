@@ -34,6 +34,109 @@ void write_to_file(unsigned char* data, int size, const char* filename)
     fclose(file);
 }
 
+struct test_struct
+{
+    char a;
+    int b;
+    char c;
+    double d;
+    float e;
+};
+
+static const char* test_struct_decl = R"(
+struct test_struct
+{
+    s8 a;
+    s32 b;
+    s8 c;
+    f64 d;
+    f32 e;
+};
+)";
+
+static const char* test_program = R"(
+void print_test(test_struct* ptr)
+{
+    printf(ptr->a);
+    printf(ptr->b);
+    printf(ptr->c);
+    printf(ptr->d);
+    printf(ptr->e);
+}
+void main()
+{
+    test_struct t = host_test_value();
+    print_test(&t);
+
+    test_struct* ptr = host_test_ptr();
+    for(s32 i = 0; i < 2; ++i)
+    {
+        print_test(ptr);
+        ++ptr;
+    }
+
+    test_struct t2;
+    t2.a = 1;
+    t2.b = 2;
+    t2.c = 3;
+    t2.d = 4;
+    t2.e = 5;
+
+    host_print_test(666, t2, 999);
+    host_print_test_ptr(&t2);
+}
+)";
+
+void host_test_value(ic_data*, ic_data* retv, void*)
+{
+    test_struct t;
+    t.a = 10;
+    t.b = 11;
+    t.c = 12;
+    t.d = 13;
+    t.e = 14;
+
+    *(test_struct*)retv = t;
+}
+
+void host_test_ptr(ic_data*, ic_data* retv, void*)
+{
+    static test_struct t[2];
+    for (int i = 0; i < 2; ++i)
+    {
+        t[i].a = 100 + i;
+        t[i].b = 101 + i;
+        t[i].c = 102 + i;
+        t[i].d = 103 + i;
+        t[i].e = 104 + i;
+    }
+    *(test_struct**)retv = t;
+}
+
+void print(test_struct t)
+{
+    printf("%f\n", (double)t.a);
+    printf("%f\n", (double)t.b);
+    printf("%f\n", (double)t.c);
+    printf("%f\n", (double)t.d);
+    printf("%f\n", (double)t.e);
+}
+
+void host_print_test(ic_data* argv, ic_data*, void*)
+{
+    int arg1 = ic_get_int(argv);
+    test_struct arg2 = *(test_struct*)ic_get_arg(argv, sizeof(test_struct));
+    double arg3 = ic_get_double(argv);
+    printf("arg1 = %d\n", arg1);
+    print(arg2);
+    printf("arg3 = %f\n", arg3);
+}
+
+void host_print_test_ptr(ic_data* argv, ic_data*, void*)
+{
+    print(**(test_struct**)argv);
+}
+
 std::vector<unsigned char> load_file(const char* name)
 {
     FILE* file = fopen(name, "rb"); // oh my dear Windows, you have to make life harder
@@ -123,6 +226,27 @@ int main(int argc, const char** argv)
         ic_program program;
         ic_program_init_load(program, file_data.data(), IC_LIB_CORE, { functions, nullptr });
         ic_program_print_disassembly(program);
+        ic_program_free(program);
+        return 0;
+    }
+    else if (strcmp(argv[1], "test") == 0)
+    {
+        ic_host_function test_functions[] =
+        {
+            {"test_struct host_test_value()", host_test_value},
+            {"test_struct* host_test_ptr()", host_test_ptr},
+            {"void host_print_test(s32, test_struct, f64)", host_print_test},
+            {"void host_print_test_ptr(test_struct*)", host_print_test_ptr},
+            nullptr
+        };
+
+        ic_program program;
+        bool success = ic_program_init_compile(program, test_program, IC_LIB_CORE, { test_functions, test_struct_decl });
+        assert(success);
+        ic_vm vm;
+        ic_vm_init(vm);
+        ic_vm_run(vm, program);
+        ic_vm_free(vm);
         ic_program_free(program);
         return 0;
     }

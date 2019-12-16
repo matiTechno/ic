@@ -8,22 +8,19 @@
 // todo
 // comma, ternary, bitwise operators, switch, else if
 // somehow support multithreading (interpreter)? run function ast on a separate thread? (what about mutexes and atomics?)
-// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, preprocessor, enum, union,
-//  /* comments
+// function pointers, typedefs (or better 'using = '), initializer-list, automatic array, escape sequences, preprocessor, enum, union, /* comments
 // , structures and unions can be anonymous inside other structures and unions (I very like this feature)
-// host structures; struct alignment, packing; exposing ast - seamless data structure sharing between host and VM
-// not only struct alignment but also basic types alingment, so e.g. u8 does not consume 8 bytes of a call stack and operand stack
 // ptrdiff_t ?; implicit type conversions warnings (overflows, etc.)
 // tail call optimization
 // imgui bytecode debugger, text editor with colors and error reporting using our very own ast technology
-// exit function should exit bytecode execution, not a host program
+// exit function should exit bytecode execution, not a host program (exit instruction would be helpful)
 // do some benchmarks against jvm, python and lua
-// use float instead of f32, same for other types?
+// use float instead of f32, same for other types? current type naming convention is not clear and it needs to be fixed
 // bytecode endianness
 // I would like to support simple generics and plain struct functions
 // self-hosting
-// remove std::vector dependency - to keep POD and explicit initialization style consistent
-// error messages may point slightly off, at a wrong token
+// error messages may sometimes point slightly off, at a wrong token
+// IC_LIB_FILE
 
 static_assert(sizeof(int) == 4, "sizeof(int) == 4");
 static_assert(sizeof(float) == 4, "sizeof(float) == 4");
@@ -639,8 +636,8 @@ int type_data_size(ic_type type);
 int type_byte_size(ic_type type);
 int align(int bytes, int type_size);
 struct ic_memory;
-ic_var* get_global_var(ic_string name, ic_memory& memory);
 ic_function* get_function(ic_string name, ic_memory& memory);
+ic_var* get_global_var(ic_string name, ic_memory& memory);
 
 struct ic_scope
 {
@@ -696,6 +693,7 @@ struct ic_memory
     }
 
     // add a padding so the next allocation is aligned to double (the largest type this code is using)
+    // todo, this is architecture specific
     char* allocate_generic(int bytes)
     {
         return generic_pool.allocate_chunk(align(bytes, sizeof(double)));

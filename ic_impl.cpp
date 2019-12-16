@@ -116,6 +116,39 @@ int align(int bytes, int type_size)
     return bytes + padding;
 }
 
+ic_struct* get_struct(ic_string name, ic_memory& memory)
+{
+    for (int i = 0; i < memory.structs.size; ++i)
+    {
+        ic_struct* _struct = &memory.structs.get(i);
+        if (string_compare(name, _struct->token.string))
+            return _struct;
+    }
+    return nullptr;
+}
+
+ic_function* get_function(ic_string name, ic_memory& memory)
+{
+    for (int i = 0; i < memory.functions.size; ++i)
+    {
+        ic_function* function = memory.functions.buf + i;
+        if (string_compare(name, function->token.string))
+            return function;
+    }
+    return nullptr;
+}
+
+ic_var* get_global_var(ic_string name, ic_memory& memory)
+{
+    for (int i = 0; i < memory.global_vars.size; ++i)
+    {
+        ic_var* var = memory.global_vars.buf + i;
+        if (string_compare(name, var->name))
+            return var;
+    }
+    return nullptr;
+}
+
 void write_bytes(unsigned char** buf_it, void* src, int bytes)
 {
     memcpy(*buf_it, src, bytes);
@@ -330,6 +363,11 @@ struct ic_parser
     }
 };
 
+void print_error(ic_token token, ic_array<ic_string>& lines, const char* msg)
+{
+    print(IC_PERROR, token.line, token.col, lines, msg);
+}
+
 #define IC_ALLOW_VOID 1
 
 bool lex(const char* source, ic_memory& memory);
@@ -351,6 +389,12 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser, ic
         function.type = IC_FUN_HOST;
         function.return_type = produce_type(parser, IC_ALLOW_VOID);
         function.token = parser.get_token();
+
+        if (get_function(function.token.string, memory))
+        {
+            print_error(function.token, memory.source_lines, "host function with such name is already declared");
+            return false;
+        }
         parser.consume(IC_TOK_IDENTIFIER, "expected function name");
         // proudce_parameter_list assumes that ( is consumed this is to avoid redundancy in produce_decl()
         parser.consume(IC_TOK_LEFT_PAREN, "expected '('");
@@ -366,42 +410,57 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser, ic
     return true;
 }
 
-void print_error(ic_token token, ic_array<ic_string>& lines, const char* msg)
+bool add_struct_declaration(ic_struct& _struct, ic_memory& memory)
 {
-    print(IC_PERROR, token.line, token.col, lines, msg);
+    ic_token token = _struct.token;
+    ic_struct* prev_struct = get_struct(token.string, memory);
+
+    if (!_struct.defined)
+    {
+        if (prev_struct)
+            return true; // do nothing, multiple declarations are not an error
+        *memory.structs.allocate() = _struct;
+        return true;
+    }
+    // if declaration is also a definition
+    if (prev_struct)
+    {
+        if (prev_struct->defined)
+        {
+            print_error(token, memory.source_lines, "struct with such name is already defined");
+            return false;
+        }
+        *prev_struct = _struct; // replace forward declaration with definition
+        return true;
+    }
+    *memory.structs.allocate() = _struct;
+    return true;
 }
 
-ic_function* get_function(ic_string name, ic_memory& memory)
+bool load_host_structures(const char* source, ic_parser& parser, ic_memory& memory)
 {
-    for (int i = 0; i < memory.functions.size; ++i)
-    {
-        ic_function* function = memory.functions.buf + i;
-        if (string_compare(name, function->token.string))
-            return function;
-    }
-    return nullptr;
-}
+    assert(source);
 
-ic_var* get_global_var(ic_string name, ic_memory& memory)
-{
-    for (int i = 0; i < memory.global_vars.size; ++i)
-    {
-        ic_var* var = memory.global_vars.buf + i;
-        if (string_compare(name, var->name))
-            return var;
-    }
-    return nullptr;
-}
+    if (!lex(source, memory))
+        return false;
+     assert(!memory.program_data.size); // internal error check
+     parser.token_it = memory.tokens.buf;
 
-ic_struct* get_struct(ic_string name, ic_memory& memory)
-{
-    for (int i = 0; i < memory.structs.size; ++i)
-    {
-        ic_struct* _struct = &memory.structs.get(i);
-        if (string_compare(name, _struct->token.string))
-            return _struct;
-    }
-    return nullptr;
+     while (parser.get_token().type != IC_TOK_EOF)
+     {
+         ic_decl decl = produce_decl(parser);
+
+         if (parser.error)
+             return false;
+         if (decl.type != IC_DECL_STRUCT)
+         {
+             printf("error host: only struct declarations are allowed in ic_host_decl.structures");
+             return false;
+         }
+         if (!add_struct_declaration(decl._struct, memory))
+             return false;
+     }
+     return true;
 }
 
 bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_decl host_decl, ic_memory& memory)
@@ -419,6 +478,8 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
     if (host_decl.functions)
     {
+        if (host_decl.structures)
+            load_host_structures(host_decl.structures, parser, memory);
         if (!load_host_functions(host_decl.functions, IC_USER_FUNCTION, parser, memory))
             return false;
     }
@@ -457,28 +518,8 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         }
         case IC_DECL_STRUCT:
         {
-            ic_token token = decl._struct.token;
-            ic_struct* prev_struct = get_struct(token.string, memory);
-
-            if (!decl._struct.defined)
-            {
-                if (prev_struct)
-                    break; // do nothing, multiple declarations are not an error
-                *memory.structs.allocate() = decl._struct;
-                break;
-            }
-            // if declaration is also a definition
-            if (prev_struct)
-            {
-                if (prev_struct->defined)
-                {
-                    print_error(token, memory.source_lines, "struct with such name is already defined");
-                    return false;
-                }
-                *prev_struct = decl._struct; // replace forward declaration with definition
-                break;
-            }
-            *memory.structs.allocate() = decl._struct;
+            if (!add_struct_declaration(decl._struct, memory))
+                return false;
             break;
         }
         case IC_DECL_VAR:

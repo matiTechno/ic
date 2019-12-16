@@ -21,21 +21,21 @@ using ic_host_function_ptr = void(*)(ic_data* argv, ic_data* retv, void* host_da
 
 // these are helpful if a function has struct parameters
 
-inline void* ic_get_arg(ic_data*& it, int size)
+inline void* ic_get_arg(ic_data*& argv, int size)
 {
     int data_size = (size + sizeof(ic_data) - 1) / sizeof(ic_data);
-    ic_data* begin = it;
-    it += data_size;
+    ic_data* begin = argv;
+    argv += data_size;
     return begin;
 }
 
-inline int ic_get_bool(ic_data*& it) { return *(char*)ic_get_arg(it, sizeof(char)); }
-inline int ic_get_char(ic_data*& it) { return *(char*)ic_get_arg(it, sizeof(char)); }
-inline int ic_get_uchar(ic_data*& it) { return *(unsigned char*)ic_get_arg(it, sizeof(char)); }
-inline int ic_get_int(ic_data*& it) { return *(int*)ic_get_arg(it, sizeof(int)); }
-inline float ic_get_float(ic_data*& it) { return *(float*)ic_get_arg(it, sizeof(float)); }
-inline double ic_get_double(ic_data*& it) { return *(double*)ic_get_arg(it, sizeof(double)); }
-inline void* ic_get_ptr(ic_data*& it) { return ic_get_arg(it, sizeof(void*)); }
+inline int ic_get_bool(ic_data*& argv) { return *(char*)ic_get_arg(argv, sizeof(char)); }
+inline int ic_get_char(ic_data*& argv) { return *(char*)ic_get_arg(argv, sizeof(char)); }
+inline int ic_get_uchar(ic_data*& argv) { return *(unsigned char*)ic_get_arg(argv, sizeof(char)); }
+inline int ic_get_int(ic_data*& argv) { return *(int*)ic_get_arg(argv, sizeof(int)); }
+inline float ic_get_float(ic_data*& argv) { return *(float*)ic_get_arg(argv, sizeof(float)); }
+inline double ic_get_double(ic_data*& argv) { return *(double*)ic_get_arg(argv, sizeof(double)); }
+inline void* ic_get_ptr(ic_data*& argv) { return ic_get_arg(argv, sizeof(void*)); }
 
 struct ic_host_function
 {
@@ -44,6 +44,8 @@ struct ic_host_function
     void* host_data;
 };
 
+// structures are parsed only if functions ptr is not null,
+// they are only to support struct types in host function declarations
 struct ic_host_decl
 {
     ic_host_function* functions;
