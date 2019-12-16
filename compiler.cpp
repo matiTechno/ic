@@ -101,7 +101,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             // no need to pop result, JUMP_FALSE instr pops it
             ic_expr_result result = compile_expr(stmt->_for.header2, compiler);
-            compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler, stmt->_for.header2->token);
+            compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), result.type, compiler, stmt->_for.header2->token);
             compiler.add_opcode(IC_OPC_JUMP_FALSE);
             idx_resolve_end = compiler.bc_size();
             compiler.add_s32({});
@@ -141,7 +141,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         ic_stmt_result result_else = IC_STMT_RESULT_NULL;
         // no need to pop result, JUMP_FALSE instr pops it
         ic_expr_result result = compile_expr(stmt->_if.header, compiler); // no need to push a scope here, expr can't declare a new variable
-        compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), result.type, compiler, stmt->_if.header->token);
+        compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), result.type, compiler, stmt->_if.header->token);
         compiler.add_opcode(IC_OPC_JUMP_FALSE);
         int idx_resolve_else = compiler.bc_size();
         compiler.add_s32({});
@@ -338,32 +338,43 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
         if(!match)
             compiler.set_error(expr->token, "an invalid struct member name");
-        
         if (result.lvalue)
         {
-            compiler.add_opcode(IC_OPC_PUSH_S32);
-            compiler.add_s32(byte_offset);
-            compiler.add_opcode(IC_OPC_ADD_PTR_S32);
-            compiler.add_s32(sizeof(char));
+            // todo, don't pollute the codebase with if statements, this could be handled by some optimization pass
+            if (byte_offset)
+            {
+                compiler.add_opcode(IC_OPC_PUSH_S32);
+                compiler.add_s32(byte_offset);
+                compiler.add_opcode(IC_OPC_ADD_PTR_S32);
+                compiler.add_s32(sizeof(char));
+            }
 
             if (!load_lvalue)
             {
-                target_type.const_mask |= result.type.const_mask & 1;
+                target_type.const_mask |= result.type.const_mask & 1; // propagate constness to a member
                 return { target_type, true };
             }
 
             compile_load(target_type, compiler);
             return { target_type, false };
         }
-
-        int begin_byte = bytes_to_data_size(_struct->byte_size) * sizeof(ic_data);
         int byte_size = type_byte_size(target_type);
-        compiler.add_opcode(IC_OPC_MEMMOVE);
-        compiler.add_s32(begin_byte);
-        compiler.add_s32(begin_byte - byte_offset);
-        compiler.add_s32(byte_size);
-        compiler.add_opcode(IC_OPC_POP_MANY);
-        compiler.add_s32((_struct->byte_size - byte_size) / sizeof(ic_data));
+
+        if (byte_offset)
+        {
+            int begin_byte = bytes_to_data_size(_struct->byte_size) * sizeof(ic_data);
+            compiler.add_opcode(IC_OPC_MEMMOVE);
+            compiler.add_s32(begin_byte);
+            compiler.add_s32(begin_byte - byte_offset);
+            compiler.add_s32(byte_size);
+        }
+        int pop_size = (_struct->byte_size - byte_size) / sizeof(ic_data);
+
+        if (pop_size)
+        {
+            compiler.add_opcode(IC_OPC_POP_MANY);
+            compiler.add_s32(pop_size);
+        }
         return { target_type, false };
     }
     case IC_EXPR_PARENTHESES:

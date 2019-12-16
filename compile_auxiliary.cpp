@@ -2,20 +2,28 @@
 
 bool compile_implicit_conversion_impl(ic_type to, ic_type from, ic_compiler& compiler)
 {
-    if (to.indirection_level != from.indirection_level)
-        return false;
-
     if (to.basic_type == IC_TYPE_STRUCT && from.basic_type == IC_TYPE_STRUCT && to._struct != from._struct)
         return false;
 
     if (to.indirection_level)
     {
         if (to.basic_type == IC_TYPE_NULLPTR)
+            assert(compiler.error);
+
+        if (!from.indirection_level)
             return false;
 
-        // http://c-faq.com/ansi/constmismatch.html
-        // this implementation is more restrictive than C++ permits, might fix later
+        if (from.basic_type == IC_TYPE_NULLPTR)
+            return true;
+
+        // this implementation is more restrictive than C++ permits, might fix later, http://c-faq.com/ansi/constmismatch.html
         if ((to.const_mask & 2) < (from.const_mask & 2))
+            return false;
+
+        if (to.basic_type == IC_TYPE_VOID && to.indirection_level == 1)
+            return true;
+
+        if (to.indirection_level != from.indirection_level || to.basic_type != from.basic_type)
             return false;
 
         for (int i = 2; i <= to.indirection_level; ++i)
@@ -25,9 +33,17 @@ bool compile_implicit_conversion_impl(ic_type to, ic_type from, ic_compiler& com
             if (const_to != const_from)
                 return false;
         }
+        return true;
+    }
+    assert(!to.indirection_level); // internal
 
-        if (to.basic_type == IC_TYPE_VOID || from.basic_type == IC_TYPE_NULLPTR || to.basic_type == from.basic_type)
+    if (from.indirection_level)
+    {
+        if (to.basic_type == IC_TYPE_BOOL)
+        {
+            compiler.add_opcode(IC_OPC_B_PTR);
             return true;
+        }
         return false;
     }
 

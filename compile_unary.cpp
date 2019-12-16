@@ -44,28 +44,9 @@ ic_expr_result compile_unary(ic_expr* expr, ic_compiler& compiler, bool load_lva
     case IC_TOK_BANG:
     {
         ic_type type = compile_expr(expr->unary.expr, compiler).type;
-
-        if (type.indirection_level)
-            compiler.add_opcode(IC_OPC_LOGICAL_NOT_PTR);
-        else
-        {
-            ic_type atype = arithmetic_expr_type(type, compiler, expr->token);
-            compile_implicit_conversion(atype, type, compiler, expr->token);
-
-            switch (atype.basic_type)
-            {
-            case IC_TYPE_S32:
-                compiler.add_opcode(IC_OPC_LOGICAL_NOT_S32);
-                break;
-            case IC_TYPE_F32:
-                compiler.add_opcode(IC_OPC_LOGICAL_NOT_F32);
-                break;
-            case IC_TYPE_F64:
-                compiler.add_opcode(IC_OPC_LOGICAL_NOT_F64);
-                break;
-            }
-        }
-        return { non_pointer_type(IC_TYPE_S32), false }; // logical not pushes s32 onto an operand stack
+        compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), type, compiler, expr->token);
+        compiler.add_opcode(IC_LOGICAL_NOT);
+        return { non_pointer_type(IC_TYPE_BOOL), false };
     }
     case IC_TOK_PLUS_PLUS:
     case IC_TOK_MINUS_MINUS:

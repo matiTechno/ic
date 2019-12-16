@@ -20,18 +20,18 @@
 // I would like to support simple generics and plain struct functions
 // self-hosting
 // error messages may sometimes point slightly off, at a wrong token
-// IC_LIB_FILE
+// constant folding
 
 static_assert(sizeof(int) == 4, "sizeof(int) == 4");
 static_assert(sizeof(float) == 4, "sizeof(float) == 4");
 static_assert(sizeof(double) == 8, "sizeof(double) == 8");
 static_assert(sizeof(void*) == 8, "sizeof(void*) == 8");
 
-#define IC_MAX_ARGC 10 // todo
+#define IC_MAX_ARGC 10
 
-// important: compare and logical_not push s32 not bool
 enum ic_opcode
 {
+    IC_OPC_PUSH_S8,
     IC_OPC_PUSH_S32,
     IC_OPC_PUSH_F32,
     IC_OPC_PUSH_F64,
@@ -42,16 +42,16 @@ enum ic_opcode
     IC_OPC_SWAP,
     IC_OPC_MEMMOVE, // needed for member access of an rvalue struct
     IC_OPC_CLONE,
-    IC_OPC_CALL, // last function argument is at the top of an operand stack (order is not reversed)
+    IC_OPC_CALL,
     IC_OPC_RETURN,
-    IC_OPC_JUMP_TRUE, // expects s32, operand is popped
-    IC_OPC_JUMP_FALSE, // expects s32, operand is popped
+    IC_OPC_JUMP_TRUE,
+    IC_OPC_JUMP_FALSE,
+    IC_LOGICAL_NOT,
     IC_OPC_JUMP,
-    // operand is a BYTE index of a variable (this is to simplify string literals stuff)
     IC_OPC_ADDRESS,
     IC_OPC_ADDRESS_GLOBAL,
 
-    // order of stack operands is reversed (data before address)
+    // order of operands on the operand stack is reversed (data before address)
     // address is popped, data is left
     IC_OPC_STORE_1,
     IC_OPC_STORE_4,
@@ -70,7 +70,6 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_S32,
     IC_OPC_COMPARE_L_S32,
     IC_OPC_COMPARE_LE_S32,
-    IC_OPC_LOGICAL_NOT_S32,
     IC_OPC_NEGATE_S32,
     IC_OPC_ADD_S32,
     IC_OPC_SUB_S32,
@@ -84,7 +83,6 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_F32,
     IC_OPC_COMPARE_L_F32,
     IC_OPC_COMPARE_LE_F32,
-    IC_OPC_LOGICAL_NOT_F32,
     IC_OPC_NEGATE_F32,
     IC_OPC_ADD_F32,
     IC_OPC_SUB_F32,
@@ -97,7 +95,6 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_F64,
     IC_OPC_COMPARE_L_F64,
     IC_OPC_COMPARE_LE_F64,
-    IC_OPC_LOGICAL_NOT_F64,
     IC_OPC_NEGATE_F64,
     IC_OPC_ADD_F64,
     IC_OPC_SUB_F64,
@@ -110,7 +107,6 @@ enum ic_opcode
     IC_OPC_COMPARE_GE_PTR,
     IC_OPC_COMPARE_L_PTR,
     IC_OPC_COMPARE_LE_PTR,
-    IC_OPC_LOGICAL_NOT_PTR,
     IC_OPC_SUB_PTR_PTR,
     IC_OPC_ADD_PTR_S32,
     IC_OPC_SUB_PTR_S32,
@@ -122,6 +118,7 @@ enum ic_opcode
     IC_OPC_B_S32,
     IC_OPC_B_F32,
     IC_OPC_B_F64,
+    IC_OPC_B_PTR,
 
     IC_OPC_S8_U8,
     IC_OPC_S8_S32,

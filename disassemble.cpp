@@ -76,6 +76,10 @@ void print_bc(unsigned char* data, int offset, int size)
 
         switch (opcode)
         {
+        case IC_OPC_PUSH_S8:
+            printf("push_s8 %d", *(char*)it);
+            ++it;
+            break;
         case IC_OPC_PUSH_S32:
             printf("push_s32 %d", read_int(&it));
             break;
@@ -171,9 +175,6 @@ void print_bc(unsigned char* data, int offset, int size)
         case IC_OPC_COMPARE_LE_S32:
             printf("compare_le_s32");
             break;
-        case IC_OPC_LOGICAL_NOT_S32:
-            printf("logical_not_s32");
-            break;
         case IC_OPC_NEGATE_S32:
             printf("negate_s32");
             break;
@@ -210,9 +211,6 @@ void print_bc(unsigned char* data, int offset, int size)
         case IC_OPC_COMPARE_LE_F32:
             printf("compare_le_f32");
             break;
-        case IC_OPC_LOGICAL_NOT_F32:
-            printf("logical_not_f32");
-            break;
         case IC_OPC_NEGATE_F32:
             printf("negate_f32");
             break;
@@ -245,9 +243,6 @@ void print_bc(unsigned char* data, int offset, int size)
             break;
         case IC_OPC_COMPARE_LE_F64:
             printf("compare_le_f64");
-            break;
-        case IC_OPC_LOGICAL_NOT_F64:
-            printf("logical_not_f64");
             break;
         case IC_OPC_NEGATE_F64:
             printf("negate_f64");
@@ -282,9 +277,6 @@ void print_bc(unsigned char* data, int offset, int size)
         case IC_OPC_COMPARE_LE_PTR:
             printf("compare_le_ptr");
             break;
-        case IC_OPC_LOGICAL_NOT_PTR:
-            printf("logical_not_ptr");
-            break;
         case IC_OPC_SUB_PTR_PTR:
             printf("sub_ptr_ptr %d", read_int(&it));
             break;
@@ -308,6 +300,9 @@ void print_bc(unsigned char* data, int offset, int size)
             break;
         case IC_OPC_B_F64:
             printf("b_f64");
+            break;
+        case IC_OPC_B_PTR:
+            printf("b_ptr");
             break;
         case IC_OPC_S8_U8:
             printf("s8_u8");

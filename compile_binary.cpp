@@ -133,7 +133,7 @@ ic_expr_result compile_comparison(ic_expr* expr, ic_opcode opc_s32, ic_opcode op
             break;
         }
     }
-    return { non_pointer_type(IC_TYPE_S32), false };
+    return { non_pointer_type(IC_TYPE_BOOL), false };
 }
 
 // rhs_type is passed to avoid redundant get_expr_type() call in a case of add/sub expression
@@ -166,26 +166,26 @@ ic_expr_result compile_binary_logical(ic_expr* expr, ic_opcode opc_jump, int val
 {
     // lhs condition
     ic_type lhs_type = compile_expr(expr->binary.lhs, compiler).type;
-    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), lhs_type, compiler, expr->token);
+    compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), lhs_type, compiler, expr->token);
     compiler.add_opcode(opc_jump);
     int idx_resolve_condition = compiler.bc_size();
     compiler.add_s32({});
     // rhs condition
     ic_type rhs_type = compile_expr(expr->binary.rhs, compiler).type;
-    compile_implicit_conversion(non_pointer_type(IC_TYPE_S32), rhs_type, compiler, expr->token);
+    compile_implicit_conversion(non_pointer_type(IC_TYPE_BOOL), rhs_type, compiler, expr->token);
     compiler.add_opcode(IC_OPC_JUMP);
     int idx_resolve_end = compiler.bc_size();
     compiler.add_s32({});
     // if (lhs)
     int idx_condition = compiler.bc_size();
     compiler.bc_set_int(idx_resolve_condition, idx_condition);
-    compiler.add_opcode(IC_OPC_PUSH_S32);
-    compiler.add_s32(value_early_jump);
+    compiler.add_opcode(IC_OPC_PUSH_S8);
+    compiler.add_s8(value_early_jump);
 
     int idx_end = compiler.bc_size();
     compiler.bc_set_int(idx_resolve_end, idx_end);
 
-    return { non_pointer_type(IC_TYPE_S32), false };
+    return { non_pointer_type(IC_TYPE_BOOL), false };
 }
 
 ic_expr_result compile_pointer_offset_expr(ic_expr* ptr_expr, ic_expr* offset_expr, ic_opcode opc, ic_compiler& compiler)

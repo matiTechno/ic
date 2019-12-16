@@ -100,6 +100,11 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
 
         switch (opcode)
         {
+        case IC_OPC_PUSH_S8:
+            vm.push_op();
+            vm.top_op().s8 = *(char*)frame->ip;
+            ++frame->ip;
+            break;
         case IC_OPC_PUSH_S32:
             vm.push_op();
             vm.top_op().s32 = read_int(&frame->ip);
@@ -116,6 +121,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         {
             vm.push_op();
             vm.top_op().pointer = nullptr;
+            break;
         }
         case IC_OPC_POP:
         {
@@ -192,14 +198,14 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_JUMP_TRUE:
         {
             int idx = read_int(&frame->ip);
-            if(vm.pop_op().s32)
+            if(vm.pop_op().s8)
                 frame->ip = program.data + idx;
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
             int idx = read_int(&frame->ip);
-            if(!vm.pop_op().s32)
+            if(!vm.pop_op().s8)
                 frame->ip = program.data + idx;
             break;
         }
@@ -207,6 +213,11 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         {
             int idx = read_int(&frame->ip);
             frame->ip = program.data + idx;
+            break;
+        }
+        case IC_LOGICAL_NOT:
+        {
+            vm.top_op().s8 = !vm.top_op().s8;
             break;
         }
         case IC_OPC_ADDRESS:
@@ -284,42 +295,37 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_COMPARE_E_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 == rhs;
+            vm.top_op().s8 = vm.top_op().s32 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 != rhs;
+            vm.top_op().s8 = vm.top_op().s32 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 > rhs;
+            vm.top_op().s8 = vm.top_op().s32 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 >= rhs;
+            vm.top_op().s8 = vm.top_op().s32 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 < rhs;
+            vm.top_op().s8 = vm.top_op().s32 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_S32:
         {
             int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 <= rhs;
-            break;
-        }
-        case IC_OPC_LOGICAL_NOT_S32:
-        {
-            vm.top_op().s32 = !vm.top_op().s32;
+            vm.top_op().s8 = vm.top_op().s32 <= rhs;
             break;
         }
         case IC_OPC_NEGATE_S32:
@@ -360,42 +366,37 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_COMPARE_E_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s32 = vm.top_op().f32 == rhs;
+            vm.top_op().s8 = vm.top_op().f32 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s32 = vm.top_op().f32 != rhs;
+            vm.top_op().s8 = vm.top_op().f32 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s32 = vm.top_op().f32 > rhs;
+            vm.top_op().s8 = vm.top_op().f32 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s32 = vm.top_op().f32 >= rhs;
+            vm.top_op().s8 = vm.top_op().f32 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s32 = vm.top_op().f32 < rhs;
+            vm.top_op().s8 = vm.top_op().f32 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_F32:
         {
             float rhs = vm.pop_op().f32;
-            vm.top_op().s32 = vm.top_op().f32 <= rhs;
-            break;
-        }
-        case IC_OPC_LOGICAL_NOT_F32:
-        {
-            vm.top_op().s32 = !vm.top_op().f32;
+            vm.top_op().s8 = vm.top_op().f32 <= rhs;
             break;
         }
         case IC_OPC_NEGATE_F32:
@@ -430,42 +431,37 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_COMPARE_E_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s32 = vm.top_op().f64 == rhs;
+            vm.top_op().s8 = vm.top_op().f64 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s32 = vm.top_op().f64 != rhs;
+            vm.top_op().s8 = vm.top_op().f64 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s32 = vm.top_op().f64 > rhs;
+            vm.top_op().s8 = vm.top_op().f64 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s32 = vm.top_op().f64 >= rhs;
+            vm.top_op().s8 = vm.top_op().f64 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s32 = vm.top_op().f64 < rhs;
+            vm.top_op().s8 = vm.top_op().f64 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_F64:
         {
             double rhs = vm.pop_op().f64;
-            vm.top_op().s32 = vm.top_op().f64 <= rhs;
-            break;
-        }
-        case IC_OPC_LOGICAL_NOT_F64:
-        {
-            vm.top_op().s32 = !vm.top_op().f64;
+            vm.top_op().s8 = vm.top_op().f64 <= rhs;
             break;
         }
         case IC_OPC_NEGATE_F64:
@@ -500,42 +496,37 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_COMPARE_E_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = vm.top_op().pointer == rhs;
+            vm.top_op().s8 = vm.top_op().pointer == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = vm.top_op().pointer != rhs;
+            vm.top_op().s8 = vm.top_op().pointer != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = vm.top_op().pointer > rhs;
+            vm.top_op().s8 = vm.top_op().pointer > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = vm.top_op().pointer >= rhs;
+            vm.top_op().s8 = vm.top_op().pointer >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = vm.top_op().pointer < rhs;
+            vm.top_op().s8 = vm.top_op().pointer < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_PTR:
         {
             void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = vm.top_op().pointer <= rhs;
-            break;
-        }
-        case IC_OPC_LOGICAL_NOT_PTR:
-        {
-            vm.top_op().s32 = !vm.top_op().pointer;
+            vm.top_op().s8 = vm.top_op().pointer <= rhs;
             break;
         }
         case IC_OPC_SUB_PTR_PTR:
@@ -576,6 +567,9 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
             break;
         case IC_OPC_B_F64:
             vm.top_op().s8 = (bool)vm.top_op().f64;
+            break;
+        case IC_OPC_B_PTR:
+            vm.top_op().s8 = (bool)vm.top_op().pointer;
             break;
         case IC_OPC_S8_U8:
             vm.top_op().s8 = vm.top_op().u8;
