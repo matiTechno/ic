@@ -35,40 +35,11 @@ ic_type pointer1_type(ic_basic_type btype)
     return { btype, 1};
 }
 
-int read_int(unsigned char** buf_it)
-{
-    int v;
-    memcpy(&v, *buf_it, sizeof(int));
-    *buf_it += sizeof(int);
-    return v;
-}
-
-float read_float(unsigned char** buf_it)
-{
-    float v;
-    memcpy(&v, *buf_it, sizeof(float));
-    *buf_it += sizeof(float);
-    return v;
-}
-
-double read_double(unsigned char** buf_it)
-{
-    double v;
-    memcpy(&v, *buf_it, sizeof(double));
-    *buf_it += sizeof(double);
-    return v;
-}
-
 void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_lines, const char* err_msg)
 {
     ic_string source_line = source_lines.buf[line];
     printf("%s (line: %d, col: %d): %s\n%.*s\n%*s^\n", type == IC_PERROR ? "error" : "warning",
         line, col, err_msg, source_line.len, source_line.data, col - 1, ""); // "" this is a trick to print multiple spaces
-}
-
-int bytes_to_data_size(int bytes)
-{
-    return (bytes + sizeof(ic_data) - 1 ) / sizeof(ic_data);
 }
 
 int type_data_size(ic_type type)

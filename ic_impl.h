@@ -621,17 +621,43 @@ struct ic_deque
     }
 };
 
+inline int bytes_to_data_size(int bytes)
+{
+    return (bytes + sizeof(ic_data) - 1 ) / sizeof(ic_data);
+}
+
+inline int read_int(unsigned char** buf_it)
+{
+    int v;
+    memcpy(&v, *buf_it, sizeof(int));
+    *buf_it += sizeof(int);
+    return v;
+}
+
+inline float read_float(unsigned char** buf_it)
+{
+    float v;
+    memcpy(&v, *buf_it, sizeof(float));
+    *buf_it += sizeof(float);
+    return v;
+}
+
+inline double read_double(unsigned char** buf_it)
+{
+
+    double v;
+    memcpy(&v, *buf_it, sizeof(double));
+    *buf_it += sizeof(double);
+    return v;
+}
+
 bool string_compare(ic_string str1, ic_string str2);
 bool is_struct(ic_type type);
 bool is_void(ic_type type);
 ic_type non_pointer_type(ic_basic_type type);
 ic_type const_pointer1_type(ic_basic_type type);
 ic_type pointer1_type(ic_basic_type type);
-int read_int(unsigned char** buf_it);
-float read_float(unsigned char** buf_it);
-double read_double(unsigned char** buf_it);
 void print(ic_print_type type, int line, int col, ic_array<ic_string>& source_lines, const char* err_msg);
-int bytes_to_data_size(int bytes);
 int type_data_size(ic_type type);
 int type_byte_size(ic_type type);
 int align(int bytes, int type_size);
