@@ -120,5 +120,5 @@ void ic_program_print_disassembly(ic_program& program);
 void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size);
 void ic_buf_free(unsigned char* buf);
 void ic_vm_init(ic_vm& vm);
-void ic_vm_run(ic_vm& vm, ic_program& program);
+int ic_vm_run(ic_vm& vm, ic_program& program);
 void ic_vm_free(ic_vm& vm);

@@ -81,7 +81,7 @@ ic_stack_frame& ic_vm::top_frame()
     return stack_frames[stack_frames_size - 1];
 }
 
-void ic_vm_run(ic_vm& vm, ic_program& program)
+int ic_vm_run(ic_vm& vm, ic_program& program)
 {
     memcpy(vm.call_stack, program.data, program.strings_byte_size);
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?); clear global non string data
@@ -182,7 +182,10 @@ void ic_vm_run(ic_vm& vm, ic_program& program)
         {
             vm.pop_stack_frame();
             if (!vm.stack_frames_size)
-                return;
+            {
+                assert(vm.operand_stack_size == 1);
+                return vm.pop_op().s32;
+            }
             frame = &vm.top_frame();
             break;
         }

@@ -1,4 +1,4 @@
-void main()
+s32 main()
 {
     s32 width = 300;
     s32 height = 300;
@@ -42,4 +42,5 @@ void main()
     }
 
     write_ppm6("render_fractal.ppm", width, height, image_buf);
+    return 0;
 }

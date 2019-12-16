@@ -521,8 +521,11 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         {
             if (string_compare(function.token.string, { "main", 4 }))
             {
-                if (function.param_count != 0 || !is_void(function.return_type))
+                if (function.param_count != 0 || !(!function.return_type.indirection_level && function.return_type.basic_type == IC_TYPE_S32))
+                {
+                    print_error(function.token, memory.source_lines, "invalid main function prototype, expected 's32 main()'");
                     return false;
+                }
                 memory.active_functions.push_back(&function);
             }
             function.data_idx = -1; // this is important
@@ -530,7 +533,10 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     }
 
     if (!memory.active_functions.size)
+    {
+        printf("error: main function missing\n");
         return false;
+    }
 
     // important, active_functions.size changes during loop execution
     for (int i = 0; i < memory.active_functions.size; ++i)

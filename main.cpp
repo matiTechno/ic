@@ -63,7 +63,8 @@ void print_test(test_struct* ptr)
     printf(ptr->d);
     printf(ptr->e);
 }
-void main()
+
+s32 main()
 {
     test_struct t = host_test_value();
     print_test(&t);
@@ -84,6 +85,7 @@ void main()
 
     host_print_test(666, t2, 999);
     host_print_test_ptr(&t2);
+    return 55;
 }
 )";
 
@@ -245,7 +247,8 @@ int main(int argc, const char** argv)
         assert(success);
         ic_vm vm;
         ic_vm_init(vm);
-        ic_vm_run(vm, program);
+        int ret = ic_vm_run(vm, program);
+        printf("main() returned %d\n", ret);
         ic_vm_free(vm);
         ic_program_free(program);
         return 0;

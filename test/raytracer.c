@@ -277,7 +277,7 @@ rt_vec3 get_ray_color(rt_ray ray, rt_sphere* spheres, s32 spheres_size, s32 dept
     return add_vec3(mul_vec3_scalar(color_bot, 1.0 - t), mul_vec3_scalar(color_top, t));
 }
 
-void main()
+s32 main()
 {
     s32 width = 100;
     s32 height = 100;
@@ -395,4 +395,5 @@ void main()
     }
 
     write_ppm6("render_raytracer.ppm", width, height, image_buf);
+    return 0;
 }
