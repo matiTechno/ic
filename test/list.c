@@ -11,6 +11,7 @@ void add(lnode** it, s32 data)
 
     *it = (lnode*)malloc(sizeof(lnode));
     (*it)->data = data;
+    (*it)->next = nullptr;
 }
 
 void print(lnode* it)
