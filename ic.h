@@ -101,6 +101,7 @@ struct ic_vm
     int call_stack_size;
     int operand_stack_size;
 
+    // todo, check if these are inlined and if not how much do we get from inlining them
     void push_stack_frame(unsigned char* bytecode, int stack_size);
     void pop_stack_frame();
     ic_stack_frame& top_frame();

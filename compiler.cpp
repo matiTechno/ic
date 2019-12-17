@@ -219,11 +219,10 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
 
         compiler.add_opcode(IC_OPC_JUMP);
 
-        if(stmt->type == IC_STMT_BREAK)
-            compiler.memory->break_ops.push_back(compiler.bc_size());
+        if (stmt->type == IC_STMT_BREAK)
+            compiler.add_resolve_break_operand();
         else
-            compiler.memory->cont_ops.push_back(compiler.bc_size());
-
+            compiler.add_resolve_cont_operand();
         compiler.add_s32({});
         return IC_STMT_RESULT_BREAK_CONT;
     }
@@ -412,7 +411,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         case IC_TOK_IDENTIFIER:
         {
             bool is_global;
-            ic_var var = compiler.get_var(token.string, &is_global);
+            ic_var var = compiler.get_var(token.string, &is_global, expr->token);
             compiler.add_opcode(is_global ? IC_OPC_ADDRESS_GLOBAL : IC_OPC_ADDRESS);
             compiler.add_s32(var.idx);
 

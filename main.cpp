@@ -26,6 +26,17 @@ void host_write_ppm6(ic_data* argv, ic_data*, void*)
     fclose(file);
 }
 
+std::vector<unsigned char> load_file(const char* name);
+
+void host_read_file(ic_data* argv, ic_data*, void*)
+{
+    std::vector<unsigned char> vec = load_file((char*)argv[0].pointer);
+    void* ptr = malloc(vec.size());
+    memcpy(ptr, vec.data(), vec.size());
+    *(void**)argv[1].pointer = ptr;
+    *(int*)argv[2].pointer = vec.size();
+}
+
 void write_to_file(unsigned char* data, int size, const char* filename)
 {
     FILE* file = fopen(filename, "wb");
@@ -163,6 +174,7 @@ int main(int argc, const char** argv)
     {
         {"void write_ppm6(const s8*, s32, s32, const u8*)", host_write_ppm6},
         {"f64 random01()", host_random01},
+        {"void read_file(const s8*, u8**, s32*)", host_read_file},
         nullptr
     };
 

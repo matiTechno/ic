@@ -757,8 +757,6 @@ struct ic_compiler
 
     int bc_size()
     {
-        if (!code_gen)
-            return {};
         return memory->program_data.size;
     }
 
@@ -833,6 +831,20 @@ struct ic_compiler
         memcpy(memory->program_data.end() - size, &data, size);
     }
 
+    void add_resolve_break_operand()
+    {
+        if (!code_gen)
+            return;
+        memory->break_ops.push_back(bc_size());
+    }
+
+    void add_resolve_cont_operand()
+    {
+        if (!code_gen)
+            return;
+        memory->cont_ops.push_back(bc_size());
+    }
+
     void declare_unused_param(ic_type type)
     {
         stack_size += type_data_size(type);
@@ -891,7 +903,7 @@ struct ic_compiler
         return function;
     }
 
-    ic_var get_var(ic_string name, bool* is_global)
+    ic_var get_var(ic_string name, bool* is_global, ic_token token)
     {
         for (int i = memory->vars.size - 1; i >= 0; --i)
         {
@@ -903,7 +915,15 @@ struct ic_compiler
         }
 
         ic_var* global_var = get_global_var(name, *memory);
-        assert(global_var);
+
+        if (!global_var)
+        {
+            set_error(token, "variable with such name is not declared");
+            ic_var var;
+            var.type = non_pointer_type(IC_TYPE_S32); // returning an uninitialized type may cause a crash (_struct pointer)
+            return var;
+        }
+
         *is_global = true;
         return *global_var;
     }

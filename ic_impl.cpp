@@ -878,6 +878,10 @@ bool lex(const char* source, ic_memory& memory)
                         code = '\n';
                     else if (string_begin[1] == '0')
                         code = '\0';
+                    else if (string_begin[1] == 'r')
+                        code = '\r';
+                    else if (string_begin[1] == 't')
+                        code = '\t';
                     }
             }
             else if (len == 1)
@@ -886,7 +890,7 @@ bool lex(const char* source, ic_memory& memory)
             if (code == -1)
             {
                 print(IC_PERROR, lexer.token_line, lexer.token_col, memory.source_lines,
-                    "invalid character literal; only printable, \\n and \\0 characters are supported");
+                    "invalid character literal; only printable, \\n, \\0, \\r and \\t characters are supported");
                 return false;
             }
 
