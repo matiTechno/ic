@@ -927,7 +927,7 @@ bool lex(const char* source, ic_memory& memory)
                 while (!lexer.end() && is_identifier_char(lexer.peek()))
                     lexer.advance();
 
-                ic_string string = { token_begin, (lexer.pos() + 1) - token_begin };
+                ic_string string = { token_begin, int((lexer.pos() + 1) - token_begin) };
                 bool is_keyword = false;
                 ic_token_type token_type;
 

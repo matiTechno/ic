@@ -279,13 +279,12 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
     case IC_EXPR_SUBSCRIPT:
     {
         ic_type lhs_type = get_expr_result_type(expr->subscript.lhs, compiler);
-        ic_type rhs_type = get_expr_result_type(expr->subscript.rhs, compiler);
-        ic_type ptr_type;
+        ic_type result_type;
         if (lhs_type.indirection_level)
-            ptr_type = compile_pointer_offset_expr(expr->subscript.lhs, expr->subscript.rhs, IC_OPC_ADD_PTR_S32, compiler).type;
+            result_type = compile_pointer_offset_expr(expr->subscript.lhs, expr->subscript.rhs, IC_OPC_ADD_PTR_S32, compiler).type;
         else
-            ptr_type = compile_pointer_offset_expr(expr->subscript.rhs, expr->subscript.lhs, IC_OPC_ADD_PTR_S32, compiler).type;
-        return compile_dereference(ptr_type, compiler, load_lvalue, expr->token);
+            result_type = compile_pointer_offset_expr(expr->subscript.rhs, expr->subscript.lhs, IC_OPC_ADD_PTR_S32, compiler).type;
+        return compile_dereference(result_type, compiler, load_lvalue, expr->token);
     }
     case IC_EXPR_MEMBER_ACCESS:
     {
