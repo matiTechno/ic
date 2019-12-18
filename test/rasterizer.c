@@ -66,6 +66,9 @@ s32 get_number_str_size(const u8* str)
 {
     const u8* it = str;
 
+    if (*it == '-')
+        ++it;
+
     while (*it >= '0' && *it <= '9')
         ++it;
 
@@ -154,5 +157,71 @@ s32 main()
             continue;
         }
     }
+    s32 img_width = 1000;
+    s32 img_height = 1000;
+    u8* img_buf = (u8*)malloc(img_width * img_height * 3);
+
+    for (s32 i = 0; i < img_width * img_height * 3; ++i) // clear
+        img_buf[i] = 0;
+
+    vec3_t color;
+    color.x = 1;
+    color.y = 1;
+    color.z = 1;
+
+    for (s32 i = 0; i < faces_size; ++i)
+    {
+        for (s32 vid = 0; vid < 3; ++vid)
+        {
+            vec3_t pos0 = vertices[*(&faces[i].v1 + vid)].pos;
+            vec3_t pos1 = vertices[*( &faces[i].v1 + ((vid + 1) % 3) )].pos;
+
+            f32 xv0 = (pos0.x + 1) / 2 * img_width;
+            f32 yv0 = (pos0.y * -1 + 1) / 2 * img_height;
+            f32 xv1 = (pos1.x + 1) / 2 * img_width;
+            f32 yv1 = (pos1.y * - 1 + 1) / 2 * img_height;
+            f32 x0;
+            f32 y0;
+            f32 x1;
+            f32 y1;
+
+            if (xv0 < xv1)
+            {
+                x0 = xv0;
+                y0 = yv0;
+                x1 = xv1;
+                y1 = yv1;
+            }
+            else
+            {
+                x0 = xv1;
+                y0 = yv1;
+                x1 = xv0;
+                y1 = yv0;
+            }
+
+            for (f32 x = x0; x < x1; x += 1)
+            {
+                f32 t = (x - x0) / (x1 - x0);
+                f32 y = y0 * (1 - t) + y1 * t;
+                write_color(x + 0.5, y + 0.5, img_buf, img_width, img_height, color);
+            }
+        }
+    }
+    write_ppm6("render_triangles.ppm", img_width, img_height, img_buf);
     return 0;
+}
+
+void write_color(s32 x, s32 y, u8* img_buf, s32 img_width, s32 img_height, vec3_t color)
+{
+    if (x < 0 || x >= img_width)
+        return;
+
+    if (y < 0 || y >= img_height)
+        return;
+
+    img_buf += (y * img_width + x) * 3;
+    img_buf[0] = color.x * 255;
+    img_buf[1] = color.y * 255;
+    img_buf[2] = color.z * 255;
 }
