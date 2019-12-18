@@ -279,7 +279,7 @@ ic_expr_result compile_binary(ic_expr* expr, ic_compiler& compiler)
             compiler.add_opcode(IC_OPC_SUB_PTR_PTR);
             int size = pointed_type_byte_size(lhs_type, compiler);
 
-            if (size)
+            if (!size)
                 compiler.set_error(expr->token, "void pointers can't be subtracted");
             compiler.add_s32(size);
             return { non_pointer_type(IC_TYPE_S32), false };
