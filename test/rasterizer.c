@@ -170,6 +170,11 @@ s32 main()
     for (s32 i = 0; i < img_width * img_height; ++i)
         depth_buf[i] = -1000;
 
+    vec3_t eye_pos; // needed for specular reflections
+    eye_pos.x = 0;
+    eye_pos.y = 0;
+    eye_pos.z = 1;
+
     vec3_t lpos;
     lpos.x = 50;
     lpos.y = 100;
@@ -182,65 +187,115 @@ s32 main()
     ldir.z = 0 - lpos.z;
     ldir = normalize(ldir);
 
+    vec3_t color_diffuse;
+    color_diffuse.x = 0.02;
+    color_diffuse.y = 0.2;
+    color_diffuse.z = 0;
+
+    vec3_t color_specular;
+    color_specular.x = 0.3;
+    color_specular.y = 0.7;
+    color_specular.z = 0.7;
+
     for (s32 i = 0; i < faces_size; ++i)
     {
         vertex_t v1 = vertices[faces[i].v1];
         vertex_t v2 = vertices[faces[i].v2];
         vertex_t v3 = vertices[faces[i].v3];
 
-        // this invertes vertex pos.y and changes the winding order from CCW to CW
-        map_to_image(&v1, img_width, img_height);
-        map_to_image(&v2, img_width, img_height);
-        map_to_image(&v3, img_width, img_height);
+        vec3_t A = v1.pos;
+        vec3_t B = v2.pos;
+        vec3_t C = v3.pos;
+        // this invertes pos.y and by doing so changes the winding order from CCW to CW
+        map_to_image(&A, img_width, img_height);
+        map_to_image(&B, img_width, img_height);
+        map_to_image(&C, img_width, img_height);
 
-        f32 xmin = max(0, min(min(v1.pos.x, v2.pos.x), v3.pos.x));
-        f32 xmax = min(img_width, max(max(v1.pos.x, v2.pos.x), v3.pos.x));
-        f32 ymin = max(0, min(min(v1.pos.y, v2.pos.y), v3.pos.y));
-        f32 ymax = min(img_height, max(max(v1.pos.y, v2.pos.y), v3.pos.y));
+        f32 xmin = max(0, min(min(A.x, B.x), C.x));
+        f32 xmax = min(img_width, max(max(A.x, B.x), C.x));
+        f32 ymin = max(0, min(min(A.y, B.y), C.y));
+        f32 ymax = min(img_height, max(max(A.y, B.y), C.y));
 
-        f32 det = determinant(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, v3.pos.x, v3.pos.y);
+        f32 det = determinant(A.x, A.y, B.x, B.y, C.x, C.y);
 
         for (s32 y = ymin; y < ymax; ++y)
         {
             for (s32 x = xmin; x < xmax; ++x)
             {
-                f32 det1 = determinant(v2.pos.x, v2.pos.y, v3.pos.x, v3.pos.y, x, y);
-                f32 det2 = determinant(v3.pos.x, v3.pos.y, v1.pos.x, v1.pos.y, x, y);
-                f32 det3 = determinant(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, x, y);
+                f32 det1 = determinant(B.x, B.y, C.x, C.y, x, y);
+                f32 det2 = determinant(C.x, C.y, A.x, A.y, x, y);
+                f32 det3 = determinant(A.x, A.y, B.x, B.y, x, y);
 
                 if (det1 < 0 || det2 < 0 || det3 < 0)
                     continue;
-
                 // barycentric coordinates
                 f32 bc1 = det1 / det;
                 f32 bc2 = det2 / det;
                 f32 bc3 = det3 / det;
 
-                f32 depth = bc1 * v1.pos.z + bc2 * v2.pos.z + bc3 * v3.pos.z;
+                f32 depth = bc1 * A.z + bc2 * B.z + bc3 * C.z;
                 s32 px_idx = (s32)y * img_width + (s32)x;
 
-                if (depth > depth_buf[px_idx])
-                {
-                    depth_buf[px_idx] = depth;
-                    // phong shading
-
-                    vec3_t normal = mul_vec3_scalar(v1.normal, bc1);
-                    normal = add_vec3(normal, mul_vec3_scalar(v2.normal, bc2));
-                    normal = add_vec3(normal, mul_vec3_scalar(v3.normal, bc3));
-                    normal = normalize(normal);
-                    
-                    vec3_t neg_ldir = mul_vec3_scalar(ldir, -1);
-                    f32 in = max(0, dot(neg_ldir, normal));
-
-                    img_buf[px_idx * 3] = 255 * in;
-                    img_buf[px_idx * 3 + 1] = 255 * in;
-                    img_buf[px_idx * 3 + 2] = 255 * in;
-                }
+                if (depth < depth_buf[px_idx])
+                    continue;
+                depth_buf[px_idx] = depth;
+                // phong shading
+                // interpolate normals and normalize
+                vec3_t normal = mul_vec3_scalar(v1.normal, bc1);
+                normal = add_vec3(normal, mul_vec3_scalar(v2.normal, bc2));
+                normal = add_vec3(normal, mul_vec3_scalar(v3.normal, bc3));
+                normal = normalize(normal);
+                // interpolate positions
+                vec3_t pos = mul_vec3_scalar(v1.pos, bc1);
+                pos = add_vec3(pos, mul_vec3_scalar(v2.pos, bc2));
+                pos = add_vec3(pos, mul_vec3_scalar(v3.pos, bc3));
+                // ambient
+                vec3_t color = mul_vec3_scalar(color_diffuse, 0.02);
+                // diffuse
+                vec3_t neg_ldir = mul_vec3_scalar(ldir, -1);
+                f32 diffuse_in = max(0, dot(neg_ldir, normal));
+                color = add_vec3(color, mul_vec3_scalar(color_diffuse, diffuse_in));
+                // specular
+                vec3_t pos_eye_dir = normalize(sub_vec3(eye_pos, pos));
+                vec3_t reflected_light_dir = reflect(ldir, normal);
+                f32 specular_in = max(0, dot(reflected_light_dir, pos_eye_dir));
+                specular_in = pow(specular_in, 32);
+                color = add_vec3(color, mul_vec3_scalar(color_specular, specular_in));
+                // clamp to 1
+                color.x = min(color.x, 1);
+                color.y = min(color.y, 1);
+                color.z = min(color.z, 1);
+                // gamma compress
+                color.x = pow(color.x, 1 / 2.2);
+                color.y = pow(color.y, 1 / 2.2);
+                color.z = pow(color.z, 1 / 2.2);
+                // change to u8 representation
+                color = mul_vec3_scalar(color, 255);
+                color.x += 0.5;
+                color.y += 0.5;
+                color.z += 0.5;
+                // store
+                img_buf[px_idx * 3] = color.x;
+                img_buf[px_idx * 3 + 1] = color.y;
+                img_buf[px_idx * 3 + 2] = color.z;
             }
         }
     }
     write_ppm6("render_triangles.ppm", img_width, img_height, img_buf);
     return 0;
+}
+
+vec3_t reflect(vec3_t vec, vec3_t normal)
+{
+    return add_vec3( vec, mul_vec3_scalar(normal, -2 * dot(vec, normal)) );
+}
+
+vec3_t sub_vec3(vec3_t lhs, vec3_t rhs)
+{
+    lhs.x -= rhs.x;
+    lhs.y -= rhs.y;
+    lhs.z -= rhs.z;
+    return lhs;
 }
 
 vec3_t add_vec3(vec3_t lhs, vec3_t rhs)
@@ -259,10 +314,10 @@ vec3_t mul_vec3_scalar(vec3_t v, f32 s)
     return v;
 }
 
-void map_to_image(vertex_t* v, s32 img_width, s32 img_height)
+void map_to_image(vec3_t* pos, s32 img_width, s32 img_height)
 {
-    v->pos.x = (v->pos.x + 1) / 2 * img_width;
-    v->pos.y = (v->pos.y * -1 + 1) / 2 * img_height;
+    pos->x = (pos->x + 1) / 2 * img_width;
+    pos->y = (pos->y * -1 + 1) / 2 * img_height;
 }
 
 f32 min(f32 lhs, f32 rhs)
