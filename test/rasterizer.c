@@ -160,51 +160,82 @@ s32 main()
     s32 img_width = 1000;
     s32 img_height = 1000;
     u8* img_buf = (u8*)malloc(img_width * img_height * 3);
+    f32* depth_buf = (f32*)malloc(img_width * img_height * sizeof(f32));
 
-    for (s32 i = 0; i < img_width * img_height * 3; ++i) // clear
+    // clear buffers
+    for (s32 i = 0; i < img_width * img_height * 3; ++i)
         img_buf[i] = 0;
+    
+    // model is facing positive z direction in left-handed system, depth test passes if a new depth value is greater than the previous one
+    for (s32 i = 0; i < img_width * img_height; ++i)
+        depth_buf[i] = -1000;
 
-    vec3_t color;
-    color.x = 1;
-    color.y = 1;
-    color.z = 1;
+    vec3_t lpos;
+    lpos.x = 50;
+    lpos.y = 100;
+    lpos.z = 100;
+
+    // shine in the direction of a scene center
+    vec3_t ldir;
+    ldir.x = 0 - lpos.x;
+    ldir.y = 0 - lpos.y;
+    ldir.z = 0 - lpos.z;
+    ldir = normalize(ldir);
 
     for (s32 i = 0; i < faces_size; ++i)
     {
-        for (s32 vid = 0; vid < 3; ++vid)
+        vertex_t v1 = vertices[faces[i].v1];
+        vertex_t v2 = vertices[faces[i].v2];
+        vertex_t v3 = vertices[faces[i].v3];
+
+        // this invertes vertex pos.y and changes the winding order from CCW to CW
+        map_to_image(&v1, img_width, img_height);
+        map_to_image(&v2, img_width, img_height);
+        map_to_image(&v3, img_width, img_height);
+
+        f32 xmin = max(0, min(min(v1.pos.x, v2.pos.x), v3.pos.x));
+        f32 xmax = min(img_width, max(max(v1.pos.x, v2.pos.x), v3.pos.x));
+        f32 ymin = max(0, min(min(v1.pos.y, v2.pos.y), v3.pos.y));
+        f32 ymax = min(img_height, max(max(v1.pos.y, v2.pos.y), v3.pos.y));
+
+        f32 det = determinant(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, v3.pos.x, v3.pos.y);
+
+        for (s32 y = ymin; y < ymax; ++y)
         {
-            vec3_t pos0 = vertices[*(&faces[i].v1 + vid)].pos;
-            vec3_t pos1 = vertices[*( &faces[i].v1 + ((vid + 1) % 3) )].pos;
-
-            f32 xv0 = (pos0.x + 1) / 2 * img_width;
-            f32 yv0 = (pos0.y * -1 + 1) / 2 * img_height;
-            f32 xv1 = (pos1.x + 1) / 2 * img_width;
-            f32 yv1 = (pos1.y * - 1 + 1) / 2 * img_height;
-            f32 x0;
-            f32 y0;
-            f32 x1;
-            f32 y1;
-
-            if (xv0 < xv1)
+            for (s32 x = xmin; x < xmax; ++x)
             {
-                x0 = xv0;
-                y0 = yv0;
-                x1 = xv1;
-                y1 = yv1;
-            }
-            else
-            {
-                x0 = xv1;
-                y0 = yv1;
-                x1 = xv0;
-                y1 = yv0;
-            }
+                f32 det1 = determinant(v2.pos.x, v2.pos.y, v3.pos.x, v3.pos.y, x, y);
+                f32 det2 = determinant(v3.pos.x, v3.pos.y, v1.pos.x, v1.pos.y, x, y);
+                f32 det3 = determinant(v1.pos.x, v1.pos.y, v2.pos.x, v2.pos.y, x, y);
 
-            for (f32 x = x0; x < x1; x += 1)
-            {
-                f32 t = (x - x0) / (x1 - x0);
-                f32 y = y0 * (1 - t) + y1 * t;
-                write_color(x + 0.5, y + 0.5, img_buf, img_width, img_height, color);
+                if (det1 < 0 || det2 < 0 || det3 < 0)
+                    continue;
+
+                // barycentric coordinates
+                f32 bc1 = det1 / det;
+                f32 bc2 = det2 / det;
+                f32 bc3 = det3 / det;
+
+                f32 depth = bc1 * v1.pos.z + bc2 * v2.pos.z + bc3 * v3.pos.z;
+                s32 px_idx = (s32)y * img_width + (s32)x;
+
+                if (depth > depth_buf[px_idx])
+                {
+                    depth_buf[px_idx] = depth;
+                    // phong shading
+
+                    vec3_t normal = mul_vec3_scalar(v1.normal, bc1);
+                    normal = add_vec3(normal, mul_vec3_scalar(v2.normal, bc2));
+                    normal = add_vec3(normal, mul_vec3_scalar(v3.normal, bc3));
+                    normal = normalize(normal);
+                    
+                    vec3_t neg_ldir = mul_vec3_scalar(ldir, -1);
+                    f32 in = max(0, dot(neg_ldir, normal));
+
+                    img_buf[px_idx * 3] = 255 * in;
+                    img_buf[px_idx * 3 + 1] = 255 * in;
+                    img_buf[px_idx * 3 + 2] = 255 * in;
+                }
             }
         }
     }
@@ -212,16 +243,66 @@ s32 main()
     return 0;
 }
 
-void write_color(s32 x, s32 y, u8* img_buf, s32 img_width, s32 img_height, vec3_t color)
+vec3_t add_vec3(vec3_t lhs, vec3_t rhs)
 {
-    if (x < 0 || x >= img_width)
-        return;
+    lhs.x += rhs.x;
+    lhs.y += rhs.y;
+    lhs.z += rhs.z;
+    return lhs;
+}
 
-    if (y < 0 || y >= img_height)
-        return;
+vec3_t mul_vec3_scalar(vec3_t v, f32 s)
+{
+    v.x *= s;
+    v.y *= s;
+    v.z *= s;
+    return v;
+}
 
-    img_buf += (y * img_width + x) * 3;
-    img_buf[0] = color.x * 255;
-    img_buf[1] = color.y * 255;
-    img_buf[2] = color.z * 255;
+void map_to_image(vertex_t* v, s32 img_width, s32 img_height)
+{
+    v->pos.x = (v->pos.x + 1) / 2 * img_width;
+    v->pos.y = (v->pos.y * -1 + 1) / 2 * img_height;
+}
+
+f32 min(f32 lhs, f32 rhs)
+{
+    if (lhs < rhs)
+        return lhs;
+    return rhs;
+}
+
+f32 max(f32 lhs, f32 rhs)
+{
+    if (lhs > rhs)
+        return lhs;
+    return rhs;
+}
+
+// returns a positive value for a clockwise order
+f32 determinant(f32 ax, f32 ay, f32 bx, f32 by, f32 cx, f32 cy)
+{
+    return (cx - ax) * (by - ay) - (cy - ay) * (bx - ax);
+}
+
+f32 dot(vec3_t lhs, vec3_t rhs)
+{
+    lhs.x *= rhs.x;
+    lhs.y *= rhs.y;
+    lhs.z *= rhs.z;
+    return lhs.x + lhs.y + lhs.z;
+}
+
+f32 length(vec3_t vec)
+{
+    return sqrt(dot(vec, vec));
+}
+
+vec3_t normalize(vec3_t vec)
+{
+    f32 len = length(vec);
+    vec.x /= len;
+    vec.y /= len;
+    vec.z /= len;
+    return vec;
 }
