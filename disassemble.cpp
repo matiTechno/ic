@@ -127,6 +127,9 @@ void print_bc(unsigned char* data, int offset, int size)
         case IC_OPC_JUMP:
             printf("jump %d", read_int(&it));
             break;
+        case IC_LOGICAL_NOT:
+            printf("logical_not");
+            break;
         case IC_OPC_ADDRESS:
             printf("address %d", read_int(&it));
             break;
