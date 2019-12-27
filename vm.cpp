@@ -2,44 +2,38 @@
 
 #define IC_CALL_STACK_SIZE (1024 * 1024)
 #define IC_OPERAND_STACK_SIZE 1024
-
-struct ic_stack_frame
-{
-    unsigned char* ip;
-    int offset;
-    int size;
-};
+#define IC_STACK_FRAMES_SIZE 512
 
 void ic_vm_init(ic_vm& vm)
 {
+    vm.stack_frames = (ic_stack_frame*)malloc(IC_STACK_FRAMES_SIZE * sizeof(ic_stack_frame));
     vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
     vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
 }
 
 void ic_vm_free(ic_vm& vm)
 {
+    free(vm.stack_frames);
     free(vm.call_stack);
     free(vm.operand_stack);
 }
 
-ic_stack_frame push_stack_frame(ic_stack_frame current_frame, unsigned char* bytecode, int frame_size, ic_data* call_stack, int& call_stack_size)
+void ic_vm::push_stack_frame(unsigned char* bytecode, int stack_size)
 {
-    assert(call_stack_size + 3 + frame_size <= IC_CALL_STACK_SIZE);
-
-    call_stack[call_stack_size].pointer = current_frame.ip;
-    call_stack_size += 1;
-    call_stack[call_stack_size].s32 = current_frame.offset;
-    call_stack_size += 1;
-    call_stack[call_stack_size].s32 = current_frame.size;
-    call_stack_size += 1;
-
-    ic_stack_frame frame;
+    assert(stack_frames_size < IC_STACK_FRAMES_SIZE);
+    stack_frames_size += 1;
+    ic_stack_frame& frame = top_frame();
+    frame.size = stack_size;
+    frame.bp = call_stack_size;
     frame.ip = bytecode;
-    frame.offset = call_stack_size;
-    frame.size = frame_size;
+    call_stack_size += stack_size;
+    assert(call_stack_size <= IC_CALL_STACK_SIZE);
+}
 
-    call_stack_size += frame_size;
-    return frame;
+void ic_vm::pop_stack_frame()
+{
+    call_stack_size -= top_frame().size;
+    stack_frames_size -= 1;
 }
 
 void ic_vm::push_op(ic_data data)
@@ -82,41 +76,46 @@ ic_data* ic_vm::end_op()
     return operand_stack + operand_stack_size;
 }
 
+ic_stack_frame& ic_vm::top_frame()
+{
+    return stack_frames[stack_frames_size - 1];
+}
+
 int ic_vm_run(ic_vm& vm, ic_program& program)
 {
     memcpy(vm.call_stack, program.data, program.strings_byte_size);
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?); clear global non string data
     memset(vm.call_stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
-    int call_stack_size = program.global_data_size; // this is important
+    vm.stack_frames_size = 0;
+    vm.call_stack_size = program.global_data_size; // this is important
     vm.operand_stack_size = 0;
-    ic_stack_frame frame;
-    frame.ip = nullptr; // important, see IC_OPC_RETURN
-
-    frame = push_stack_frame(frame, program.data + program.functions[0].data_idx, program.functions[0].stack_size, vm.call_stack, call_stack_size);
+    vm.push_stack_frame(program.data + program.functions[0].data_idx, program.functions[0].stack_size);
+    assert(vm.stack_frames_size == 1);
+    ic_stack_frame* frame = &vm.stack_frames[0];
 
     for(;;)
     {
-        ic_opcode opcode = (ic_opcode)*frame.ip;
-        ++frame.ip;
+        ic_opcode opcode = (ic_opcode)*frame->ip;
+        ++frame->ip;
 
         switch (opcode)
         {
         case IC_OPC_PUSH_S8:
             vm.push_op();
-            vm.top_op().s8 = *(char*)frame.ip;
-            ++frame.ip;
+            vm.top_op().s8 = *(char*)frame->ip;
+            ++frame->ip;
             break;
         case IC_OPC_PUSH_S32:
             vm.push_op();
-            vm.top_op().s32 = read_int(&frame.ip);
+            vm.top_op().s32 = read_int(&frame->ip);
             break;
         case IC_OPC_PUSH_F32:
             vm.push_op();
-            vm.top_op().f32 = read_float(&frame.ip);
+            vm.top_op().f32 = read_float(&frame->ip);
             break;
         case IC_OPC_PUSH_F64:
             vm.push_op();
-            vm.top_op().f64 = read_double(&frame.ip);
+            vm.top_op().f64 = read_double(&frame->ip);
             break;
         case IC_OPC_PUSH_NULLPTR:
         {
@@ -131,7 +130,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_POP_MANY:
         {
-            int size = read_int(&frame.ip);
+            int size = read_int(&frame->ip);
             vm.pop_op_many(size);
             break;
         }
@@ -145,9 +144,9 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_MEMMOVE:
         {
-            void* dst = (char*)vm.end_op() - read_int(&frame.ip);
-            void* src = (char*)vm.end_op() - read_int(&frame.ip);
-            int byte_size = read_int(&frame.ip);
+            void* dst = (char*)vm.end_op() - read_int(&frame->ip);
+            void* src = (char*)vm.end_op() - read_int(&frame->ip);
+            int byte_size = read_int(&frame->ip);
             memmove(dst, src, byte_size);
             break;
         }
@@ -158,7 +157,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_CALL:
         {
-            int fun_idx = read_int(&frame.ip);
+            int fun_idx = read_int(&frame->ip);
             ic_vm_function& function = program.functions[fun_idx];
             int param_size = function.param_size;
 
@@ -178,47 +177,42 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
             }
             else
             {
-                frame = push_stack_frame(frame, program.data + function.data_idx, function.stack_size, vm.call_stack, call_stack_size);
-                memcpy(vm.call_stack + frame.offset, vm.end_op() - param_size, param_size * sizeof(ic_data));
+                vm.push_stack_frame(program.data + function.data_idx, function.stack_size);
+                frame = &vm.top_frame();
+                memcpy(vm.call_stack + frame->bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
                 vm.pop_op_many(param_size);
             }
             break;
         }
         case IC_OPC_RETURN:
         {
-            call_stack_size -= frame.size;
-            call_stack_size -= 1;
-            frame.size = vm.call_stack[call_stack_size].s32;
-            call_stack_size -= 1;
-            frame.offset = vm.call_stack[call_stack_size].s32;
-            call_stack_size -= 1;
-            frame.ip = (unsigned char*)vm.call_stack[call_stack_size].pointer;
-
-            if (!frame.ip) // no more stack frames, return from main()
+            vm.pop_stack_frame();
+            if (!vm.stack_frames_size)
             {
                 assert(vm.operand_stack_size == 1);
                 return vm.pop_op().s32;
             }
+            frame = &vm.top_frame();
             break;
         }
         case IC_OPC_JUMP_TRUE:
         {
-            int idx = read_int(&frame.ip);
+            int idx = read_int(&frame->ip);
             if(vm.pop_op().s8)
-                frame.ip = program.data + idx;
+                frame->ip = program.data + idx;
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
-            int idx = read_int(&frame.ip);
+            int idx = read_int(&frame->ip);
             if(!vm.pop_op().s8)
-                frame.ip = program.data + idx;
+                frame->ip = program.data + idx;
             break;
         }
         case IC_OPC_JUMP:
         {
-            int idx = read_int(&frame.ip);
-            frame.ip = program.data + idx;
+            int idx = read_int(&frame->ip);
+            frame->ip = program.data + idx;
             break;
         }
         case IC_LOGICAL_NOT:
@@ -228,17 +222,17 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_ADDRESS:
         {
-            int byte_offset = read_int(&frame.ip);
-            void* base_addr = vm.call_stack + frame.offset;
+            int byte_offset = read_int(&frame->ip);
+            void* base_addr = vm.call_stack + frame->bp;
             void* addr = (char*)base_addr + byte_offset;
-            assert(addr >= base_addr && addr < vm.call_stack + call_stack_size);
+            assert(addr >= base_addr && addr < vm.call_stack + vm.call_stack_size);
             vm.push_op();
             vm.top_op().pointer = addr;
             break;
         }
         case IC_OPC_ADDRESS_GLOBAL:
         {
-            int byte_offset = read_int(&frame.ip);
+            int byte_offset = read_int(&frame->ip);
             void* addr = (char*)vm.call_stack + byte_offset;
             assert(addr >= vm.call_stack && addr < vm.call_stack + program.global_data_size);
             vm.push_op();
@@ -266,7 +260,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_STORE_STRUCT:
         {
             void* dst = vm.pop_op().pointer;
-            int byte_size = read_int(&frame.ip);
+            int byte_size = read_int(&frame->ip);
             int data_size = bytes_to_data_size(byte_size);
             memcpy(dst, vm.end_op() - data_size, byte_size);
             break;
@@ -292,7 +286,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         case IC_OPC_LOAD_STRUCT:
         {
             void* ptr = vm.pop_op().pointer;
-            int byte_size = read_int(&frame.ip);
+            int byte_size = read_int(&frame->ip);
             int data_size = bytes_to_data_size(byte_size);
             vm.push_op_many(data_size);
             memcpy(vm.end_op() - data_size, ptr, byte_size);
@@ -537,7 +531,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_SUB_PTR_PTR:
         {
-            int type_byte_size = read_int(&frame.ip);
+            int type_byte_size = read_int(&frame->ip);
             assert(type_byte_size);
             void* rhs = vm.pop_op().pointer;
             vm.top_op().s32 = ((char*)vm.top_op().pointer - (char*)rhs) / type_byte_size;
@@ -545,7 +539,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_ADD_PTR_S32:
         {
-            int type_byte_size = read_int(&frame.ip);
+            int type_byte_size = read_int(&frame->ip);
             assert(type_byte_size);
             int bytes = vm.pop_op().s32 * type_byte_size;
             vm.top_op().pointer = (char*)vm.top_op().pointer + bytes;
@@ -553,7 +547,7 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_OPC_SUB_PTR_S32:
         {
-            int type_byte_size = read_int(&frame.ip);
+            int type_byte_size = read_int(&frame->ip);
             assert(type_byte_size);
             int bytes = vm.pop_op().s32 * type_byte_size;
             vm.top_op().pointer = (char*)vm.top_op().pointer - bytes;

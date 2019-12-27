@@ -85,13 +85,26 @@ struct ic_program
     int global_data_size;
 };
 
+struct ic_stack_frame
+{
+    int size;
+    int bp;
+    unsigned char* ip;
+};
+
 struct ic_vm
 {
+    ic_stack_frame* stack_frames;
     ic_data* call_stack;
     ic_data* operand_stack;
+    int stack_frames_size;
+    int call_stack_size;
     int operand_stack_size;
 
     // todo, check if these are inlined and if not how much do we get from inlining them
+    void push_stack_frame(unsigned char* bytecode, int stack_size);
+    void pop_stack_frame();
+    ic_stack_frame& top_frame();
     void push_op(ic_data data);
     void push_op();
     void push_op_many(int size);
