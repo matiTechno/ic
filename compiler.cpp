@@ -34,6 +34,12 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
             compiler.declare_unused_param(function.params[i].type);
         }
     }
+    // space for storing previous stack frame return address, base pointer, etc.
+    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
+    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
+    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
+    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
+
     ic_stmt_result result = compile_stmt(function.body, compiler);
     compiler.pop_scope();
 

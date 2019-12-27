@@ -85,23 +85,12 @@ struct ic_program
     int global_data_size;
 };
 
-struct ic_stack_frame
-{
-    int size;
-    int bp; // base pointer
-    unsigned char* ip;
-};
-
 struct ic_vm
 {
-    ic_stack_frame* stack_frames;
     ic_data* stack;
-    int stack_frames_size;
     int stack_size;
 
     // todo, check if these are inlined and if not how much do we get from inlining them
-    void push_stack_frame(unsigned char* bytecode, int size, int param_size);
-    ic_stack_frame& top_frame();
     void push(ic_data data);
     void push();
     void push_many(int size);

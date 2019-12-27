@@ -1,29 +1,23 @@
 #include "ic_impl.h"
 
 #define IC_STACK_SIZE (1024 * 1024)
-#define IC_STACK_FRAMES_SIZE 512
+
+struct ic_stack_frame
+{
+    int prev_frame_idx;
+    int size; // todo, remove this
+    int bp; // base pointer, rename to offset or something
+    unsigned char* ip;
+};
 
 void ic_vm_init(ic_vm& vm)
 {
-    vm.stack_frames = (ic_stack_frame*)malloc(IC_STACK_FRAMES_SIZE * sizeof(ic_stack_frame));
     vm.stack = (ic_data*)malloc(IC_STACK_SIZE * sizeof(ic_data));
 }
 
 void ic_vm_free(ic_vm& vm)
 {
-    free(vm.stack_frames);
     free(vm.stack);
-}
-
-void ic_vm::push_stack_frame(unsigned char* bytecode, int size, int param_size)
-{
-    assert(stack_frames_size < IC_STACK_FRAMES_SIZE);
-    stack_frames_size += 1;
-    ic_stack_frame& frame = top_frame();
-    frame.size = size;
-    frame.bp = stack_size - param_size;
-    frame.ip = bytecode;
-    push_many(size - param_size);
 }
 
 void ic_vm::push(ic_data data)
@@ -66,21 +60,20 @@ ic_data* ic_vm::end()
     return stack + stack_size;
 }
 
-ic_stack_frame& ic_vm::top_frame()
-{
-    return stack_frames[stack_frames_size - 1];
-}
-
 int ic_vm_run(ic_vm& vm, ic_program& program)
 {
     memcpy(vm.stack, program.data, program.strings_byte_size);
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?); clear global non string data
     memset(vm.stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
-    vm.stack_frames_size = 0;
     vm.stack_size = program.global_data_size; // this is important
-    vm.push_stack_frame(program.data + program.functions[0].data_idx, program.functions[0].stack_size, 0);
-    assert(vm.stack_frames_size == 1);
-    ic_stack_frame frame = vm.stack_frames[0];
+
+    ic_stack_frame frame;
+    frame.prev_frame_idx = vm.stack_size;
+    frame.size = program.functions[0].stack_size;
+    frame.bp = vm.stack_size;
+    frame.ip = program.data + program.functions[0].data_idx;
+    vm.push_many(frame.size);
+    vm.stack[frame.bp + 3].pointer = nullptr; // set return address, see IC_OPC_RETURN for why
 
     for(;;)
     {
@@ -166,22 +159,43 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
             }
             else
             {
-                vm.top_frame().ip = frame.ip; // save ip
-                vm.push_stack_frame(program.data + function.data_idx, function.stack_size, param_size);
-                frame = vm.top_frame();
+                ic_stack_frame new_frame;
+                new_frame.prev_frame_idx = vm.stack_size;
+                new_frame.size = function.stack_size;
+                new_frame.bp = vm.stack_size - param_size;
+                new_frame.ip = program.data + function.data_idx;
+
+                vm.push();
+                vm.top().s32 = frame.prev_frame_idx;
+                vm.push();
+                vm.top().s32 = frame.size;
+                vm.push();
+                vm.top().s32 = frame.bp;
+                vm.push();
+                vm.top().pointer = frame.ip;
+                vm.push_many(function.stack_size - 4 - param_size);
+
+                frame = new_frame;
             }
             break;
         }
         case IC_OPC_RETURN:
         {
+            ic_stack_frame prev_frame;
+            {
+                int idx = frame.prev_frame_idx;
+                prev_frame.prev_frame_idx = vm.stack[idx++].s32;
+                prev_frame.size = vm.stack[idx++].s32;
+                prev_frame.bp = vm.stack[idx++].s32;
+                prev_frame.ip = (unsigned char*)vm.stack[idx].pointer;
+            }
             int ret_size = vm.stack_size - (frame.bp + frame.size);
             memmove(vm.stack + frame.bp, vm.end() - ret_size, ret_size * sizeof(ic_data));
             vm.pop_many(frame.size);
-            vm.stack_frames_size -= 1;
 
-            if (!vm.stack_frames_size)
+            if (!prev_frame.ip)
                 return vm.pop().s32;
-            frame = vm.top_frame();
+            frame = prev_frame;
             break;
         }
         case IC_OPC_JUMP_TRUE:
