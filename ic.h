@@ -95,22 +95,20 @@ struct ic_stack_frame
 struct ic_vm
 {
     ic_stack_frame* stack_frames;
-    ic_data* call_stack;
-    ic_data* operand_stack;
+    ic_data* stack;
     int stack_frames_size;
-    int call_stack_size;
-    int operand_stack_size;
+    int stack_size;
 
     // todo, check if these are inlined and if not how much do we get from inlining them
-    void push_stack_frame(unsigned char* bytecode, int stack_size);
+    void push_stack_frame(unsigned char* bytecode, int size, int param_size);
     ic_stack_frame& top_frame();
-    void push_op(ic_data data);
-    void push_op();
-    void push_op_many(int size);
-    ic_data pop_op();
-    void pop_op_many(int size);
-    ic_data& top_op();
-    ic_data* end_op();
+    void push(ic_data data);
+    void push();
+    void push_many(int size);
+    ic_data pop();
+    void pop_many(int size);
+    ic_data& top();
+    ic_data* end();
 };
 
 bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_decl host_decl);

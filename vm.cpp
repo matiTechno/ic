@@ -1,73 +1,69 @@
 #include "ic_impl.h"
 
-#define IC_CALL_STACK_SIZE (1024 * 1024)
-#define IC_OPERAND_STACK_SIZE 1024
+#define IC_STACK_SIZE (1024 * 1024)
 #define IC_STACK_FRAMES_SIZE 512
 
 void ic_vm_init(ic_vm& vm)
 {
     vm.stack_frames = (ic_stack_frame*)malloc(IC_STACK_FRAMES_SIZE * sizeof(ic_stack_frame));
-    vm.call_stack = (ic_data*)malloc(IC_CALL_STACK_SIZE * sizeof(ic_data));
-    vm.operand_stack = (ic_data*)malloc(IC_OPERAND_STACK_SIZE * sizeof(ic_data));
+    vm.stack = (ic_data*)malloc(IC_STACK_SIZE * sizeof(ic_data));
 }
 
 void ic_vm_free(ic_vm& vm)
 {
     free(vm.stack_frames);
-    free(vm.call_stack);
-    free(vm.operand_stack);
+    free(vm.stack);
 }
 
-void ic_vm::push_stack_frame(unsigned char* bytecode, int size)
+void ic_vm::push_stack_frame(unsigned char* bytecode, int size, int param_size)
 {
     assert(stack_frames_size < IC_STACK_FRAMES_SIZE);
     stack_frames_size += 1;
     ic_stack_frame& frame = top_frame();
     frame.size = size;
-    frame.bp = call_stack_size;
+    frame.bp = stack_size - param_size;
     frame.ip = bytecode;
-    call_stack_size += size;
-    assert(call_stack_size <= IC_CALL_STACK_SIZE);
+    push_many(size - param_size);
 }
 
-void ic_vm::push_op(ic_data data)
+void ic_vm::push(ic_data data)
 {
-    assert(operand_stack_size < IC_OPERAND_STACK_SIZE);
-    operand_stack[operand_stack_size] = data;
-    operand_stack_size += 1;
+    assert(stack_size < IC_STACK_SIZE);
+    stack[stack_size] = data;
+    stack_size += 1;
 }
 
-void ic_vm::push_op()
+void ic_vm::push()
 {
-    assert(operand_stack_size < IC_OPERAND_STACK_SIZE);
-    operand_stack_size += 1;
+    assert(stack_size < IC_STACK_SIZE);
+    stack_size += 1;
 }
 
-void ic_vm::push_op_many(int size)
+void ic_vm::push_many(int size)
 {
-    operand_stack_size += size;
-    assert(operand_stack_size <= IC_OPERAND_STACK_SIZE);
+    stack_size += size;
+    assert(stack_size <= IC_STACK_SIZE);
 }
 
-ic_data ic_vm::pop_op()
+ic_data ic_vm::pop()
 {
-    operand_stack_size -= 1;
-    return operand_stack[operand_stack_size];
+    stack_size -= 1;
+    return stack[stack_size];
 }
 
-void ic_vm::pop_op_many(int size)
+void ic_vm::pop_many(int size)
 {
-    operand_stack_size -= size;
+    stack_size -= size;
 }
 
-ic_data& ic_vm::top_op()
+ic_data& ic_vm::top()
 {
-    return operand_stack[operand_stack_size - 1];
+    return stack[stack_size - 1];
 }
 
-ic_data* ic_vm::end_op()
+ic_data* ic_vm::end()
 {
-    return operand_stack + operand_stack_size;
+    return stack + stack_size;
 }
 
 ic_stack_frame& ic_vm::top_frame()
@@ -77,13 +73,12 @@ ic_stack_frame& ic_vm::top_frame()
 
 int ic_vm_run(ic_vm& vm, ic_program& program)
 {
-    memcpy(vm.call_stack, program.data, program.strings_byte_size);
+    memcpy(vm.stack, program.data, program.strings_byte_size);
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?); clear global non string data
-    memset(vm.call_stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
+    memset(vm.stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
     vm.stack_frames_size = 0;
-    vm.call_stack_size = program.global_data_size; // this is important
-    vm.operand_stack_size = 0;
-    vm.push_stack_frame(program.data + program.functions[0].data_idx, program.functions[0].stack_size);
+    vm.stack_size = program.global_data_size; // this is important
+    vm.push_stack_frame(program.data + program.functions[0].data_idx, program.functions[0].stack_size, 0);
     assert(vm.stack_frames_size == 1);
     ic_stack_frame frame = vm.stack_frames[0];
 
@@ -95,58 +90,58 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         switch (opcode)
         {
         case IC_OPC_PUSH_S8:
-            vm.push_op();
-            vm.top_op().s8 = *(char*)frame.ip;
+            vm.push();
+            vm.top().s8 = *(char*)frame.ip;
             ++frame.ip;
             break;
         case IC_OPC_PUSH_S32:
-            vm.push_op();
-            vm.top_op().s32 = read_int(&frame.ip);
+            vm.push();
+            vm.top().s32 = read_int(&frame.ip);
             break;
         case IC_OPC_PUSH_F32:
-            vm.push_op();
-            vm.top_op().f32 = read_float(&frame.ip);
+            vm.push();
+            vm.top().f32 = read_float(&frame.ip);
             break;
         case IC_OPC_PUSH_F64:
-            vm.push_op();
-            vm.top_op().f64 = read_double(&frame.ip);
+            vm.push();
+            vm.top().f64 = read_double(&frame.ip);
             break;
         case IC_OPC_PUSH_NULLPTR:
         {
-            vm.push_op();
-            vm.top_op().pointer = nullptr;
+            vm.push();
+            vm.top().pointer = nullptr;
             break;
         }
         case IC_OPC_POP:
         {
-            vm.pop_op();
+            vm.pop();
             break;
         }
         case IC_OPC_POP_MANY:
         {
             int size = read_int(&frame.ip);
-            vm.pop_op_many(size);
+            vm.pop_many(size);
             break;
         }
         case IC_OPC_SWAP:
         {
-            ic_data top = vm.top_op();
-            ic_data* second = vm.end_op() - 2;
-            vm.top_op() = *second;
+            ic_data top = vm.top();
+            ic_data* second = vm.end() - 2;
+            vm.top() = *second;
             *second = top;
             break;
         }
         case IC_OPC_MEMMOVE:
         {
-            void* dst = (char*)vm.end_op() - read_int(&frame.ip);
-            void* src = (char*)vm.end_op() - read_int(&frame.ip);
+            void* dst = (char*)vm.end() - read_int(&frame.ip);
+            void* src = (char*)vm.end() - read_int(&frame.ip);
             int byte_size = read_int(&frame.ip);
             memmove(dst, src, byte_size);
             break;
         }
         case IC_OPC_CLONE:
         {
-            vm.push_op(vm.top_op());
+            vm.push(vm.top());
             break;
         }
         case IC_OPC_CALL:
@@ -157,52 +152,49 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
 
             if (function.host_impl)
             {
-                int vidx = vm.end_op() - param_size - vm.operand_stack;
+                int vidx = vm.end() - param_size - vm.stack;
                 int push_size = function.return_size - param_size;
 
                 if (push_size > 0)
-                    vm.push_op_many(push_size);
+                    vm.push_many(push_size);
 
-                ic_data* v = vm.operand_stack + vidx;
+                ic_data* v = vm.stack + vidx;
                 function.callback(v, v, function.host_data);
 
                 if(push_size < 0)
-                    vm.pop_op_many(-push_size);
+                    vm.pop_many(-push_size);
             }
             else
             {
                 vm.top_frame().ip = frame.ip; // save ip
-                vm.push_stack_frame(program.data + function.data_idx, function.stack_size);
+                vm.push_stack_frame(program.data + function.data_idx, function.stack_size, param_size);
                 frame = vm.top_frame();
-                memcpy(vm.call_stack + frame.bp, vm.end_op() - param_size, param_size * sizeof(ic_data));
-                vm.pop_op_many(param_size);
             }
             break;
         }
         case IC_OPC_RETURN:
         {
-            vm.call_stack_size -= frame.size;
+            int ret_size = vm.stack_size - (frame.bp + frame.size);
+            memmove(vm.stack + frame.bp, vm.end() - ret_size, ret_size * sizeof(ic_data));
+            vm.pop_many(frame.size);
             vm.stack_frames_size -= 1;
 
             if (!vm.stack_frames_size)
-            {
-                assert(vm.operand_stack_size == 1);
-                return vm.pop_op().s32;
-            }
+                return vm.pop().s32;
             frame = vm.top_frame();
             break;
         }
         case IC_OPC_JUMP_TRUE:
         {
             int idx = read_int(&frame.ip);
-            if(vm.pop_op().s8)
+            if(vm.pop().s8)
                 frame.ip = program.data + idx;
             break;
         }
         case IC_OPC_JUMP_FALSE:
         {
             int idx = read_int(&frame.ip);
-            if(!vm.pop_op().s8)
+            if(!vm.pop().s8)
                 frame.ip = program.data + idx;
             break;
         }
@@ -214,419 +206,419 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         }
         case IC_LOGICAL_NOT:
         {
-            vm.top_op().s8 = !vm.top_op().s8;
+            vm.top().s8 = !vm.top().s8;
             break;
         }
         case IC_OPC_ADDRESS:
         {
             int byte_offset = read_int(&frame.ip);
-            void* base_addr = vm.call_stack + frame.bp;
+            ic_data* base_addr = vm.stack + frame.bp;
             void* addr = (char*)base_addr + byte_offset;
-            assert(addr >= base_addr && addr < vm.call_stack + vm.call_stack_size);
-            vm.push_op();
-            vm.top_op().pointer = addr;
+            assert(addr >= base_addr && addr < base_addr + frame.size);
+            vm.push();
+            vm.top().pointer = addr;
             break;
         }
         case IC_OPC_ADDRESS_GLOBAL:
         {
             int byte_offset = read_int(&frame.ip);
-            void* addr = (char*)vm.call_stack + byte_offset;
-            assert(addr >= vm.call_stack && addr < vm.call_stack + program.global_data_size);
-            vm.push_op();
-            vm.top_op().pointer = addr;
+            void* addr = (char*)vm.stack + byte_offset;
+            assert(addr >= vm.stack && addr < vm.stack + program.global_data_size);
+            vm.push();
+            vm.top().pointer = addr;
             break;
         }
         case IC_OPC_STORE_1:
         {
-            void* ptr = vm.pop_op().pointer;
-            *(char*)ptr = vm.top_op().s8;
+            void* ptr = vm.pop().pointer;
+            *(char*)ptr = vm.top().s8;
             break;
         }
         case IC_OPC_STORE_4:
         {
-            void* ptr = vm.pop_op().pointer;
-            *(int*)ptr = vm.top_op().s32;
+            void* ptr = vm.pop().pointer;
+            *(int*)ptr = vm.top().s32;
             break;
         }
         case IC_OPC_STORE_8:
         {
-            void* ptr = vm.pop_op().pointer;
-            *(double*)ptr = vm.top_op().f64;
+            void* ptr = vm.pop().pointer;
+            *(double*)ptr = vm.top().f64;
             break;
         }
         case IC_OPC_STORE_STRUCT:
         {
-            void* dst = vm.pop_op().pointer;
+            void* dst = vm.pop().pointer;
             int byte_size = read_int(&frame.ip);
             int data_size = bytes_to_data_size(byte_size);
-            memcpy(dst, vm.end_op() - data_size, byte_size);
+            memcpy(dst, vm.end() - data_size, byte_size);
             break;
         }
         case IC_OPC_LOAD_1:
         {
-            void* ptr = vm.top_op().pointer;
-            vm.top_op().s8 = *(char*)ptr;
+            void* ptr = vm.top().pointer;
+            vm.top().s8 = *(char*)ptr;
             break;
         }
         case IC_OPC_LOAD_4:
         {
-            void* ptr = vm.top_op().pointer;
-            vm.top_op().s32 = *(int*)ptr;
+            void* ptr = vm.top().pointer;
+            vm.top().s32 = *(int*)ptr;
             break;
         }
         case IC_OPC_LOAD_8:
         {
-            void* ptr = vm.top_op().pointer;
-            vm.top_op().f64 = *(double*)ptr;
+            void* ptr = vm.top().pointer;
+            vm.top().f64 = *(double*)ptr;
             break;
         }
         case IC_OPC_LOAD_STRUCT:
         {
-            void* ptr = vm.pop_op().pointer;
+            void* ptr = vm.pop().pointer;
             int byte_size = read_int(&frame.ip);
             int data_size = bytes_to_data_size(byte_size);
-            vm.push_op_many(data_size);
-            memcpy(vm.end_op() - data_size, ptr, byte_size);
+            vm.push_many(data_size);
+            memcpy(vm.end() - data_size, ptr, byte_size);
             break;
         }
         case IC_OPC_COMPARE_E_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 == rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s8 = vm.top().s32 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 != rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s8 = vm.top().s32 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 > rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s8 = vm.top().s32 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 >= rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s8 = vm.top().s32 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 < rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s8 = vm.top().s32 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s8 = vm.top_op().s32 <= rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s8 = vm.top().s32 <= rhs;
             break;
         }
         case IC_OPC_NEGATE_S32:
         {
-            vm.top_op().s32 = -vm.top_op().s32;
+            vm.top().s32 = -vm.top().s32;
             break;
         }
         case IC_OPC_ADD_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s32 += rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s32 += rhs;
             break;
         }
         case IC_OPC_SUB_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s32 -= rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s32 -= rhs;
             break;
         }
         case IC_OPC_MUL_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s32 *= rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s32 *= rhs;
             break;
         }
         case IC_OPC_DIV_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s32 /= rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s32 /= rhs;
             break;
         }
         case IC_OPC_MODULO_S32:
         {
-            int rhs = vm.pop_op().s32;
-            vm.top_op().s32 = vm.top_op().s32 % rhs;
+            int rhs = vm.pop().s32;
+            vm.top().s32 = vm.top().s32 % rhs;
             break;
         }
         case IC_OPC_COMPARE_E_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 == rhs;
+            float rhs = vm.pop().f32;
+            vm.top().s8 = vm.top().f32 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 != rhs;
+            float rhs = vm.pop().f32;
+            vm.top().s8 = vm.top().f32 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 > rhs;
+            float rhs = vm.pop().f32;
+            vm.top().s8 = vm.top().f32 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 >= rhs;
+            float rhs = vm.pop().f32;
+            vm.top().s8 = vm.top().f32 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 < rhs;
+            float rhs = vm.pop().f32;
+            vm.top().s8 = vm.top().f32 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().s8 = vm.top_op().f32 <= rhs;
+            float rhs = vm.pop().f32;
+            vm.top().s8 = vm.top().f32 <= rhs;
             break;
         }
         case IC_OPC_NEGATE_F32:
         {
-            vm.top_op().f32 = -vm.top_op().f32;
+            vm.top().f32 = -vm.top().f32;
             break;
         }
         case IC_OPC_ADD_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().f32 += rhs;
+            float rhs = vm.pop().f32;
+            vm.top().f32 += rhs;
             break;
         }
         case IC_OPC_SUB_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().f32 -= rhs;
+            float rhs = vm.pop().f32;
+            vm.top().f32 -= rhs;
             break;
         }
         case IC_OPC_MUL_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().f32 *= rhs;
+            float rhs = vm.pop().f32;
+            vm.top().f32 *= rhs;
             break;
         }
         case IC_OPC_DIV_F32:
         {
-            float rhs = vm.pop_op().f32;
-            vm.top_op().f32 /= rhs;
+            float rhs = vm.pop().f32;
+            vm.top().f32 /= rhs;
             break;
         }
         case IC_OPC_COMPARE_E_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 == rhs;
+            double rhs = vm.pop().f64;
+            vm.top().s8 = vm.top().f64 == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 != rhs;
+            double rhs = vm.pop().f64;
+            vm.top().s8 = vm.top().f64 != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 > rhs;
+            double rhs = vm.pop().f64;
+            vm.top().s8 = vm.top().f64 > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 >= rhs;
+            double rhs = vm.pop().f64;
+            vm.top().s8 = vm.top().f64 >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 < rhs;
+            double rhs = vm.pop().f64;
+            vm.top().s8 = vm.top().f64 < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().s8 = vm.top_op().f64 <= rhs;
+            double rhs = vm.pop().f64;
+            vm.top().s8 = vm.top().f64 <= rhs;
             break;
         }
         case IC_OPC_NEGATE_F64:
         {
-            vm.top_op().f64 = -vm.top_op().f64;
+            vm.top().f64 = -vm.top().f64;
             break;
         }
         case IC_OPC_ADD_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().f64 += rhs;
+            double rhs = vm.pop().f64;
+            vm.top().f64 += rhs;
             break;
         }
         case IC_OPC_SUB_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().f64 -= rhs;
+            double rhs = vm.pop().f64;
+            vm.top().f64 -= rhs;
             break;
         }
         case IC_OPC_MUL_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().f64 *= rhs;
+            double rhs = vm.pop().f64;
+            vm.top().f64 *= rhs;
             break;
         }
         case IC_OPC_DIV_F64:
         {
-            double rhs = vm.pop_op().f64;
-            vm.top_op().f64 /= rhs;
+            double rhs = vm.pop().f64;
+            vm.top().f64 /= rhs;
             break;
         }
         case IC_OPC_COMPARE_E_PTR:
         {
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer == rhs;
+            void* rhs = vm.pop().pointer;
+            vm.top().s8 = vm.top().pointer == rhs;
             break;
         }
         case IC_OPC_COMPARE_NE_PTR:
         {
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer != rhs;
+            void* rhs = vm.pop().pointer;
+            vm.top().s8 = vm.top().pointer != rhs;
             break;
         }
         case IC_OPC_COMPARE_G_PTR:
         {
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer > rhs;
+            void* rhs = vm.pop().pointer;
+            vm.top().s8 = vm.top().pointer > rhs;
             break;
         }
         case IC_OPC_COMPARE_GE_PTR:
         {
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer >= rhs;
+            void* rhs = vm.pop().pointer;
+            vm.top().s8 = vm.top().pointer >= rhs;
             break;
         }
         case IC_OPC_COMPARE_L_PTR:
         {
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer < rhs;
+            void* rhs = vm.pop().pointer;
+            vm.top().s8 = vm.top().pointer < rhs;
             break;
         }
         case IC_OPC_COMPARE_LE_PTR:
         {
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s8 = vm.top_op().pointer <= rhs;
+            void* rhs = vm.pop().pointer;
+            vm.top().s8 = vm.top().pointer <= rhs;
             break;
         }
         case IC_OPC_SUB_PTR_PTR:
         {
             int type_byte_size = read_int(&frame.ip);
             assert(type_byte_size);
-            void* rhs = vm.pop_op().pointer;
-            vm.top_op().s32 = ((char*)vm.top_op().pointer - (char*)rhs) / type_byte_size;
+            void* rhs = vm.pop().pointer;
+            vm.top().s32 = ((char*)vm.top().pointer - (char*)rhs) / type_byte_size;
             break;
         }
         case IC_OPC_ADD_PTR_S32:
         {
             int type_byte_size = read_int(&frame.ip);
             assert(type_byte_size);
-            int bytes = vm.pop_op().s32 * type_byte_size;
-            vm.top_op().pointer = (char*)vm.top_op().pointer + bytes;
+            int bytes = vm.pop().s32 * type_byte_size;
+            vm.top().pointer = (char*)vm.top().pointer + bytes;
             break;
         }
         case IC_OPC_SUB_PTR_S32:
         {
             int type_byte_size = read_int(&frame.ip);
             assert(type_byte_size);
-            int bytes = vm.pop_op().s32 * type_byte_size;
-            vm.top_op().pointer = (char*)vm.top_op().pointer - bytes;
+            int bytes = vm.pop().s32 * type_byte_size;
+            vm.top().pointer = (char*)vm.top().pointer - bytes;
             break;
         }
         case IC_OPC_B_S8:
-            vm.top_op().s8 = (bool)vm.top_op().s8;
+            vm.top().s8 = (bool)vm.top().s8;
             break;
         case IC_OPC_B_U8:
-            vm.top_op().s8 = (bool)vm.top_op().u8;
+            vm.top().s8 = (bool)vm.top().u8;
             break;
         case IC_OPC_B_S32:
-            vm.top_op().s8 = (bool)vm.top_op().s32;
+            vm.top().s8 = (bool)vm.top().s32;
             break;
         case IC_OPC_B_F32:
-            vm.top_op().s8 = (bool)vm.top_op().f32;
+            vm.top().s8 = (bool)vm.top().f32;
             break;
         case IC_OPC_B_F64:
-            vm.top_op().s8 = (bool)vm.top_op().f64;
+            vm.top().s8 = (bool)vm.top().f64;
             break;
         case IC_OPC_B_PTR:
-            vm.top_op().s8 = (bool)vm.top_op().pointer;
+            vm.top().s8 = (bool)vm.top().pointer;
             break;
         case IC_OPC_S8_U8:
-            vm.top_op().s8 = vm.top_op().u8;
+            vm.top().s8 = vm.top().u8;
             break;
         case IC_OPC_S8_S32:
-            vm.top_op().s8 = vm.top_op().s32;
+            vm.top().s8 = vm.top().s32;
             break;
         case IC_OPC_S8_F32:
-            vm.top_op().s8 = vm.top_op().f32;
+            vm.top().s8 = vm.top().f32;
             break;
         case IC_OPC_S8_F64:
-            vm.top_op().s8 = vm.top_op().f64;
+            vm.top().s8 = vm.top().f64;
             break;
         case IC_OPC_U8_S8:
-            vm.top_op().u8 = vm.top_op().s8;
+            vm.top().u8 = vm.top().s8;
             break;
         case IC_OPC_U8_S32:
-            vm.top_op().u8 = vm.top_op().s32;
+            vm.top().u8 = vm.top().s32;
             break;
         case IC_OPC_U8_F32:
-            vm.top_op().u8 = vm.top_op().f32;
+            vm.top().u8 = vm.top().f32;
             break;
         case IC_OPC_U8_F64:
-            vm.top_op().u8 = vm.top_op().f64;
+            vm.top().u8 = vm.top().f64;
             break;
         case IC_OPC_S32_S8:
-            vm.top_op().s32 = vm.top_op().s8;
+            vm.top().s32 = vm.top().s8;
             break;
         case IC_OPC_S32_U8:
-            vm.top_op().s32 = vm.top_op().u8;
+            vm.top().s32 = vm.top().u8;
             break;
         case IC_OPC_S32_F32:
-            vm.top_op().s32 = vm.top_op().f32;
+            vm.top().s32 = vm.top().f32;
             break;
         case IC_OPC_S32_F64:
-            vm.top_op().s32 = vm.top_op().f64;
+            vm.top().s32 = vm.top().f64;
             break;
         case IC_OPC_F32_S8:
-            vm.top_op().f32 = vm.top_op().s8;
+            vm.top().f32 = vm.top().s8;
             break;
         case IC_OPC_F32_U8:
-            vm.top_op().f32 = vm.top_op().u8;
+            vm.top().f32 = vm.top().u8;
             break;
         case IC_OPC_F32_S32:
-            vm.top_op().f32 = vm.top_op().s32;
+            vm.top().f32 = vm.top().s32;
             break;
         case IC_OPC_F32_F64:
-            vm.top_op().f32 = vm.top_op().f64;
+            vm.top().f32 = vm.top().f64;
             break;
         case IC_OPC_F64_S8:
-            vm.top_op().f64 = vm.top_op().s8;
+            vm.top().f64 = vm.top().s8;
             break;
         case IC_OPC_F64_U8:
-            vm.top_op().f64 = vm.top_op().u8;
+            vm.top().f64 = vm.top().u8;
             break;
         case IC_OPC_F64_S32:
-            vm.top_op().f64 = vm.top_op().s32;
+            vm.top().f64 = vm.top().s32;
             break;
         case IC_OPC_F64_F32:
-            vm.top_op().f64 = vm.top_op().f32;
+            vm.top().f64 = vm.top().f32;
             break;
         default:
             assert(false);
