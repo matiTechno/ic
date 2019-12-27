@@ -88,7 +88,7 @@ struct ic_program
 struct ic_stack_frame
 {
     int size;
-    int bp;
+    int bp; // base pointer
     unsigned char* ip;
 };
 
@@ -103,7 +103,6 @@ struct ic_vm
 
     // todo, check if these are inlined and if not how much do we get from inlining them
     void push_stack_frame(unsigned char* bytecode, int stack_size);
-    void pop_stack_frame();
     ic_stack_frame& top_frame();
     void push_op(ic_data data);
     void push_op();
