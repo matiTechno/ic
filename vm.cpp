@@ -4,9 +4,7 @@
 
 struct ic_stack_frame
 {
-    int prev_frame_idx;
-    int size; // todo, remove this
-    int bp; // base pointer, rename to offset or something
+    int bp; // replace with actual pointer
     unsigned char* ip;
 };
 
@@ -66,14 +64,11 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
     // todo, is memset 0 setting all values to 0? (e.g. is double with all bits zero 0?); clear global non string data
     memset(vm.stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
     vm.stack_size = program.global_data_size; // this is important
-
+    vm.push_many(3); // main() return value, bp, ip
+    vm.top().pointer = nullptr; // set a return address, see IC_OPC_RETURN for a why
     ic_stack_frame frame;
-    frame.prev_frame_idx = vm.stack_size;
-    frame.size = program.functions[0].stack_size;
     frame.bp = vm.stack_size;
     frame.ip = program.data + program.functions[0].data_idx;
-    vm.push_many(frame.size);
-    vm.stack[frame.bp + 3].pointer = nullptr; // set return address, see IC_OPC_RETURN for why
 
     for(;;)
     {
@@ -103,6 +98,16 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         {
             vm.push();
             vm.top().pointer = nullptr;
+            break;
+        }
+        case IC_OPC_PUSH:
+        {
+            vm.push();
+            break;
+        }
+        case IC_OPC_PUSH_MANY:
+        {
+            vm.push_many(read_int(&frame.ip));
             break;
         }
         case IC_OPC_POP:
@@ -141,61 +146,32 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
         {
             int fun_idx = read_int(&frame.ip);
             ic_vm_function& function = program.functions[fun_idx];
-            int param_size = function.param_size;
 
             if (function.host_impl)
             {
-                int vidx = vm.end() - param_size - vm.stack;
-                int push_size = function.return_size - param_size;
-
-                if (push_size > 0)
-                    vm.push_many(push_size);
-
-                ic_data* v = vm.stack + vidx;
-                function.callback(v, v, function.host_data);
-
-                if(push_size < 0)
-                    vm.pop_many(-push_size);
+                ic_data* argv = vm.end() - function.param_size;
+                ic_data* retv = argv - function.return_size;
+                function.callback(argv, retv, function.host_data);
             }
             else
             {
-                ic_stack_frame new_frame;
-                new_frame.prev_frame_idx = vm.stack_size;
-                new_frame.size = function.stack_size;
-                new_frame.bp = vm.stack_size - param_size;
-                new_frame.ip = program.data + function.data_idx;
-
-                vm.push();
-                vm.top().s32 = frame.prev_frame_idx;
-                vm.push();
-                vm.top().s32 = frame.size;
                 vm.push();
                 vm.top().s32 = frame.bp;
                 vm.push();
                 vm.top().pointer = frame.ip;
-                vm.push_many(function.stack_size - 4 - param_size);
-
-                frame = new_frame;
+                frame.bp = vm.stack_size;
+                frame.ip = program.data + function.data_idx;
             }
             break;
         }
         case IC_OPC_RETURN:
         {
-            ic_stack_frame prev_frame;
-            {
-                int idx = frame.prev_frame_idx;
-                prev_frame.prev_frame_idx = vm.stack[idx++].s32;
-                prev_frame.size = vm.stack[idx++].s32;
-                prev_frame.bp = vm.stack[idx++].s32;
-                prev_frame.ip = (unsigned char*)vm.stack[idx].pointer;
-            }
-            int ret_size = vm.stack_size - (frame.bp + frame.size);
-            memmove(vm.stack + frame.bp, vm.end() - ret_size, ret_size * sizeof(ic_data));
-            vm.pop_many(frame.size);
+            vm.stack_size = frame.bp;
+            frame.ip = (unsigned char*)vm.pop().pointer;
+            frame.bp = vm.pop().s32;
 
-            if (!prev_frame.ip)
-                return vm.pop().s32;
-            frame = prev_frame;
+            if (!frame.ip)
+                return vm.top().s32;
             break;
         }
         case IC_OPC_JUMP_TRUE:
@@ -228,7 +204,6 @@ int ic_vm_run(ic_vm& vm, ic_program& program)
             int byte_offset = read_int(&frame.ip);
             ic_data* base_addr = vm.stack + frame.bp;
             void* addr = (char*)base_addr + byte_offset;
-            assert(addr >= base_addr && addr < base_addr + frame.size);
             vm.push();
             vm.top().pointer = addr;
             break;

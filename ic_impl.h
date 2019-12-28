@@ -29,6 +29,12 @@ static_assert(sizeof(void*) == 8, "sizeof(void*) == 8");
 
 #define IC_MAX_ARGC 10
 
+// calling convention:
+// caller: pushes space for a return value, pushes arguments, issues call
+// VM call: pushes ip and bp, sets ip and bp to new values
+// callee: pushes space for local variables, issues return
+// VM return: sets sp to bp, pops and restores ip and bp
+// caller: pops function arguments, do something with a return value
 enum ic_opcode
 {
     IC_OPC_PUSH_S8,
@@ -36,7 +42,8 @@ enum ic_opcode
     IC_OPC_PUSH_F32,
     IC_OPC_PUSH_F64,
     IC_OPC_PUSH_NULLPTR,
-
+    IC_OPC_PUSH,
+    IC_OPC_PUSH_MANY,
     IC_OPC_POP,
     IC_OPC_POP_MANY,
     IC_OPC_SWAP,
@@ -437,7 +444,6 @@ struct ic_function
         {
             ic_stmt* body;
             int data_idx;
-            int stack_size;
         };
     };
 };
@@ -738,6 +744,7 @@ struct ic_compiler
     int max_stack_size;
     int loop_count;
     bool error;
+    int return_byte_idx;
 
     void set_error(ic_token token, const char* err_msg)
     {
@@ -843,12 +850,6 @@ struct ic_compiler
         if (!code_gen)
             return;
         memory->cont_ops.push_back(bc_size());
-    }
-
-    void declare_unused_param(ic_type type)
-    {
-        stack_size += type_data_size(type);
-        max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
     }
 
     ic_var declare_var(ic_type type, ic_string name, ic_token token)

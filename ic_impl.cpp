@@ -49,8 +49,9 @@ int type_data_size(ic_type type)
         assert(type._struct->defined);
         return bytes_to_data_size(type._struct->byte_size);
     }
-    assert(!is_void(type));
     assert(type.basic_type != IC_TYPE_NULLPTR);
+    if (is_void(type))
+        return 0;
     return 1;
 }
 
@@ -579,16 +580,13 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             vmfun.host_data = fun.host_function->host_data;
             vmfun.hash = hash_string(fun.host_function->prototype_str);
             vmfun.origin = fun.origin;
-            vmfun.return_size = is_void(fun.return_type) ? 0 : type_data_size(fun.return_type);
+            vmfun.return_size = type_data_size(fun.return_type);
             // make sure there is no hash collision with previously initialized vm functions
             for(int j = 0; j < i; ++j)
                 assert(vmfun.hash != program.functions[j].hash);
         }
         else
-        {
             vmfun.data_idx = fun.data_idx;
-            vmfun.stack_size = fun.stack_size;
-        }
     }
     return true;
 }

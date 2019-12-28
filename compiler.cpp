@@ -7,7 +7,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     assert(!memory.vars.size);
     assert(!memory.break_ops.size);
     assert(!memory.cont_ops.size);
-
+    function.data_idx = memory.program_data.size;
     ic_compiler compiler;
     compiler.memory = &memory;
     compiler.function = &function;
@@ -16,32 +16,39 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     compiler.max_stack_size = 0;
     compiler.loop_count = 0;
     compiler.error = false;
-
-    if (code_gen)
-        function.data_idx = memory.program_data.size;
+    int param_byte_idx = -2 * sizeof(ic_data); // skip previous stack frame metadata
     compiler.push_scope();
 
-    for (int i = 0; i < function.param_count; ++i)
+    for (int i = function.param_count - 1; i >= 0; --i)
     {
         ic_param& param = function.params[i];
-
-        if(param.name.data)
-            compiler.declare_var(param.type, param.name, function.token); // todo, param.token
-        else
+        param_byte_idx -= type_data_size(param.type) * sizeof(ic_data);
+        
+        if (param.name.data)
         {
-            compiler.warn(function.token, "unused function parameter"); // todo, param.token would be better
-            // even if unused must be declared to work with VM
-            compiler.declare_unused_param(function.params[i].type);
+            for (int x = 0; x < memory.vars.size; ++x)
+            {
+                if (string_compare(memory.vars.buf[x].name, param.name))
+                    compiler.set_error(function.token, "each parameter must have a unique identifier"); // todo, param.token would be better
+            }
+            ic_var var;
+            var.idx = param_byte_idx;
+            var.name = param.name;
+            var.type = param.type;
+            memory.vars.push_back(var);
         }
+        else
+            compiler.warn(function.token, "unused function parameter"); // same
     }
-    // space for storing previous stack frame return address, base pointer, etc.
-    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
-    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
-    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
-    compiler.declare_unused_param(non_pointer_type(IC_TYPE_F64));
 
+    compiler.return_byte_idx = param_byte_idx - type_data_size(function.return_type) * sizeof(ic_data);
+    // allocate stack space for local variables; todo, don't emit instruction if stack size is 0
+    compiler.add_opcode(IC_OPC_PUSH_MANY);
+    int idx_resolve_push = compiler.bc_size();
+    compiler.add_s32({});
     ic_stmt_result result = compile_stmt(function.body, compiler);
     compiler.pop_scope();
+    compiler.bc_set_int(idx_resolve_push, compiler.max_stack_size);
 
     if (!is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
         compiler.set_error(function.token, "all branches of a non-void return type function must return a value");
@@ -49,7 +56,6 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     if(is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
         compiler.add_opcode(IC_OPC_RETURN);
 
-    function.stack_size = compiler.max_stack_size;
     return !compiler.error;
 }
 
@@ -209,7 +215,10 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         {
             ic_expr_result result = compile_expr(stmt->_return.expr, compiler);
             compile_implicit_conversion(return_type, result.type, compiler, stmt->token);
-            // don't pop the result, VM passes it to a parent stack_frame
+            compiler.add_opcode(IC_OPC_ADDRESS);
+            compiler.add_s32(compiler.return_byte_idx);
+            compile_store(return_type, compiler); // store return value in a space allocated by a caller
+            compile_pop_expr_result({ return_type, false }, compiler);
         }
         else if (!is_void(return_type))
             compiler.set_error(stmt->token, "function with a non-void return type must return a value");
@@ -390,14 +399,28 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
         int argc = 0;
         int idx;
         ic_function* function = compiler.get_function(expr->token.string, &idx, expr->token);
+
+        int return_size = type_data_size(function->return_type);
+        // allocate space for a return value, this is a part of a VM calling convention
+        if (return_size == 1)
+            compiler.add_opcode(IC_OPC_PUSH);
+        else if (return_size)
+        {
+            compiler.add_opcode(IC_OPC_PUSH_MANY);
+            compiler.add_s32(return_size);
+        }
+
+        int param_size = 0;
         ic_expr* expr_arg = expr->function_call.arg;
 
         while (expr_arg)
         {
             ic_type arg_type = compile_expr(expr_arg, compiler).type;
-            compile_implicit_conversion(function->params[argc].type, arg_type, compiler, expr_arg->token);
+            ic_type param_type = function->params[argc].type;
+            compile_implicit_conversion(param_type, arg_type, compiler, expr_arg->token);
             expr_arg = expr_arg->next;
             ++argc;
+            param_size += type_data_size(param_type);
         }
 
         if (argc != function->param_count)
@@ -405,6 +428,8 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
 
         compiler.add_opcode(IC_OPC_CALL);
         compiler.add_s32(idx);
+        compiler.add_opcode(IC_OPC_POP_MANY);
+        compiler.add_s32(param_size);
         return { function->return_type, false };
     }
     case IC_EXPR_PRIMARY:

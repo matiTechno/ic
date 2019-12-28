@@ -51,7 +51,6 @@ void ic_program_print_disassembly(ic_program& program)
 
             int size = end_idx - fun.data_idx;
             printf("bytecode_size: %d\n", size);
-            printf("stack_size: %d\n", fun.stack_size);
             print_bc(program.data, fun.data_idx, size);
         }
         printf("\n");
@@ -91,6 +90,12 @@ void print_bc(unsigned char* data, int offset, int size)
             break;
         case IC_OPC_PUSH_NULLPTR:
             printf("push_nullptr");
+            break;
+        case IC_OPC_PUSH:
+            printf("push");
+            break;
+        case IC_OPC_PUSH_MANY:
+            printf("push_many %d", read_int(&it));
             break;
         case IC_OPC_POP:
             printf("pop");

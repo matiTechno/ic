@@ -15,7 +15,6 @@ union ic_data
     void* pointer;
 };
 
-// write to retv only after reading all the arguments
 // returning struct: *(copmlex*)retv = value;
 using ic_host_function_ptr = void(*)(ic_data* argv, ic_data* retv, void* host_data);
 
@@ -59,11 +58,7 @@ struct ic_vm_function
     int param_size;
     union
     {
-        struct
-        {
-            int data_idx;
-            int stack_size;
-        };
+        int data_idx;
         struct
         {
             ic_host_function_ptr callback;
@@ -88,7 +83,7 @@ struct ic_program
 struct ic_vm
 {
     ic_data* stack;
-    int stack_size;
+    int stack_size; // replace with pointer
 
     // todo, check if these are inlined and if not how much do we get from inlining them
     void push(ic_data data);
