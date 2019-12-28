@@ -55,7 +55,6 @@ struct ic_host_decl
 struct ic_vm_function
 {
     bool host_impl;
-    int param_size;
     union
     {
         int data_idx;
@@ -66,6 +65,7 @@ struct ic_vm_function
             unsigned int hash;
             int origin;
             int return_size;
+            int param_size;
         };
     };
 };
@@ -83,16 +83,16 @@ struct ic_program
 struct ic_vm
 {
     ic_data* stack;
-    int stack_size; // replace with pointer
+    ic_data* sp; // stack pointer
+    ic_data* bp; // base pointer
+    unsigned char* ip; // instruction pointer
 
-    // todo, check if these are inlined and if not how much do we get from inlining them
-    void push(ic_data data);
+    // todo, make sure these are inlined
     void push();
     void push_many(int size);
     ic_data pop();
     void pop_many(int size);
     ic_data& top();
-    ic_data* end();
 };
 
 bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_decl host_decl);

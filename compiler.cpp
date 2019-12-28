@@ -16,7 +16,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     compiler.max_stack_size = 0;
     compiler.loop_count = 0;
     compiler.error = false;
-    int param_byte_idx = -2 * sizeof(ic_data); // skip previous stack frame metadata
+    int param_byte_idx = -2 * sizeof(ic_data); // skip previous stack frame bp and ip (return address)
     compiler.push_scope();
 
     for (int i = function.param_count - 1; i >= 0; --i)

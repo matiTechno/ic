@@ -29,12 +29,12 @@ static_assert(sizeof(void*) == 8, "sizeof(void*) == 8");
 
 #define IC_MAX_ARGC 10
 
-// calling convention:
+// calling convention
 // caller: pushes space for a return value, pushes arguments, issues call
-// VM call: pushes ip and bp, sets ip and bp to new values
+// VM call: pushes bp and ip, sets bp to sp, sets ip to a call operand
 // callee: pushes space for local variables, issues return
 // VM return: sets sp to bp, pops and restores ip and bp
-// caller: pops function arguments, do something with a return value
+// caller: pops function arguments, uses or pops the returned value
 enum ic_opcode
 {
     IC_OPC_PUSH_S8,

@@ -569,10 +569,6 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         ic_function& fun = *memory.active_functions.buf[i];
         ic_vm_function& vmfun = program.functions[i];
         vmfun.host_impl = fun.type == IC_FUN_HOST;
-        vmfun.param_size = 0;
-
-        for (int j = 0; j < fun.param_count; ++j)
-            vmfun.param_size += type_data_size(fun.params[j].type);
 
         if (vmfun.host_impl)
         {
@@ -581,6 +577,11 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             vmfun.hash = hash_string(fun.host_function->prototype_str);
             vmfun.origin = fun.origin;
             vmfun.return_size = type_data_size(fun.return_type);
+            vmfun.param_size = 0;
+
+            for (int j = 0; j < fun.param_count; ++j)
+                vmfun.param_size += type_data_size(fun.params[j].type);
+
             // make sure there is no hash collision with previously initialized vm functions
             for(int j = 0; j < i; ++j)
                 assert(vmfun.hash != program.functions[j].hash);
@@ -962,7 +963,6 @@ bool lex(const char* source, ic_memory& memory)
 
 // these parsing functions must always terminate loops on EOF token and
 // never early return (there are some exceptions) to not leave behind any invalid pointers;
-// I don't like this code, it feels bad.
 
 #define IC_CMASK_MSB 7
 

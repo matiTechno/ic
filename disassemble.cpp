@@ -3,7 +3,6 @@
 
 void print_bc(unsigned char* data, int offset, int size);
 
-// todo, bounds checking
 void ic_program_print_disassembly(ic_program& program)
 {
     printf("program disassmbly\n");
@@ -27,13 +26,13 @@ void ic_program_print_disassembly(ic_program& program)
         ic_vm_function& fun = program.functions[i];
         printf("function id: %d\n", i);
         printf("host_impl: %d\n", fun.host_impl);
-        printf("param_size: %d\n", fun.param_size);
 
         if (fun.host_impl)
         {
             printf("hash: %x\n", fun.hash);
             printf("origin: %d\n", fun.origin);
             printf("return_size: %d\n", fun.return_size);
+            printf("param_size: %d\n", fun.param_size);
         }
         else
         {
@@ -60,11 +59,9 @@ void ic_program_print_disassembly(ic_program& program)
 void print_bc(unsigned char* data, int offset, int size)
 {
     printf("bytecode:\n");
-
     unsigned char* it = data + offset;
     int line = 0;
 
-    // todo, bounds checking
     while (it < data + offset + size)
     {
         int byte_id = it - data;
