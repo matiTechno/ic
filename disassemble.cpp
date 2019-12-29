@@ -1,12 +1,12 @@
 #include <stdio.h>
 #include "ic_impl.h"
 
-void print_bc(unsigned char* data, int data_size, int strings_byte_size);
+void print_instructions(unsigned char* bytecode, int bytecode_size, int strings_byte_size);
 
 void ic_program_print_disassembly(ic_program& program)
 {
-    printf("program disassmbly\n");
     printf("functions_size: %d\n", program.functions_size);
+    printf("bytecode_size (includes strings): %d\n", program.bytecode_size);
     printf("strings_byte_size: %d\n", program.strings_byte_size);
     printf("global_data_size: %d\n", program.global_data_size);
     printf("strings: ");
@@ -14,60 +14,34 @@ void ic_program_print_disassembly(ic_program& program)
 
     while (str_idx < program.strings_byte_size)
     {
-        str_idx += printf("%s", program.data + str_idx);
+        str_idx += printf("%s", program.bytecode + str_idx);
         str_idx += 1; // skip null character
         printf(" ");
     }
 
-    printf("\n\n");
-    print_bc(program.data, program.data_size, program.strings_byte_size);
+    printf("\nfunctions:\n\n");
 
-    /*
     for (int i = 0; i < program.functions_size; ++i)
     {
-        ic_vm_function& fun = program.functions[i];
-        printf("function id: %d\n", i);
-        printf("host_impl: %d\n", fun.host_impl);
-
-        if (fun.host_impl)
-        {
-            printf("hash: %x\n", fun.hash);
-            printf("origin: %d\n", fun.origin);
-            printf("return_size: %d\n", fun.return_size);
-            printf("param_size: %d\n", fun.param_size);
-        }
-        else
-        {
-            int end_idx = 0;
-            for (int x = i + 1; x < program.functions_size; ++x)
-            {
-                ic_vm_function& fun = program.functions[x];
-                if (fun.host_impl)
-                    continue;
-                end_idx = fun.data_idx;
-                break;
-            }
-            if (!end_idx)
-                end_idx = program.data_size;
-
-            int size = end_idx - fun.data_idx;
-            printf("bytecode_size: %d\n", size);
-            print_bc(program.data, fun.data_idx, size);
-        }
-        printf("\n");
+        ic_vm_function& function = program.functions[i];
+        printf("id: %d\n", i);
+        printf("hash: %x\n", function.hash);
+        printf("origin: %d\n", function.origin);
+        printf("return_size: %d\n", function.return_size);
+        printf("param_size: %d\n\n", function.param_size);
     }
-    */
+
+    print_instructions(program.bytecode, program.bytecode_size, program.strings_byte_size);
 }
 
-void print_bc(unsigned char* data, int data_size, int strings_byte_size)
+void print_instructions(unsigned char* bytecode, int bytecode_size, int strings_byte_size)
 {
-    printf("bytecode:\n");
-    unsigned char* it = data + strings_byte_size;
+    printf("instructions:\n");
+    unsigned char* it = bytecode + strings_byte_size;
 
-    while (it < data + data_size)
+    while (it < bytecode + bytecode_size)
     {
-        int byte_id = it - data;
-        printf("%-8d", byte_id);
+        printf("%-8d", (int)(it - bytecode));
         ic_opcode opcode = (ic_opcode)*it;
         ++it;
 

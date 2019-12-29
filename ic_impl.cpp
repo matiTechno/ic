@@ -135,11 +135,11 @@ void read_bytes(void* dst, unsigned char** buf_it, int bytes)
 
 void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size)
 {
-    size = sizeof(ic_program) + program.data_size + program.functions_size * sizeof(ic_vm_function);
+    size = sizeof(ic_program) + program.bytecode_size + program.functions_size * sizeof(ic_vm_function);
     buf = (unsigned char*)malloc(size);
     unsigned char* buf_it = buf;
     write_bytes(&buf_it, &program, sizeof(ic_program));
-    write_bytes(&buf_it, program.data, program.data_size);
+    write_bytes(&buf_it, program.bytecode, program.bytecode_size);
     for(int i = 0; i < program.functions_size; ++i)
         write_bytes(&buf_it, program.functions + i, sizeof(ic_vm_function));
 }
@@ -237,8 +237,8 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
     assert(buf);
     unsigned char* buf_it = buf;
     read_bytes(&program, &buf_it, sizeof(program));
-    program.data = (unsigned char*)malloc(program.data_size);
-    read_bytes(program.data, &buf_it, program.data_size);
+    program.bytecode = (unsigned char*)malloc(program.bytecode_size);
+    read_bytes(program.bytecode, &buf_it, program.bytecode_size);
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
     for (int i = 0; i < program.functions_size; ++i)
@@ -257,7 +257,7 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
 
 void ic_program_free(ic_program& program)
 {
-    free(program.data);
+    free(program.bytecode);
     free(program.functions);
 }
 
@@ -352,7 +352,7 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser, ic
     {
         if (!lex(it->prototype_str, memory))
             return false;
-        assert(!memory.program_data.size); // internal error check
+        assert(!memory.bytecode.size); // internal error check
         parser.token_it = memory.tokens.buf;
         ic_function function;
         function.type = IC_FUN_HOST;
@@ -412,7 +412,7 @@ bool load_host_structures(const char* source, ic_parser& parser, ic_memory& memo
 
     if (!lex(source, memory))
         return false;
-     assert(!memory.program_data.size); // internal error check
+     assert(!memory.bytecode.size); // internal error check
      parser.token_it = memory.tokens.buf;
 
      while (parser.get_token().type != IC_TOK_EOF)
@@ -453,10 +453,12 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             return false;
     }
 
+    assert(!memory.bytecode.size);
+
     if (!lex(source, memory))
         return false;
 
-    program.strings_byte_size = memory.program_data.size;
+    program.strings_byte_size = memory.bytecode.size;
     program.global_data_size = bytes_to_data_size(program.strings_byte_size);
     parser.token_it = memory.tokens.buf;
 
@@ -545,9 +547,9 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
 
     for (int op_idx : memory.call_ops)
     {
-        int fun_idx = memory.program_data.buf[op_idx];
+        int fun_idx = memory.bytecode.buf[op_idx];
         int instr_idx = memory.active_source_functions.buf[fun_idx]->instr_idx;
-        memcpy(memory.program_data.buf + op_idx, &instr_idx, sizeof(int));
+        memcpy(memory.bytecode.buf + op_idx, &instr_idx, sizeof(int));
     }
 
     // compile inactive functions for a code corectness, these won't be included in a returned program
@@ -560,8 +562,8 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         if (!compile_function(function, memory, false))
             return false;
     }
-    program.data_size = memory.program_data.size;
-    program.data = memory.program_data.tansfer();
+    program.bytecode_size = memory.bytecode.size;
+    program.bytecode = memory.bytecode.tansfer();
     program.functions_size = memory.active_host_functions.size;
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
@@ -698,7 +700,6 @@ static ic_keyword _keywords[] = {
 bool lex(const char* source, ic_memory& memory)
 {
     assert(source);
-    memory.program_data.clear();
     memory.tokens.clear();
     memory.source_lines.clear();
     {
@@ -837,13 +838,13 @@ bool lex(const char* source, ic_memory& memory)
             }
 
             // todo, if the same string literal already exists, reuse it
-            int idx_begin = memory.program_data.size;
+            int idx_begin = memory.bytecode.size;
             lexer.add_token_number(IC_TOK_STRING_LITERAL, idx_begin);
             const char* string_begin = token_begin + 1; // skip first "
             int len = lexer.pos() - string_begin; // this doesn't count last "
-            memory.program_data.resize(idx_begin + len + 1);
-            memcpy(memory.program_data.buf + idx_begin, string_begin, len);
-            memory.program_data.back() = '\0';
+            memory.bytecode.resize(idx_begin + len + 1);
+            memcpy(memory.bytecode.buf + idx_begin, string_begin, len);
+            memory.bytecode.back() = '\0';
             break;
         }
         case '\'':

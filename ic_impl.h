@@ -648,7 +648,6 @@ inline float read_float(unsigned char** buf_it)
 
 inline double read_double(unsigned char** buf_it)
 {
-
     double v;
     memcpy(&v, *buf_it, sizeof(double));
     *buf_it += sizeof(double);
@@ -683,7 +682,7 @@ struct ic_memory
     ic_array<ic_token> tokens;
     ic_array<ic_function*> active_source_functions;
     ic_array<ic_function*> active_host_functions;
-    ic_array<unsigned char> program_data;
+    ic_array<unsigned char> bytecode;
     ic_array<ic_function> functions;
     ic_array<ic_var> global_vars;
     ic_array<ic_scope> scopes;
@@ -700,7 +699,7 @@ struct ic_memory
         tokens.init();
         active_source_functions.init();
         active_host_functions.init();
-        program_data.init();
+        bytecode.init();
         functions.init();
         global_vars.init();
         scopes.init();
@@ -718,7 +717,7 @@ struct ic_memory
         tokens.free();
         active_source_functions.free();
         active_host_functions.free();
-        program_data.free();
+        bytecode.free();
         functions.free();
         global_vars.free();
         scopes.free();
@@ -771,14 +770,14 @@ struct ic_compiler
 
     int bc_size()
     {
-        return memory->program_data.size;
+        return memory->bytecode.size;
     }
 
     void bc_set_int(int idx, int data)
     {
         if (!code_gen)
             return;
-        memcpy(memory->program_data.buf + idx, &data, sizeof(int));
+        memcpy(memory->bytecode.buf + idx, &data, sizeof(int));
     }
 
     void push_scope()
@@ -801,22 +800,22 @@ struct ic_compiler
         assert(opcode >= 0 && opcode <= 255);
         if (!code_gen)
             return;
-        memory->program_data.push_back(opcode);
+        memory->bytecode.push_back(opcode);
     }
 
     void add_s8(char data)
     {
         if (!code_gen)
             return;
-        memory->program_data.push_back();
-        *(char*)&memory->program_data.back() = data;
+        memory->bytecode.push_back();
+        *(char*)&memory->bytecode.back() = data;
     }
 
     void add_u8(unsigned char data)
     {
         if (!code_gen)
             return;
-        memory->program_data.push_back(data);
+        memory->bytecode.push_back(data);
     }
 
     void add_s32(int data)
@@ -824,16 +823,16 @@ struct ic_compiler
         if (!code_gen)
             return;
         int size = sizeof(int);
-        memory->program_data.resize(memory->program_data.size + size);
-        memcpy(memory->program_data.end() - size, &data, size);
+        memory->bytecode.resize(memory->bytecode.size + size);
+        memcpy(memory->bytecode.end() - size, &data, size);
     }
     void add_f32(float data)
     {
         if (!code_gen)
             return;
         int size = sizeof(float);
-        memory->program_data.resize(memory->program_data.size + size);
-        memcpy(memory->program_data.end() - size, &data, size);
+        memory->bytecode.resize(memory->bytecode.size + size);
+        memcpy(memory->bytecode.end() - size, &data, size);
     }
 
     void add_f64(double data)
@@ -841,8 +840,8 @@ struct ic_compiler
         if (!code_gen)
             return;
         int size = sizeof(double);
-        memory->program_data.resize(memory->program_data.size + size);
-        memcpy(memory->program_data.end() - size, &data, size);
+        memory->bytecode.resize(memory->bytecode.size + size);
+        memcpy(memory->bytecode.end() - size, &data, size);
     }
 
     void add_resolve_break_operand()

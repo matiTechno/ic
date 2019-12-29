@@ -15,10 +15,9 @@ union ic_data
     void* pointer;
 };
 
-// returning a struct: *(struct_type*)retv = value;
-using ic_callback = void(*)(ic_data* argv, ic_data* retv, void* host_data);
+using ic_callback = void(*)(ic_data* argv, ic_data* retv, void* host_data); // returning a struct: *(struct_type*)retv = value;
 
-// these are helpful if a function has struct parameters
+// these are helpful if a callback has struct parameters
 
 inline void* ic_get_arg(ic_data*& argv, int size)
 {
@@ -65,11 +64,11 @@ struct ic_vm_function
 
 struct ic_program
 {
+    unsigned char* bytecode;
     ic_vm_function* functions;
-    unsigned char* data;
     int functions_size;
+    int bytecode_size;
     int strings_byte_size;
-    int data_size;
     int global_data_size;
 };
 

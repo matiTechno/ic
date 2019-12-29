@@ -7,7 +7,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     assert(!memory.vars.size);
     assert(!memory.break_ops.size);
     assert(!memory.cont_ops.size);
-    function.instr_idx = memory.program_data.size;
+    function.instr_idx = memory.bytecode.size;
     ic_compiler compiler;
     compiler.memory = &memory;
     compiler.function = &function;
