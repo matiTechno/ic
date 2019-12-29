@@ -50,6 +50,7 @@ enum ic_opcode
     IC_OPC_MEMMOVE, // needed for member access of an rvalue struct
     IC_OPC_CLONE,
     IC_OPC_CALL,
+    IC_OPC_CALL_HOST,
     IC_OPC_RETURN,
     IC_OPC_JUMP_TRUE,
     IC_OPC_JUMP_FALSE,
@@ -443,7 +444,7 @@ struct ic_function
         struct
         {
             ic_stmt* body;
-            int data_idx;
+            int instr_idx;
         };
     };
 };
@@ -680,7 +681,8 @@ struct ic_memory
     ic_deque<ic_struct, 100> structs;
     ic_array<ic_string> source_lines;
     ic_array<ic_token> tokens;
-    ic_array<ic_function*> active_functions;
+    ic_array<ic_function*> active_source_functions;
+    ic_array<ic_function*> active_host_functions;
     ic_array<unsigned char> program_data;
     ic_array<ic_function> functions;
     ic_array<ic_var> global_vars;
@@ -688,6 +690,7 @@ struct ic_memory
     ic_array<ic_var> vars;
     ic_array<int> break_ops;
     ic_array<int> cont_ops;
+    ic_array<int> call_ops;
 
     void init()
     {
@@ -695,7 +698,8 @@ struct ic_memory
         structs.init();
         source_lines.init();
         tokens.init();
-        active_functions.init();
+        active_source_functions.init();
+        active_host_functions.init();
         program_data.init();
         functions.init();
         global_vars.init();
@@ -703,6 +707,7 @@ struct ic_memory
         vars.init();
         break_ops.init();
         cont_ops.init();
+        call_ops.init();
     }
 
     void free()
@@ -711,7 +716,8 @@ struct ic_memory
         structs.free();
         source_lines.free();
         tokens.free();
-        active_functions.free();
+        active_source_functions.free();
+        active_host_functions.free();
         program_data.free();
         functions.free();
         global_vars.free();
@@ -719,6 +725,7 @@ struct ic_memory
         vars.free();
         break_ops.free();
         cont_ops.free();
+        call_ops.free();
     }
 
     // add a padding so the next allocation is aligned to double (the largest type this code is using)
@@ -852,6 +859,13 @@ struct ic_compiler
         memory->cont_ops.push_back(bc_size());
     }
 
+    void add_resolve_call_operand()
+    {
+        if (!code_gen)
+            return;
+        memory->call_ops.push_back(bc_size());
+    }
+
     ic_var declare_var(ic_type type, ic_string name, ic_token token)
     {
         assert(memory->scopes.size);
@@ -890,17 +904,19 @@ struct ic_compiler
         if (!code_gen)
             return function;
 
-        for(int i = 0; i < memory->active_functions.size; ++i)
+        ic_array<ic_function*>& active_functions = function->type == IC_FUN_HOST ? memory->active_host_functions : memory->active_source_functions;
+
+        for(int i = 0; i < active_functions.size; ++i)
         {
-            ic_function* active = memory->active_functions.buf[i];
+            ic_function* active = active_functions.buf[i];
             if (active == function)
             {
                 *idx = i;
                 return function;
             }
         }
-        *idx = memory->active_functions.size;
-        memory->active_functions.push_back(function);
+        *idx = active_functions.size;
+        active_functions.push_back(function);
         return function;
     }
 

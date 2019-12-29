@@ -229,7 +229,7 @@ int main(int argc, const char** argv)
         unsigned char* buf;
         int size;
         ic_program_serialize(program, buf, size);
-        write_to_file(buf, size, "bytecode.bc");
+        write_to_file(buf, size, "bytecode");
         ic_buf_free(buf);
         ic_program_free(program);
         return 0;

@@ -7,7 +7,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     assert(!memory.vars.size);
     assert(!memory.break_ops.size);
     assert(!memory.cont_ops.size);
-    function.data_idx = memory.program_data.size;
+    function.instr_idx = memory.program_data.size;
     ic_compiler compiler;
     compiler.memory = &memory;
     compiler.function = &function;
@@ -422,12 +422,21 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             ++argc;
             param_size += type_data_size(param_type);
         }
-
         if (argc != function->param_count)
             compiler.set_error(expr->token, "the number of arguments does not match the number of parameters");
 
-        compiler.add_opcode(IC_OPC_CALL);
-        compiler.add_s32(idx);
+        if (function->type == IC_FUN_SOURCE)
+        {
+            compiler.add_opcode(IC_OPC_CALL);
+            // call operand will be set to active_source_functions[idx]->instr_idx after compiling all functions
+            compiler.add_resolve_call_operand();
+            compiler.add_s32(idx);
+        }
+        else
+        {
+            compiler.add_opcode(IC_OPC_CALL_HOST);
+            compiler.add_s32(idx);
+        }
         compiler.add_opcode(IC_OPC_POP_MANY);
         compiler.add_s32(param_size);
         return { function->return_type, false };

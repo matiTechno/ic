@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include "ic_impl.h"
 
-void print_bc(unsigned char* data, int offset, int size);
+void print_bc(unsigned char* data, int data_size, int strings_byte_size);
 
 void ic_program_print_disassembly(ic_program& program)
 {
@@ -20,7 +20,9 @@ void ic_program_print_disassembly(ic_program& program)
     }
 
     printf("\n\n");
+    print_bc(program.data, program.data_size, program.strings_byte_size);
 
+    /*
     for (int i = 0; i < program.functions_size; ++i)
     {
         ic_vm_function& fun = program.functions[i];
@@ -54,19 +56,18 @@ void ic_program_print_disassembly(ic_program& program)
         }
         printf("\n");
     }
+    */
 }
 
-void print_bc(unsigned char* data, int offset, int size)
+void print_bc(unsigned char* data, int data_size, int strings_byte_size)
 {
     printf("bytecode:\n");
-    unsigned char* it = data + offset;
-    int line = 0;
+    unsigned char* it = data + strings_byte_size;
 
-    while (it < data + offset + size)
+    while (it < data + data_size)
     {
         int byte_id = it - data;
         printf("%-8d", byte_id);
-        ++line;
         ic_opcode opcode = (ic_opcode)*it;
         ++it;
 
@@ -116,6 +117,9 @@ void print_bc(unsigned char* data, int offset, int size)
             break;
         case IC_OPC_CALL:
             printf("call %d", read_int(&it));
+            break;
+        case IC_OPC_CALL_HOST:
+            printf("call_host %d", read_int(&it));
             break;
         case IC_OPC_RETURN:
             printf("return");

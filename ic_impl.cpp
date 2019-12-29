@@ -246,9 +246,6 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
         ic_vm_function& fun = program.functions[i];
         read_bytes(&fun, &buf_it, sizeof(ic_vm_function));
 
-        if (!fun.host_impl)
-            continue;
-
         if (fun.origin == IC_LIB_CORE)
             resolve_vm_function(fun, _core_lib);
         else if (fun.origin == IC_USER_FUNCTION)
@@ -527,32 +524,36 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
                     print_error(function.token, memory.source_lines, "invalid main function prototype, expected 's32 main()'");
                     return false;
                 }
-                memory.active_functions.push_back(&function);
+                memory.active_source_functions.push_back(&function);
             }
-            function.data_idx = -1; // this is important
+            function.instr_idx = -1; // this is important
         }
     }
 
-    if (!memory.active_functions.size)
+    if (!memory.active_source_functions.size)
     {
         printf("error: main function missing\n");
         return false;
     }
 
-    // important, active_functions.size changes during loop execution
-    for (int i = 0; i < memory.active_functions.size; ++i)
+    // important, size changes inside a loop
+    for (int i = 0; i < memory.active_source_functions.size; ++i)
     {
-        if (memory.active_functions.buf[i]->type == IC_FUN_SOURCE)
-        {
-            if (!compile_function(*memory.active_functions.buf[i], memory, true))
-                return false;
-        }
+        if (!compile_function(*memory.active_source_functions.buf[i], memory, true))
+            return false;
     }
 
-    // compile inactive functions for code corectness, these will not be included in returned program
+    for (int op_idx : memory.call_ops)
+    {
+        int fun_idx = memory.program_data.buf[op_idx];
+        int instr_idx = memory.active_source_functions.buf[fun_idx]->instr_idx;
+        memcpy(memory.program_data.buf + op_idx, &instr_idx, sizeof(int));
+    }
+
+    // compile inactive functions for a code corectness, these won't be included in a returned program
     for (ic_function& function : memory.functions)
     {
-        if (function.type == IC_FUN_HOST || function.data_idx != -1)
+        if (function.type == IC_FUN_HOST || function.instr_idx != -1)
             continue;
         print(IC_PWARNING, function.token.line, function.token.col, memory.source_lines, "function defined but not used");
 
@@ -561,33 +562,26 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     }
     program.data_size = memory.program_data.size;
     program.data = memory.program_data.tansfer();
-    program.functions_size = memory.active_functions.size;
+    program.functions_size = memory.active_host_functions.size;
     program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
 
-    for(int i = 0; i < memory.active_functions.size; ++i)
+    for(int i = 0; i < memory.active_host_functions.size; ++i)
     {
-        ic_function& fun = *memory.active_functions.buf[i];
+        ic_function& fun = *memory.active_host_functions.buf[i];
         ic_vm_function& vmfun = program.functions[i];
-        vmfun.host_impl = fun.type == IC_FUN_HOST;
+        vmfun.callback = fun.host_function->callback;
+        vmfun.host_data = fun.host_function->host_data;
+        vmfun.hash = hash_string(fun.host_function->prototype_str);
+        vmfun.origin = fun.origin;
+        vmfun.return_size = type_data_size(fun.return_type);
+        vmfun.param_size = 0;
 
-        if (vmfun.host_impl)
-        {
-            vmfun.callback = fun.host_function->callback;
-            vmfun.host_data = fun.host_function->host_data;
-            vmfun.hash = hash_string(fun.host_function->prototype_str);
-            vmfun.origin = fun.origin;
-            vmfun.return_size = type_data_size(fun.return_type);
-            vmfun.param_size = 0;
+        for (int j = 0; j < fun.param_count; ++j)
+            vmfun.param_size += type_data_size(fun.params[j].type);
 
-            for (int j = 0; j < fun.param_count; ++j)
-                vmfun.param_size += type_data_size(fun.params[j].type);
-
-            // make sure there is no hash collision with previously initialized vm functions
-            for(int j = 0; j < i; ++j)
-                assert(vmfun.hash != program.functions[j].hash);
-        }
-        else
-            vmfun.data_idx = fun.data_idx;
+        // make sure there is no hash collision with previously initialized vm functions
+        for(int j = 0; j < i; ++j)
+            assert(vmfun.hash != program.functions[j].hash);
     }
     return true;
 }

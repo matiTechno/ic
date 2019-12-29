@@ -15,8 +15,8 @@ union ic_data
     void* pointer;
 };
 
-// returning struct: *(copmlex*)retv = value;
-using ic_host_function_ptr = void(*)(ic_data* argv, ic_data* retv, void* host_data);
+// returning a struct: *(struct_type*)retv = value;
+using ic_callback = void(*)(ic_data* argv, ic_data* retv, void* host_data);
 
 // these are helpful if a function has struct parameters
 
@@ -39,7 +39,7 @@ inline void* ic_get_ptr(ic_data*& argv) { return ic_get_arg(argv, sizeof(void*))
 struct ic_host_function
 {
     const char* prototype_str;
-    ic_host_function_ptr callback;
+    ic_callback callback;
     void* host_data;
 };
 
@@ -52,22 +52,15 @@ struct ic_host_decl
     const char* structures;
 };
 
+// todo, better naming of these whole host stuff
 struct ic_vm_function
 {
-    bool host_impl;
-    union
-    {
-        int data_idx;
-        struct
-        {
-            ic_host_function_ptr callback;
-            void* host_data;
-            unsigned int hash;
-            int origin;
-            int return_size;
-            int param_size;
-        };
-    };
+    ic_callback callback;
+    void* host_data;
+    unsigned int hash;
+    int origin;
+    int return_size;
+    int param_size;
 };
 
 struct ic_program

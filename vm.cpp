@@ -50,7 +50,7 @@ int ic_vm_run(ic_vm& _vm, ic_program& program)
     vm.push_many(3); // main() return value, bp, ip
     vm.top().pointer = nullptr; // set a return address, see IC_OPC_RETURN for an explanation
     vm.bp = vm.sp;
-    vm.ip = program.data + program.functions[0].data_idx;
+    vm.ip = program.data + program.strings_byte_size;
 
     for(;;)
     {
@@ -126,24 +126,22 @@ int ic_vm_run(ic_vm& _vm, ic_program& program)
         }
         case IC_OPC_CALL:
         {
-            int fun_idx = read_int(&vm.ip);
-            ic_vm_function& function = program.functions[fun_idx];
-
-            if (function.host_impl)
-            {
-                ic_data* argv = vm.sp - function.param_size;
-                ic_data* retv = argv - function.return_size;
-                function.callback(argv, retv, function.host_data);
-            }
-            else
-            {
-                vm.push();
-                vm.top().pointer = vm.bp;
-                vm.push();
-                vm.top().pointer = vm.ip;
-                vm.bp = vm.sp;
-                vm.ip = program.data + function.data_idx;
-            }
+            int idx = read_int(&vm.ip);
+            vm.push();
+            vm.top().pointer = vm.bp;
+            vm.push();
+            vm.top().pointer = vm.ip;
+            vm.bp = vm.sp;
+            vm.ip = program.data + idx;
+            break;
+        }
+        case IC_OPC_CALL_HOST:
+        {
+            int idx = read_int(&vm.ip);
+            ic_vm_function& function = program.functions[idx];
+            ic_data* argv = vm.sp - function.param_size;
+            ic_data* retv = argv - function.return_size;
+            function.callback(argv, retv, function.host_data);
             break;
         }
         case IC_OPC_RETURN:
