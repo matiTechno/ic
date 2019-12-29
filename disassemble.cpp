@@ -5,10 +5,10 @@ void print_instructions(unsigned char* bytecode, int bytecode_size, int strings_
 
 void ic_program_print_disassembly(ic_program& program)
 {
-    printf("functions_size: %d\n", program.functions_size);
+    printf("host_functions_size: %d\n", program.host_functions_size);
     printf("bytecode_size (includes strings): %d\n", program.bytecode_size);
     printf("strings_byte_size: %d\n", program.strings_byte_size);
-    printf("global_data_size: %d\n", program.global_data_size);
+    printf("global_data_size (includes strings): %d\n", program.global_data_size);
     printf("strings: ");
     int str_idx = 0;
 
@@ -19,16 +19,17 @@ void ic_program_print_disassembly(ic_program& program)
         printf(" ");
     }
 
-    printf("\nfunctions:\n\n");
+    printf("\nhost_functions:\n\n");
 
-    for (int i = 0; i < program.functions_size; ++i)
+    for (int i = 0; i < program.host_functions_size; ++i)
     {
-        ic_vm_function& function = program.functions[i];
+        ic_host_function& fun = program.host_functions[i];
         printf("id: %d\n", i);
-        printf("hash: %x\n", function.hash);
-        printf("origin: %d\n", function.origin);
-        printf("return_size: %d\n", function.return_size);
-        printf("param_size: %d\n\n", function.param_size);
+        printf("prototype_str: %s\n", fun.prototype_str);
+        printf("hash: %x\n", fun.hash);
+        printf("origin: %d\n", fun.origin);
+        printf("return_size: %d\n", fun.return_size);
+        printf("param_size: %d\n\n", fun.param_size);
     }
 
     print_instructions(program.bytecode, program.bytecode_size, program.strings_byte_size);

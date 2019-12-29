@@ -438,14 +438,10 @@ struct ic_function
     {
         struct
         {
-            ic_host_function* host_function;
-            int origin;
-        };
-        struct
-        {
             ic_stmt* body;
             int instr_idx;
         };
+        ic_host_function* host_function;
     };
 };
 

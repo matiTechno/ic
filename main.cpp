@@ -190,7 +190,7 @@ int main(int argc, const char** argv)
             ic_program program;
             {
                 auto t1 = std::chrono::high_resolution_clock::now();
-                bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, { functions, nullptr });
+                bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, functions, nullptr);
                 assert(success);
                 auto t2 = std::chrono::high_resolution_clock::now();
                 printf("compilation time: %d ms\n", (int)std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
@@ -214,7 +214,7 @@ int main(int argc, const char** argv)
         ic_vm vm;
         ic_vm_init(vm);
         ic_program program;
-        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, { functions, nullptr });
+        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, functions);
         ic_vm_run(vm, program);
         ic_program_free(program);
         ic_vm_free(vm);
@@ -224,12 +224,12 @@ int main(int argc, const char** argv)
     {
         std::vector<unsigned char> file_data = load_file(argv[2]);
         ic_program program;
-        bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, { functions, nullptr });
+        bool success = ic_program_init_compile(program, (char*)file_data.data(), IC_LIB_CORE, functions, nullptr);
         assert(success);
         unsigned char* buf;
         int size;
         ic_program_serialize(program, buf, size);
-        write_to_file(buf, size, "program.bin");
+        write_to_file(buf, size, "bytecode");
         ic_buf_free(buf);
         ic_program_free(program);
         return 0;
@@ -238,7 +238,7 @@ int main(int argc, const char** argv)
     {
         std::vector<unsigned char> file_data = load_file(argv[2]);
         ic_program program;
-        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, { functions, nullptr });
+        ic_program_init_load(program, file_data.data(), IC_LIB_CORE, functions);
         ic_program_print_disassembly(program);
         ic_program_free(program);
         return 0;
@@ -255,7 +255,7 @@ int main(int argc, const char** argv)
         };
 
         ic_program program;
-        bool success = ic_program_init_compile(program, test_program, IC_LIB_CORE, { test_functions, test_struct_decl });
+        bool success = ic_program_init_compile(program, test_program, IC_LIB_CORE, test_functions, test_struct_decl);
         assert(success);
         ic_vm vm;
         ic_vm_init(vm);

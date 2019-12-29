@@ -138,10 +138,10 @@ int ic_vm_run(ic_vm& _vm, ic_program& program)
         case IC_OPC_CALL_HOST:
         {
             int idx = read_int(&vm.ip);
-            ic_vm_function& function = program.functions[idx];
-            ic_data* argv = vm.sp - function.param_size;
-            ic_data* retv = argv - function.return_size;
-            function.callback(argv, retv, function.host_data);
+            ic_host_function& fun = program.host_functions[idx];
+            ic_data* argv = vm.sp - fun.param_size;
+            ic_data* retv = argv - fun.return_size;
+            fun.callback(argv, retv, fun.host_data);
             break;
         }
         case IC_OPC_RETURN:

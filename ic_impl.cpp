@@ -135,13 +135,12 @@ void read_bytes(void* dst, unsigned char** buf_it, int bytes)
 
 void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size)
 {
-    size = sizeof(ic_program) + program.bytecode_size + program.functions_size * sizeof(ic_vm_function);
+    size = sizeof(ic_program) + program.bytecode_size + program.host_functions_size * sizeof(ic_host_function);
     buf = (unsigned char*)malloc(size);
     unsigned char* buf_it = buf;
     write_bytes(&buf_it, &program, sizeof(ic_program));
     write_bytes(&buf_it, program.bytecode, program.bytecode_size);
-    for(int i = 0; i < program.functions_size; ++i)
-        write_bytes(&buf_it, program.functions + i, sizeof(ic_vm_function));
+    write_bytes(&buf_it, program.host_functions, program.host_functions_size * sizeof(ic_host_function));
 }
 
 void ic_buf_free(unsigned char* buf)
@@ -161,20 +160,21 @@ unsigned int hash_string(const char* str)
     return hash;
 }
 
- void resolve_vm_function(ic_vm_function& fun, ic_host_function* it)
+ void resolve_host_function(ic_host_function& dst, ic_host_function* source)
  {
-     assert(it);
-     while (it->prototype_str)
+     assert(source);
+     while (source->prototype_str)
      {
-         if (fun.hash == hash_string(it->prototype_str))
+         if (dst.hash == hash_string(source->prototype_str))
          {
-             fun.callback = it->callback;
-             fun.host_data = it->host_data;
+             dst.prototype_str = source->prototype_str;
+             dst.callback = source->callback;
+             dst.host_data = source->host_data;
              return;
          }
-         ++it;
+         ++source;
      }
-     assert(false);
+     assert(false); // todo, proper error handling
  }
 
 void host_prints(ic_data* argv, ic_data*, void*)
@@ -232,24 +232,24 @@ static ic_host_function _core_lib[] =
 
 #define IC_USER_FUNCTION -1
 
-void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_decl host_decl)
+void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions)
 {
     assert(buf);
     unsigned char* buf_it = buf;
     read_bytes(&program, &buf_it, sizeof(program));
     program.bytecode = (unsigned char*)malloc(program.bytecode_size);
     read_bytes(program.bytecode, &buf_it, program.bytecode_size);
-    program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
+    program.host_functions = (ic_host_function*)malloc(program.host_functions_size * sizeof(ic_host_function));
+    read_bytes(program.host_functions, &buf_it, program.host_functions_size * sizeof(ic_host_function));
 
-    for (int i = 0; i < program.functions_size; ++i)
+    for (int i = 0; i < program.host_functions_size; ++i)
     {
-        ic_vm_function& fun = program.functions[i];
-        read_bytes(&fun, &buf_it, sizeof(ic_vm_function));
+        ic_host_function& fun = program.host_functions[i];
 
         if (fun.origin == IC_LIB_CORE)
-            resolve_vm_function(fun, _core_lib);
+            resolve_host_function(fun, _core_lib);
         else if (fun.origin == IC_USER_FUNCTION)
-            resolve_vm_function(fun, host_decl.functions);
+            resolve_host_function(fun, host_functions);
         else
             assert(false);
     }
@@ -258,7 +258,7 @@ void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_
 void ic_program_free(ic_program& program)
 {
     free(program.bytecode);
-    free(program.functions);
+    free(program.host_functions);
 }
 
 struct ic_parser
@@ -350,6 +350,8 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser, ic
 
     while (it->prototype_str)
     {
+        it->origin = origin;
+
         if (!lex(it->prototype_str, memory))
             return false;
         assert(!memory.bytecode.size); // internal error check
@@ -372,7 +374,6 @@ bool load_host_functions(ic_host_function* it, int origin, ic_parser& parser, ic
         if (parser.error)
             return false;
         function.host_function = it;
-        function.origin = origin;
         memory.functions.push_back(function);
         ++it;
     }
@@ -432,7 +433,8 @@ bool load_host_structures(const char* source, ic_parser& parser, ic_memory& memo
      return true;
 }
 
-bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_decl host_decl, ic_memory& memory)
+bool program_init_compile_impl(ic_program& program, const char* source, int libs, ic_host_function* host_functions,
+    const char* struct_decls, ic_memory& memory)
 {
     assert(source);
     ic_parser parser;
@@ -445,11 +447,15 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             return false;
     }
 
-    if (host_decl.functions)
+    if (struct_decls)
     {
-        if (host_decl.structures)
-            load_host_structures(host_decl.structures, parser, memory);
-        if (!load_host_functions(host_decl.functions, IC_USER_FUNCTION, parser, memory))
+        if (!load_host_structures(struct_decls, parser, memory))
+            return false;
+    }
+
+    if (host_functions)
+    {
+        if (!load_host_functions(host_functions, IC_USER_FUNCTION, parser, memory))
             return false;
     }
 
@@ -564,36 +570,34 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
     }
     program.bytecode_size = memory.bytecode.size;
     program.bytecode = memory.bytecode.tansfer();
-    program.functions_size = memory.active_host_functions.size;
-    program.functions = (ic_vm_function*)malloc(program.functions_size * sizeof(ic_vm_function));
+    program.host_functions_size = memory.active_host_functions.size;
+    program.host_functions = (ic_host_function*)malloc(program.host_functions_size * sizeof(ic_host_function));
 
-    for(int i = 0; i < memory.active_host_functions.size; ++i)
+    for(int i = 0; i < program.host_functions_size; ++i)
     {
         ic_function& fun = *memory.active_host_functions.buf[i];
-        ic_vm_function& vmfun = program.functions[i];
-        vmfun.callback = fun.host_function->callback;
-        vmfun.host_data = fun.host_function->host_data;
-        vmfun.hash = hash_string(fun.host_function->prototype_str);
-        vmfun.origin = fun.origin;
-        vmfun.return_size = type_data_size(fun.return_type);
-        vmfun.param_size = 0;
+        ic_host_function& hfun = program.host_functions[i];
+        hfun = *fun.host_function;
+        hfun.hash = hash_string(hfun.prototype_str);
+        hfun.return_size = type_data_size(fun.return_type);
+        hfun.param_size = 0;
 
         for (int j = 0; j < fun.param_count; ++j)
-            vmfun.param_size += type_data_size(fun.params[j].type);
+            hfun.param_size += type_data_size(fun.params[j].type);
 
-        // make sure there is no hash collision with previously initialized vm functions
-        for(int j = 0; j < i; ++j)
-            assert(vmfun.hash != program.functions[j].hash);
+        // make sure there is no hash collision
+        for(int x = 0; x < i; ++x)
+            assert(hfun.hash != program.host_functions[x].hash);
     }
     return true;
 }
 
-bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_decl host_decl)
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions, const char* struct_decls)
 {
     assert(source);
     ic_memory memory;
     memory.init();
-    bool success = program_init_compile_impl(program, source, libs, host_decl, memory);
+    bool success = program_init_compile_impl(program, source, libs, host_functions, struct_decls, memory);
     memory.free();
     return success;
 }

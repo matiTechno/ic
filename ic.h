@@ -40,22 +40,7 @@ struct ic_host_function
     const char* prototype_str;
     ic_callback callback;
     void* host_data;
-};
-
-// structures are parsed only if functions ptr is not null,
-// they are only to support struct types in host function declarations
-struct ic_host_decl
-{
-    ic_host_function* functions;
-    // both definitions and forward declarations are fine
-    const char* structures;
-};
-
-// todo, better naming of these whole host stuff
-struct ic_vm_function
-{
-    ic_callback callback;
-    void* host_data;
+    // implementation
     unsigned int hash;
     int origin;
     int return_size;
@@ -64,12 +49,12 @@ struct ic_vm_function
 
 struct ic_program
 {
-    unsigned char* bytecode;
-    ic_vm_function* functions;
-    int functions_size;
+    unsigned char* bytecode; // includes strings
+    ic_host_function* host_functions;
+    int host_functions_size;
     int bytecode_size;
     int strings_byte_size;
-    int global_data_size;
+    int global_data_size; // includes strings
 };
 
 struct ic_vm
@@ -87,8 +72,9 @@ struct ic_vm
     ic_data& top();
 };
 
-bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_decl host_decl);
-void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_decl host_decl);
+// host_functions should end with a nullptr prototype_str; if host functions use structures, they should be declared in struct_decls
+bool ic_program_init_compile(ic_program& program, const char* source, int libs, ic_host_function* host_functions, const char* struct_decls);
+void ic_program_init_load(ic_program& program, unsigned char* buf, int libs, ic_host_function* host_functions);
 void ic_program_free(ic_program& program);
 void ic_program_print_disassembly(ic_program& program);
 void ic_program_serialize(ic_program& program, unsigned char*& buf, int& size);
