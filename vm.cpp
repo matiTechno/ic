@@ -43,10 +43,11 @@ ic_data& ic_vm::top()
 int ic_vm_run(ic_vm& _vm, ic_program& program)
 {
     ic_vm vm = _vm; // 20% perf gain in visual studio; but there is no gain if a parameter is passed by value, why?
+    assert(bytes_to_data_size(program.global_data_byte_size) <= IC_STACK_SIZE);
     memcpy(vm.stack, program.bytecode, program.strings_byte_size);
     // set global non-string data to 0
-    memset(vm.stack + program.strings_byte_size, 0, program.global_data_size * sizeof(ic_data) - program.strings_byte_size);
-    vm.sp = vm.stack + program.global_data_size;
+    memset(vm.stack + program.strings_byte_size, 0, program.global_data_byte_size - program.strings_byte_size);
+    vm.sp = vm.stack + bytes_to_data_size(program.global_data_byte_size);
     vm.push_many(3); // main() return value, bp, ip
     vm.top().pointer = nullptr; // set a return address, see IC_OPC_RETURN for an explanation
     vm.bp = vm.sp;

@@ -12,8 +12,8 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     compiler.memory = &memory;
     compiler.function = &function;
     compiler.code_gen = code_gen;
-    compiler.stack_size = 0;
-    compiler.max_stack_size = 0;
+    compiler.stack_byte_size = 0;
+    compiler.max_stack_byte_size = 0;
     compiler.loop_count = 0;
     compiler.error = false;
     int param_byte_idx = -2 * (int)sizeof(ic_data); // skip previous stack frame bp and ip (return address)
@@ -22,6 +22,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     for (int i = function.param_count - 1; i >= 0; --i)
     {
         ic_param& param = function.params[i];
+        // arguments are expression operands and each expression operand is padded to ic_data
         param_byte_idx -= type_data_size(param.type) * sizeof(ic_data);
         
         if (param.name.data)
@@ -32,9 +33,9 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
                     compiler.set_error(function.token, "each parameter must have a unique identifier"); // todo, param.token would be better
             }
             ic_var var;
-            var.idx = param_byte_idx;
-            var.name = param.name;
             var.type = param.type;
+            var.byte_idx = param_byte_idx;
+            var.name = param.name;
             memory.vars.push_back(var);
         }
         else
@@ -48,7 +49,7 @@ bool compile_function(ic_function& function, ic_memory& memory, bool code_gen)
     compiler.add_s32({});
     ic_stmt_result result = compile_stmt(function.body, compiler);
     compiler.pop_scope();
-    compiler.bc_set_int(idx_resolve_push, compiler.max_stack_size);
+    compiler.bc_set_int(idx_resolve_push, bytes_to_data_size(compiler.max_stack_byte_size));
 
     if (!is_void(function.return_type) && result != IC_STMT_RESULT_RETURN)
         compiler.set_error(function.token, "all branches of a non-void return type function must return a value");
@@ -189,7 +190,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             ic_expr_result result = compile_expr(stmt->var_decl.expr, compiler);
             compile_implicit_conversion(var.type, result.type, compiler, stmt->token);
             compiler.add_opcode(IC_OPC_ADDRESS);
-            compiler.add_s32(var.idx);
+            compiler.add_s32(var.byte_idx);
 
             if (is_struct(var.type))
             {
@@ -452,7 +453,7 @@ ic_expr_result compile_expr(ic_expr* expr, ic_compiler& compiler, bool load_lval
             bool is_global;
             ic_var var = compiler.get_var(token.string, &is_global, expr->token);
             compiler.add_opcode(is_global ? IC_OPC_ADDRESS_GLOBAL : IC_OPC_ADDRESS);
-            compiler.add_s32(var.idx);
+            compiler.add_s32(var.byte_idx);
 
             if (!load_lvalue)
                 return { var.type, true };

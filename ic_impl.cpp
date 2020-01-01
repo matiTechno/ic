@@ -82,9 +82,9 @@ int type_byte_size(ic_type type)
     assert(false);
 }
 
-int align(int bytes, int type_size)
+int align(int bytes, int align_size)
 {
-    int padding = (type_size - (bytes % type_size)) % type_size;
+    int padding = (align_size - (bytes % align_size)) % align_size;
     return bytes + padding;
 }
 
@@ -465,7 +465,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
         return false;
 
     program.strings_byte_size = memory.bytecode.size;
-    program.global_data_size = bytes_to_data_size(program.strings_byte_size);
+    program.global_data_byte_size = program.strings_byte_size;
     parser.token_it = memory.tokens.buf;
 
     while (parser.get_token().type != IC_TOK_EOF)
@@ -509,11 +509,14 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
                 return false;
             }
             ic_var var;
-            var.idx = program.global_data_size * sizeof(ic_data);
             var.type = decl.var.type;
             var.name = token.string;
-            program.global_data_size += type_data_size(var.type);
+            int byte_size = type_byte_size(var.type);
+            int align_size = is_struct(var.type) ? var.type._struct->alignment : byte_size;
+            program.global_data_byte_size = align(program.global_data_byte_size, align_size);
+            var.byte_idx = program.global_data_byte_size;
             memory.global_vars.push_back(var);
+            program.global_data_byte_size += byte_size;
             break;
         }
         default:

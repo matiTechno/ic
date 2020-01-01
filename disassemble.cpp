@@ -8,7 +8,7 @@ void ic_program_print_disassembly(ic_program& program)
     printf("host_functions_size: %d\n", program.host_functions_size);
     printf("bytecode_size (includes strings): %d\n", program.bytecode_size);
     printf("strings_byte_size: %d\n", program.strings_byte_size);
-    printf("global_data_size (includes strings): %d\n", program.global_data_size);
+    printf("global_data_byte_size (includes strings): %d\n", program.global_data_byte_size);
     printf("strings: ");
     int str_idx = 0;
 

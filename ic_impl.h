@@ -29,6 +29,10 @@ static_assert(sizeof(void*) == 8, "sizeof(void*) == 8");
 
 #define IC_MAX_ARGC 10
 
+// this is quite important to know:
+// local variables are packed with a proper alignment and padded as a whole to ic_data
+// each expression operand is padded to ic_data
+
 // calling convention
 // caller: pushes space for a return value, pushes arguments, issues call
 // VM call: pushes bp and ip, sets bp to sp, sets ip to a call operand
@@ -42,6 +46,7 @@ enum ic_opcode
     IC_OPC_PUSH_F32,
     IC_OPC_PUSH_F64,
     IC_OPC_PUSH_NULLPTR,
+    // push, pop operate on ic_data, not bytes
     IC_OPC_PUSH,
     IC_OPC_PUSH_MANY,
     IC_OPC_POP,
@@ -56,8 +61,8 @@ enum ic_opcode
     IC_OPC_JUMP_FALSE,
     IC_LOGICAL_NOT,
     IC_OPC_JUMP,
-    IC_OPC_ADDRESS,
-    IC_OPC_ADDRESS_GLOBAL,
+    IC_OPC_ADDRESS, // operand is a byte offset from a base pointer
+    IC_OPC_ADDRESS_GLOBAL, // similar
 
     // order of operands on the operand stack is reversed (data before address)
     // address is popped, data is left
@@ -474,7 +479,7 @@ struct ic_var
 {
     ic_type type;
     ic_string name;
-    int idx;
+    int byte_idx;
 };
 
 template<typename T>
@@ -742,8 +747,8 @@ struct ic_compiler
     ic_memory* memory;
     ic_function* function;
     bool code_gen;
-    int stack_size;
-    int max_stack_size;
+    int stack_byte_size;
+    int max_stack_byte_size;
     int loop_count;
     bool error;
     int return_byte_idx;
@@ -780,14 +785,14 @@ struct ic_compiler
     {
         ic_scope scope;
         scope.prev_var_count = memory->vars.size;
-        scope.prev_stack_size = stack_size;
+        scope.prev_stack_size = stack_byte_size;
         memory->scopes.push_back(scope);
     }
 
     void pop_scope()
     {
         memory->vars.resize(memory->scopes.back().prev_var_count);
-        stack_size = memory->scopes.back().prev_stack_size;
+        stack_byte_size = memory->scopes.back().prev_stack_size;
         memory->scopes.pop_back();
     }
 
@@ -873,14 +878,16 @@ struct ic_compiler
                 break;
             }
         }
-        int byte_idx = stack_size * sizeof(ic_data);
-        stack_size += type_data_size(type);
-        max_stack_size = stack_size > max_stack_size ? stack_size : max_stack_size;
         ic_var var;
-        var.idx = byte_idx;
-        var.name = name;
         var.type = type;
+        var.name = name;
+        int byte_size = type_byte_size(var.type);
+        int align_size = is_struct(var.type) ? var.type._struct->alignment : byte_size;
+        stack_byte_size = align(stack_byte_size, align_size);
+        var.byte_idx = stack_byte_size;
         memory->vars.push_back(var);
+        stack_byte_size += byte_size;
+        max_stack_byte_size = stack_byte_size > max_stack_byte_size ? stack_byte_size : max_stack_byte_size;
         return var;
     }
 

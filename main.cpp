@@ -137,9 +137,9 @@ void print(test_struct t)
 
 void host_print_test(ic_data* argv, ic_data*, void*)
 {
-    int arg1 = ic_get_int(argv);
-    test_struct arg2 = *(test_struct*)ic_get_arg(argv, sizeof(test_struct));
-    double arg3 = ic_get_double(argv);
+    int arg1 = ic_get_arg(argv).s32;
+    test_struct arg2 = *(test_struct*)ic_get_struct_arg(argv, sizeof(test_struct));
+    double arg3 = ic_get_arg(argv).f64;
     printf("arg1 = %d\n", arg1);
     print(arg2);
     printf("arg3 = %f\n", arg3);

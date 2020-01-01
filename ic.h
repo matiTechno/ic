@@ -17,23 +17,21 @@ union ic_data
 
 using ic_callback = void(*)(ic_data* argv, ic_data* retv, void* host_data); // returning a struct: *(struct_type*)retv = value;
 
-// these are helpful if a callback has struct parameters
+// these are helpful if a callback has struct parameters, see main.cpp for a usage example
 
-inline void* ic_get_arg(ic_data*& argv, int size)
+inline ic_data ic_get_arg(ic_data*& argv)
 {
-    int data_size = (size + sizeof(ic_data) - 1) / sizeof(ic_data);
+    ++argv;
+    return *(argv - 1);
+}
+
+inline void* ic_get_struct_arg(ic_data*& argv, int byte_size)
+{
+    int data_size = (byte_size + sizeof(ic_data) - 1) / sizeof(ic_data);
     ic_data* begin = argv;
     argv += data_size;
     return begin;
 }
-
-inline int ic_get_bool(ic_data*& argv) { return *(char*)ic_get_arg(argv, sizeof(char)); }
-inline int ic_get_char(ic_data*& argv) { return *(char*)ic_get_arg(argv, sizeof(char)); }
-inline int ic_get_uchar(ic_data*& argv) { return *(unsigned char*)ic_get_arg(argv, sizeof(char)); }
-inline int ic_get_int(ic_data*& argv) { return *(int*)ic_get_arg(argv, sizeof(int)); }
-inline float ic_get_float(ic_data*& argv) { return *(float*)ic_get_arg(argv, sizeof(float)); }
-inline double ic_get_double(ic_data*& argv) { return *(double*)ic_get_arg(argv, sizeof(double)); }
-inline void* ic_get_ptr(ic_data*& argv) { return ic_get_arg(argv, sizeof(void*)); }
 
 struct ic_host_function
 {
@@ -54,7 +52,7 @@ struct ic_program
     int host_functions_size;
     int bytecode_size;
     int strings_byte_size;
-    int global_data_size; // includes strings
+    int global_data_byte_size; // includes strings
 };
 
 struct ic_vm
