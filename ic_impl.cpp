@@ -291,9 +291,7 @@ struct ic_parser
             ++token_it;
     }
 
-    // todo, in a lexer code, consume() or advance() positions iterator on a consumed object,
-    // I think it is a more natural design, currently token must be saved before calling consume
-    // yes, this would be a much better design, and peek() function would be useful in some cases
+    // todo, peek() function would be useful in some cases?
     void consume(ic_token_type type, const char* err_msg)
     {
         if (token_it->type == type)
@@ -572,7 +570,7 @@ bool program_init_compile_impl(ic_program& program, const char* source, int libs
             return false;
     }
     program.bytecode_size = memory.bytecode.size;
-    program.bytecode = memory.bytecode.tansfer();
+    program.bytecode = memory.bytecode.transfer();
     program.host_functions_size = memory.active_host_functions.size;
     program.host_functions = (ic_host_function*)malloc(program.host_functions_size * sizeof(ic_host_function));
 
@@ -949,7 +947,7 @@ bool lex(const char* source, ic_memory& memory)
             }
             else
             {
-                print(IC_PERROR, lexer.line, lexer.col, memory.source_lines, "unexpected character");
+                print(IC_PERROR, lexer.token_line, lexer.token_col, memory.source_lines, "unexpected character");
                 return false;
             }
         }

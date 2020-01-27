@@ -499,7 +499,7 @@ struct ic_array
         size = 0;
     }
 
-    T* tansfer()
+    T* transfer()
     {
         T* temp = buf;
         buf = nullptr;
