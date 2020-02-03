@@ -120,7 +120,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
             compiler.add_s32({});
         }
 
-        compile_stmt(stmt->_for.body, compiler);
+        ic_stmt_result result = compile_stmt(stmt->_for.body, compiler);
         int idx_continue = compiler.bc_size();
 
         if (stmt->_for.header3)
@@ -146,7 +146,7 @@ ic_stmt_result compile_stmt(ic_stmt* stmt, ic_compiler& compiler)
         compiler.loop_count -= 1;
         compiler.memory->break_ops.resize(break_ops_begin);
         compiler.memory->cont_ops.resize(cont_ops_begin);
-        return IC_STMT_RESULT_NULL;
+        return result == IC_STMT_RESULT_RETURN ? result : IC_STMT_RESULT_NULL;
     }
     case IC_STMT_IF:
     {
