@@ -7,11 +7,6 @@ bool compile_implicit_conversion_impl(ic_type to, ic_type from, ic_compiler& com
 
     if (to.indirection_level)
     {
-        // can happen, e.g. nullptr = something; type conversion is checked before lvalue property
-        // todo, warning will be confusing in this case
-        //if (to.basic_type == IC_TYPE_NULLPTR)
-            //assert(compiler.error);
-
         if (!from.indirection_level)
             return false;
 
